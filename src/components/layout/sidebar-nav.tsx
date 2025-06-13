@@ -12,6 +12,8 @@ import {
   Boxes,
   CreditCard,
   Building,
+  UserCog,
+  Truck,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -24,15 +26,16 @@ import {
   SidebarFooter,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { Button } from "@/components/ui/button";
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/customers", label: "Customers", icon: Users },
-  { href: "/billing", label: "Billing & Invoices", icon: FileText },
+  { href: "/managers", label: "Manage Managers", icon: UserCog },
+  { href: "/customers", label: "Manage Customers", icon: Users },
+  { href: "/sellers", label: "Manage Sellers", icon: Truck },
   { href: "/products", label: "Products", icon: Package },
   { href: "/pricing-rules", label: "Pricing Rules", icon: SlidersHorizontal },
-  { href: "/stock", label: "Stock Availability", icon: Boxes },
+  { href: "/stock", label: "Manage Inventory", icon: Boxes },
+  { href: "/billing", label: "Billing", icon: FileText },
   { href: "/payments", label: "Payments", icon: CreditCard },
 ];
 
