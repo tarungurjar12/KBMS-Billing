@@ -52,20 +52,21 @@ export function SidebarNav() {
       <SidebarMenu className="flex-1 p-4">
         {navItems.map((item) => (
           <SidebarMenuItem key={item.href}>
-            <Link href={item.href} legacyBehavior passHref>
-              <SidebarMenuButton
-                variant="default"
-                className={cn(
-                  "w-full justify-start",
-                  pathname === item.href ? "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90" : "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-                )}
-                isActive={pathname === item.href}
-                tooltip={item.label}
-              >
+            <SidebarMenuButton
+              asChild
+              variant="default"
+              className={cn(
+                "w-full justify-start",
+                pathname === item.href ? "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90" : "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+              )}
+              isActive={pathname === item.href}
+              tooltip={item.label}
+            >
+              <Link href={item.href}>
                 <item.icon className="h-5 w-5" />
                 <span>{item.label}</span>
-              </SidebarMenuButton>
-            </Link>
+              </Link>
+            </SidebarMenuButton>
           </SidebarMenuItem>
         ))}
       </SidebarMenu>
