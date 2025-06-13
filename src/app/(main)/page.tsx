@@ -1,15 +1,16 @@
+
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { PageHeader } from "@/components/page-header";
 import { DollarSign, Users, FileText, PackageMinus, LayoutDashboard } from "lucide-react";
 
 const dashboardMetrics = [
-  { title: "Total Revenue", value: "$45,231.89", change: "+20.1% from last month", icon: DollarSign, dataAiHint: "finance money" },
+  { title: "Total Revenue", value: "₹3,618,550", change: "+20.1% from last month", icon: DollarSign, dataAiHint: "finance money" },
   { title: "Active Users", value: "+2350", change: "+180.1% from last month", icon: Users, dataAiHint: "people team" },
   { title: "Pending Invoices", value: "12", change: "+5 from last week", icon: FileText, dataAiHint: "document paper" },
   { title: "Low Stock Items", value: "7", change: "Needs attention", icon: PackageMinus, dataAiHint: "box inventory" },
 ];
 
-export default function DashboardPage() {
+export default function AdminDashboardPage() { // Renamed for clarity, assuming this is Admin's default
   return (
     <>
       <PageHeader

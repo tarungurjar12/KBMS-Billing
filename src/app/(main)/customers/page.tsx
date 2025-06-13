@@ -1,3 +1,4 @@
+
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -6,10 +7,10 @@ import { Users, PlusCircle, MoreHorizontal } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 const customers = [
-  { id: "CUST001", name: "Alice Wonderland", email: "alice@example.com", phone: "555-0101", totalSpent: "$1,250.00" },
-  { id: "CUST002", name: "Bob The Builder", email: "bob@example.com", phone: "555-0102", totalSpent: "$875.50" },
-  { id: "CUST003", name: "Charlie Chaplin", email: "charlie@example.com", phone: "555-0103", totalSpent: "$2,300.75" },
-  { id: "CUST004", name: "Diana Prince", email: "diana@example.com", phone: "555-0104", totalSpent: "$450.00" },
+  { id: "CUST001", name: "Alice Wonderland", email: "alice@example.com", phone: "555-0101", totalSpent: "₹100,000.00" },
+  { id: "CUST002", name: "Bob The Builder", email: "bob@example.com", phone: "555-0102", totalSpent: "₹70,040.00" },
+  { id: "CUST003", name: "Charlie Chaplin", email: "charlie@example.com", phone: "555-0103", totalSpent: "₹184,060.00" },
+  { id: "CUST004", name: "Diana Prince", email: "diana@example.com", phone: "555-0104", totalSpent: "₹36,000.00" },
 ];
 
 export default function CustomersPage() {

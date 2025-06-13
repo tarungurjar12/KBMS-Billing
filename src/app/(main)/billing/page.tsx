@@ -1,3 +1,4 @@
+
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -7,17 +8,17 @@ import { FileText, PlusCircle, MoreHorizontal } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 const invoices = [
-  { id: "INV001", customer: "Alice Wonderland", date: "2024-07-15", total: "$250.00", status: "Paid" },
-  { id: "INV002", customer: "Bob The Builder", date: "2024-07-18", total: "$150.75", status: "Pending" },
-  { id: "INV003", customer: "Charlie Chaplin", date: "2024-07-20", total: "$500.50", status: "Overdue" },
-  { id: "INV004", customer: "Diana Prince", date: "2024-07-22", total: "$75.00", status: "Paid" },
+  { id: "INV001", customer: "Alice Wonderland", date: "2024-07-15", total: "₹20,000.00", status: "Paid" },
+  { id: "INV002", customer: "Bob The Builder", date: "2024-07-18", total: "₹12,060.00", status: "Pending" },
+  { id: "INV003", customer: "Charlie Chaplin", date: "2024-07-20", total: "₹40,040.00", status: "Overdue" },
+  { id: "INV004", customer: "Diana Prince", date: "2024-07-22", total: "₹6,000.00", status: "Paid" },
 ];
 
 export default function BillingPage() {
   return (
     <>
       <PageHeader
-        title="Billing &amp; Invoicing"
+        title="Billing & Invoicing"
         description="Create and manage GST-compliant bills and invoices."
         icon={FileText}
         actions={

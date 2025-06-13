@@ -1,3 +1,4 @@
+
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -7,10 +8,10 @@ import Image from "next/image";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 const products = [
-  { id: "PROD001", name: "Premium Widget", sku: "PW-001", price: "$25.99", stock: 150, category: "Widgets", imageUrl: "https://placehold.co/40x40.png", dataAiHint: "gadget tool" },
-  { id: "PROD002", name: "Standard Gizmo", sku: "SG-002", price: "$15.50", stock: 250, category: "Gizmos", imageUrl: "https://placehold.co/40x40.png", dataAiHint: "device item" },
-  { id: "PROD003", name: "Luxury Doodad", sku: "LD-003", price: "$49.95", stock: 75, category: "Doodads", imageUrl: "https://placehold.co/40x40.png", dataAiHint: "object thing" },
-  { id: "PROD004", name: "Basic Thingamajig", sku: "BT-004", price: "$9.99", stock: 500, category: "Thingamajigs", imageUrl: "https://placehold.co/40x40.png", dataAiHint: "item gadget" },
+  { id: "PROD001", name: "Premium Widget", sku: "PW-001", price: "₹2,080", stock: 150, category: "Widgets", imageUrl: "https://placehold.co/40x40.png", dataAiHint: "gadget tool" },
+  { id: "PROD002", name: "Standard Gizmo", sku: "SG-002", price: "₹1,240", stock: 250, category: "Gizmos", imageUrl: "https://placehold.co/40x40.png", dataAiHint: "device item" },
+  { id: "PROD003", name: "Luxury Doodad", sku: "LD-003", price: "₹3,995", stock: 75, category: "Doodads", imageUrl: "https://placehold.co/40x40.png", dataAiHint: "object thing" },
+  { id: "PROD004", name: "Basic Thingamajig", sku: "BT-004", price: "₹800", stock: 500, category: "Thingamajigs", imageUrl: "https://placehold.co/40x40.png", dataAiHint: "item gadget" },
 ];
 
 export default function ProductsPage() {

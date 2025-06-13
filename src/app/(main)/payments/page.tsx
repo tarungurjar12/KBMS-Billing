@@ -1,3 +1,4 @@
+
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -8,13 +9,13 @@ import { CreditCard, PlusCircle, MoreHorizontal } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 const customerPayments = [
-  { id: "PAYC001", invoiceId: "INV001", date: "2024-07-15", amount: "$250.00", method: "Credit Card", status: "Completed" },
-  { id: "PAYC002", invoiceId: "INV002", date: "2024-07-19", amount: "$150.75", method: "Bank Transfer", status: "Pending" },
+  { id: "PAYC001", invoiceId: "INV001", date: "2024-07-15", amount: "₹20,000.00", method: "Credit Card", status: "Completed" },
+  { id: "PAYC002", invoiceId: "INV002", date: "2024-07-19", amount: "₹12,060.00", method: "Bank Transfer", status: "Pending" },
 ];
 
 const supplierPayments = [
-  { id: "PAYS001", supplier: "Widget Co.", date: "2024-07-10", amount: "$500.00", method: "ACH", status: "Completed" },
-  { id: "PAYS002", supplier: "Gizmo Inc.", date: "2024-07-21", amount: "$320.00", method: "Check", status: "Sent" },
+  { id: "PAYS001", supplier: "Widget Co.", date: "2024-07-10", amount: "₹40,000.00", method: "ACH", status: "Completed" }, // Assuming $500
+  { id: "PAYS002", supplier: "Gizmo Inc.", date: "2024-07-21", amount: "₹25,600.00", method: "Check", status: "Sent" }, // Assuming $320
 ];
 
 export default function PaymentsPage() {
