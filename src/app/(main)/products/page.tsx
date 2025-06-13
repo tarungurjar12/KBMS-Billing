@@ -16,7 +16,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
   DialogClose,
 } from "@/components/ui/dialog";
 import {
@@ -28,7 +27,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -43,26 +41,31 @@ interface Product {
   id: string;
   name: string;
   sku: string;
-  price: string;
+  price: string; // Keep as string for display
+  numericPrice: number; // For calculations
   stock: number;
   category: string;
+  unitOfMeasure: string;
   imageUrl: string;
   dataAiHint: string;
 }
 
 const initialProducts: Product[] = [
-  { id: "PROD001", name: "Premium Widget", sku: "PW-001", price: "₹2,080", stock: 150, category: "Widgets", imageUrl: "https://placehold.co/40x40.png", dataAiHint: "gadget tool" },
-  { id: "PROD002", name: "Standard Gizmo", sku: "SG-002", price: "₹1,240", stock: 250, category: "Gizmos", imageUrl: "https://placehold.co/40x40.png", dataAiHint: "device item" },
-  { id: "PROD003", name: "Luxury Doodad", sku: "LD-003", price: "₹3,995", stock: 75, category: "Doodads", imageUrl: "https://placehold.co/40x40.png", dataAiHint: "object thing" },
-  { id: "PROD004", name: "Basic Thingamajig", sku: "BT-004", price: "₹800", stock: 500, category: "Thingamajigs", imageUrl: "https://placehold.co/40x40.png", dataAiHint: "item gadget" },
+  { id: "PROD001", name: "Premium Widget", sku: "PW-001", price: "₹2,080", numericPrice: 2080, stock: 150, category: "Widgets", unitOfMeasure: "pcs", imageUrl: "https://placehold.co/40x40.png", dataAiHint: "gadget tool" },
+  { id: "PROD002", name: "Standard Gizmo", sku: "SG-002", price: "₹1,240", numericPrice: 1240, stock: 250, category: "Gizmos", unitOfMeasure: "pcs", imageUrl: "https://placehold.co/40x40.png", dataAiHint: "device item" },
+  { id: "PROD003", name: "Luxury Doodad", sku: "LD-003", price: "₹3,995", numericPrice: 3995, stock: 75, category: "Doodads", unitOfMeasure: "box", imageUrl: "https://placehold.co/40x40.png", dataAiHint: "object thing" },
+  { id: "PROD004", name: "Basic Thingamajig", sku: "BT-004", price: "₹800", numericPrice: 800, stock: 500, category: "Thingamajigs", unitOfMeasure: "pcs", imageUrl: "https://placehold.co/40x40.png", dataAiHint: "item gadget" },
 ];
 
-const PRODUCT_CATEGORIES = ["Widgets", "Gizmos", "Doodads", "Thingamajigs", "Electronics", "Stationery", "Software", "Apparel", "Home Goods"];
+const PRODUCT_CATEGORIES = ["Widgets", "Gizmos", "Doodads", "Thingamajigs", "Electronics", "Stationery", "Software", "Apparel", "Home Goods", "Building Materials"];
+const UNITS_OF_MEASURE = ["pcs", "kg", "meter", "sq ft", "liter", "box", "bag", "set", "dozen"];
+
 
 const productSchema = z.object({
   name: z.string().min(3, { message: "Name must be at least 3 characters." }),
   sku: z.string().min(3, { message: "SKU must be at least 3 characters." }),
   category: z.string().min(1, { message: "Please select a category." }),
+  unitOfMeasure: z.string().min(1, { message: "Please select a unit of measure."}),
   price: z.preprocess(
     (val) => parseFloat(String(val).replace(/[^0-9.-]+/g, "")),
     z.number({invalid_type_error: "Price must be a number."}).positive({ message: "Price must be a positive number." })
@@ -91,10 +94,23 @@ export default function ProductsPage() {
       name: "",
       sku: "",
       category: "",
+      unitOfMeasure: "pcs",
       price: 0,
       stock: 0,
     },
   });
+
+  // Placeholder for fetching products from a data source
+  // useEffect(() => {
+  //   // async function fetchProducts() {
+  //   //   // const fetchedProducts = await db.getProducts(); // Future cloud integration
+  //   //   // setProductList(fetchedProducts);
+  //   // }
+  //   // fetchProducts();
+  //   // For now, using initialProducts
+  //    setProductList(initialProducts);
+  // }, []);
+
 
   useEffect(() => {
     if (editingProduct && isEditProductDialogOpen) {
@@ -102,25 +118,38 @@ export default function ProductsPage() {
         name: editingProduct.name,
         sku: editingProduct.sku,
         category: editingProduct.category,
-        price: parseFloat(editingProduct.price.replace(/[^0-9.-]+/g, "")),
+        unitOfMeasure: editingProduct.unitOfMeasure,
+        price: editingProduct.numericPrice, // Use numericPrice for form
         stock: editingProduct.stock,
       });
     } else {
-      form.reset({ name: "", sku: "", category: "", price: 0, stock: 0 });
+      form.reset({ name: "", sku: "", category: "", unitOfMeasure: "pcs", price: 0, stock: 0 });
     }
   }, [editingProduct, isEditProductDialogOpen, form]);
 
 
   const handleAddSubmit = (values: ProductFormValues) => {
+    // For future cloud integration:
+    // try {
+    //   const newProductData = { ...values, price: `₹${values.price.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`, numericPrice: values.price };
+    //   const createdProduct = await api.createProduct(newProductData); // Example API call
+    //   setProductList((prev) => [createdProduct, ...prev]);
+    // } catch (error) {
+    //   toast({ title: "Error", description: "Failed to add product.", variant: "destructive" });
+    //   return;
+    // }
+
     const newId = `PROD-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     const newProduct: Product = {
       id: newId,
       name: values.name,
       sku: values.sku,
       price: `₹${values.price.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`,
+      numericPrice: values.price,
       stock: values.stock,
       category: values.category,
-      imageUrl: "https://placehold.co/40x40.png",
+      unitOfMeasure: values.unitOfMeasure,
+      imageUrl: "https://placehold.co/40x40.png", // Default placeholder
       dataAiHint: values.category.toLowerCase().split(" ")[0] || "product",
     };
     setProductList((prevProducts) => [newProduct, ...prevProducts]);
@@ -135,14 +164,27 @@ export default function ProductsPage() {
   const handleEditSubmit = (values: ProductFormValues) => {
     if (!editingProduct) return;
 
+    // For future cloud integration:
+    // try {
+    //   const updatedProductData = { ...editingProduct, ...values, price: `₹${values.price.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`, numericPrice: values.price };
+    //   await api.updateProduct(editingProduct.id, updatedProductData); // Example API call
+    //   setProductList((prev) =>
+    //     prev.map((p) => (p.id === editingProduct.id ? updatedProductData : p))
+    //   );
+    // } catch (error) {
+    //   toast({ title: "Error", description: "Failed to update product.", variant: "destructive" });
+    //   return;
+    // }
+
     const updatedProduct: Product = {
       ...editingProduct,
       name: values.name,
       sku: values.sku,
       price: `₹${values.price.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`,
+      numericPrice: values.price,
       stock: values.stock,
       category: values.category,
-      // dataAiHint can be updated if category changes or based on name
+      unitOfMeasure: values.unitOfMeasure,
       dataAiHint: values.category.toLowerCase().split(" ")[0] || values.name.toLowerCase().split(" ")[0] || "product",
     };
 
@@ -170,6 +212,16 @@ export default function ProductsPage() {
 
   const confirmDelete = () => {
     if (!productToDelete) return;
+
+    // For future cloud integration:
+    // try {
+    //   await api.deleteProduct(productToDelete.id); // Example API call
+    //   setProductList((prev) => prev.filter((p) => p.id !== productToDelete.id));
+    // } catch (error) {
+    //   toast({ title: "Error", description: "Failed to delete product.", variant: "destructive" });
+    //   return;
+    // }
+
     setProductList((prevProducts) => prevProducts.filter((p) => p.id !== productToDelete.id));
     toast({
       title: "Product Deleted",
@@ -200,7 +252,7 @@ export default function ProductsPage() {
           setIsAddProductDialogOpen(isOpen);
           if (!isOpen) form.reset();
         }}>
-        <DialogContent className="sm:max-w-[480px]">
+        <DialogContent className="sm:max-w-[520px]"> {/* Increased width for more fields */}
           <DialogHeader>
             <DialogTitle>Add New Product</DialogTitle>
             <DialogDescription>
@@ -208,7 +260,7 @@ export default function ProductsPage() {
             </DialogDescription>
           </DialogHeader>
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(handleAddSubmit)} className="space-y-4 py-2">
+            <form onSubmit={form.handleSubmit(handleAddSubmit)} className="space-y-4 py-2 max-h-[70vh] overflow-y-auto pr-2">
               <FormField
                 control={form.control}
                 name="name"
@@ -235,30 +287,56 @@ export default function ProductsPage() {
                   </FormItem>
                 )}
               />
-              <FormField
-                control={form.control}
-                name="category"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Category</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select a category" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {PRODUCT_CATEGORIES.map((category) => (
-                          <SelectItem key={category} value={category}>
-                            {category}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+               <div className="grid grid-cols-2 gap-4">
+                <FormField
+                    control={form.control}
+                    name="category"
+                    render={({ field }) => (
+                    <FormItem>
+                        <FormLabel>Category</FormLabel>
+                        <Select onValueChange={field.onChange} defaultValue={field.value}>
+                        <FormControl>
+                            <SelectTrigger>
+                            <SelectValue placeholder="Select a category" />
+                            </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                            {PRODUCT_CATEGORIES.map((category) => (
+                            <SelectItem key={category} value={category}>
+                                {category}
+                            </SelectItem>
+                            ))}
+                        </SelectContent>
+                        </Select>
+                        <FormMessage />
+                    </FormItem>
+                    )}
+                />
+                <FormField
+                    control={form.control}
+                    name="unitOfMeasure"
+                    render={({ field }) => (
+                    <FormItem>
+                        <FormLabel>Unit of Measure</FormLabel>
+                        <Select onValueChange={field.onChange} defaultValue={field.value}>
+                        <FormControl>
+                            <SelectTrigger>
+                            <SelectValue placeholder="Select a unit" />
+                            </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                            {UNITS_OF_MEASURE.map((unit) => (
+                            <SelectItem key={unit} value={unit}>
+                                {unit}
+                            </SelectItem>
+                            ))}
+                        </SelectContent>
+                        </Select>
+                        <FormMessage />
+                    </FormItem>
+                    )}
+                />
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <FormField
                   control={form.control}
@@ -278,7 +356,7 @@ export default function ProductsPage() {
                   name="stock"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Stock Quantity</FormLabel>
+                      <FormLabel>Initial Stock Quantity</FormLabel>
                       <FormControl>
                         <Input type="number" placeholder="e.g., 100" {...field} onChange={e => field.onChange(parseInt(e.target.value, 10) || 0)} />
                       </FormControl>
@@ -287,7 +365,7 @@ export default function ProductsPage() {
                   )}
                 />
               </div>
-              <DialogFooter className="pt-4">
+              <DialogFooter className="pt-4 sticky bottom-0 bg-background pb-2">
                 <DialogClose asChild>
                   <Button type="button" variant="outline">
                     Cancel
@@ -303,9 +381,9 @@ export default function ProductsPage() {
       {/* Edit Product Dialog */}
        <Dialog open={isEditProductDialogOpen} onOpenChange={(isOpen) => {
           setIsEditProductDialogOpen(isOpen);
-          if (!isOpen) setEditingProduct(null); // Reset editing product on close
+          if (!isOpen) setEditingProduct(null); 
         }}>
-        <DialogContent className="sm:max-w-[480px]">
+        <DialogContent className="sm:max-w-[520px]">
           <DialogHeader>
             <DialogTitle>Edit Product</DialogTitle>
             <DialogDescription>
@@ -313,8 +391,8 @@ export default function ProductsPage() {
             </DialogDescription>
           </DialogHeader>
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(handleEditSubmit)} className="space-y-4 py-2">
-              <FormField
+            <form onSubmit={form.handleSubmit(handleEditSubmit)} className="space-y-4 py-2 max-h-[70vh] overflow-y-auto pr-2">
+            <FormField
                 control={form.control}
                 name="name"
                 render={({ field }) => (
@@ -340,30 +418,56 @@ export default function ProductsPage() {
                   </FormItem>
                 )}
               />
-              <FormField
-                control={form.control}
-                name="category"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Category</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select a category" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {PRODUCT_CATEGORIES.map((category) => (
-                          <SelectItem key={category} value={category}>
-                            {category}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                    control={form.control}
+                    name="category"
+                    render={({ field }) => (
+                    <FormItem>
+                        <FormLabel>Category</FormLabel>
+                        <Select onValueChange={field.onChange} value={field.value}>
+                        <FormControl>
+                            <SelectTrigger>
+                            <SelectValue placeholder="Select a category" />
+                            </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                            {PRODUCT_CATEGORIES.map((category) => (
+                            <SelectItem key={category} value={category}>
+                                {category}
+                            </SelectItem>
+                            ))}
+                        </SelectContent>
+                        </Select>
+                        <FormMessage />
+                    </FormItem>
+                    )}
+                />
+                 <FormField
+                    control={form.control}
+                    name="unitOfMeasure"
+                    render={({ field }) => (
+                    <FormItem>
+                        <FormLabel>Unit of Measure</FormLabel>
+                        <Select onValueChange={field.onChange} value={field.value}>
+                        <FormControl>
+                            <SelectTrigger>
+                            <SelectValue placeholder="Select a unit" />
+                            </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                            {UNITS_OF_MEASURE.map((unit) => (
+                            <SelectItem key={unit} value={unit}>
+                                {unit}
+                            </SelectItem>
+                            ))}
+                        </SelectContent>
+                        </Select>
+                        <FormMessage />
+                    </FormItem>
+                    )}
+                />
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <FormField
                   control={form.control}
@@ -392,7 +496,7 @@ export default function ProductsPage() {
                   )}
                 />
               </div>
-              <DialogFooter className="pt-4">
+              <DialogFooter className="pt-4 sticky bottom-0 bg-background pb-2">
                  <DialogClose asChild>
                     <Button type="button" variant="outline" onClick={() => { setIsEditProductDialogOpen(false); setEditingProduct(null); }}>
                       Cancel
@@ -437,6 +541,7 @@ export default function ProductsPage() {
                 <TableHead>Product Name</TableHead>
                 <TableHead>SKU</TableHead>
                 <TableHead>Category</TableHead>
+                <TableHead>Unit</TableHead>
                 <TableHead className="text-right">Price</TableHead>
                 <TableHead className="text-right">Stock</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
@@ -451,6 +556,7 @@ export default function ProductsPage() {
                   <TableCell className="font-medium">{product.name}</TableCell>
                   <TableCell>{product.sku}</TableCell>
                   <TableCell>{product.category}</TableCell>
+                  <TableCell>{product.unitOfMeasure}</TableCell>
                   <TableCell className="text-right">{product.price}</TableCell>
                   <TableCell className="text-right">{product.stock}</TableCell>
                   <TableCell className="text-right">
@@ -466,8 +572,6 @@ export default function ProductsPage() {
                           <Edit className="mr-2 h-4 w-4" />
                           Edit Product
                         </DropdownMenuItem>
-                        {/* <DropdownMenuItem>View Details</DropdownMenuItem> */}
-                        {/* <DropdownMenuItem>Adjust Stock</DropdownMenuItem> */}
                         <DropdownMenuItem onClick={() => openDeleteDialog(product)} className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground">
                           <Trash2 className="mr-2 h-4 w-4" />
                           Delete Product
@@ -481,6 +585,14 @@ export default function ProductsPage() {
           </Table>
         </CardContent>
       </Card>
+      {/* Comment for future data persistence:
+          The 'productList' state is currently managed locally.
+          In a production environment with cloud integration (e.g., Firebase Firestore):
+          - Products would be fetched from the database in useEffect.
+          - Add, edit, delete operations would call API endpoints that interact with the cloud database.
+          - Example: `await firestore.collection('products').add(newProductData);`
+          - Example: `await firestore.collection('products').doc(productId).update(updatedData);`
+      */}
     </>
   );
 }
