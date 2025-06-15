@@ -41,10 +41,14 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning className={inter.variable}>
       <head>
         {/* Metadata and other head elements are injected by Next.js */}
+        {/* Google Fonts Preconnect - Handled by Inter from next/font */}
+        {/* <link rel="preconnect" href="https://fonts.googleapis.com" /> */}
+        {/* <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" /> */}
+        {/* <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" /> */}
       </head>
-      <body className={`${inter.className} antialiased bg-background text-foreground`}>
+      <body className="font-body antialiased bg-background text-foreground">
         {children}
-        <Toaster /> {/* Toaster for displaying notifications globally */}
+        <Toaster />
       </body>
     </html>
   );
