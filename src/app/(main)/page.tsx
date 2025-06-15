@@ -10,7 +10,7 @@ import { collection, getDocs, query, where, limit, orderBy, Timestamp, getCountF
 import { db } from '@/lib/firebase/firebaseConfig';
 import { useEffect, useState, useCallback } from 'react';
 import { format } from 'date-fns';
-import { useToast } from "@/hooks/use-toast"; // Import useToast
+import { useToast } from "@/hooks/use-toast";
 
 /**
  * @fileOverview Admin Dashboard page for the KBMS Billing application.
@@ -46,7 +46,7 @@ const quickActions = [
  * @returns {JSX.Element} The rendered admin dashboard page.
  */
 export default function AdminDashboardPage() {
-  const { toast } = useToast(); // Initialize useToast
+  const { toast } = useToast();
   const [metrics, setMetrics] = useState<DashboardMetric[]>([
     { title: "Total Revenue (Paid Invoices Sample)", value: "₹0.00", icon: DollarSign, dataAiHint: "finance money", isLoading: true, link: "/billing?status=Paid" },
     { title: "Active Customers", value: "0", icon: Users, dataAiHint: "people team", isLoading: true, link: "/customers" },
@@ -59,19 +59,26 @@ export default function AdminDashboardPage() {
   const LOW_STOCK_THRESHOLD = 50; 
 
   const fetchDashboardData = useCallback(async () => {
+    // Helper to update metrics state immutably
     const updateMetric = (title: string, newValue: Partial<DashboardMetric>) => {
       setMetrics(prevMetrics => 
         prevMetrics.map(m => m.title === title ? { ...m, ...newValue, isLoading: false } : m)
       );
     };
+    
+    // Reset loading states for all metrics before fetching
+    setMetrics(prevMetrics => prevMetrics.map(m => ({ ...m, isLoading: true })));
+    setIsLoadingSalesChart(true);
 
     try {
       // Fetch total number of customers
+      // Firestore Index: 'customers' (simple count, no specific index needed unless collection is huge)
       const customersCol = collection(db, "customers");
       const customersSnapshot = await getCountFromServer(customersCol);
       updateMetric("Active Customers", { value: customersSnapshot.data().count.toString() });
 
       // Fetch pending invoices count and sum their totalAmount
+      // Firestore Index Required: 'invoices' collection, index on 'status' (ASC)
       const pendingInvoicesQuery = query(collection(db, "invoices"), where("status", "==", "Pending"));
       const pendingInvoicesSnapshot = await getDocs(pendingInvoicesQuery);
       let totalPendingRevenue = 0;
@@ -84,6 +91,7 @@ export default function AdminDashboardPage() {
       });
 
       // Fetch low stock items count
+      // Firestore Index Required: 'products' collection, index on 'stock' (ASC) for range queries
       const lowStockQuery = query(collection(db, "products"), where("stock", "<", LOW_STOCK_THRESHOLD), where("stock", ">", 0));
       const lowStockSnapshot = await getCountFromServer(lowStockQuery);
       updateMetric("Low Stock Items", { value: lowStockSnapshot.data().count.toString() });
@@ -99,8 +107,7 @@ export default function AdminDashboardPage() {
       updateMetric("Total Revenue (Paid Invoices Sample)", { value: `₹${totalPaidRevenue.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`});
 
       // Fetch recent sales for chart (example: last 5 paid invoices)
-      setIsLoadingSalesChart(true);
-      // Firestore Index Required: 'invoices' collection, index on 'status' (ASC) and 'isoDate' (DESC). (Same as above if `limit` is the only difference)
+      // Firestore Index Required: 'invoices' collection, index on 'status' (ASC) and 'isoDate' (DESC).
       const recentSalesQuery = query(collection(db, "invoices"), where("status", "==", "Paid"), orderBy("isoDate", "desc"), limit(5));
       const recentSalesSnapshot = await getDocs(recentSalesQuery);
       const salesData = recentSalesSnapshot.docs.map(doc => {
@@ -122,16 +129,15 @@ export default function AdminDashboardPage() {
         };
       });
       setRecentSales(salesData.reverse()); 
-      setIsLoadingSalesChart(false);
-
+      
     } catch (error: any) {
       console.error("Error fetching dashboard data: ", error);
       if (error.code === 'failed-precondition') {
         toast({
             title: "Database Index Required",
-            description: `A query for dashboard data failed. Please create the required Firestore index. Check the console for a link from Firebase to create it, or create it manually for the 'invoices' collection (status ASC, isoDate DESC). Go to: https://console.firebase.google.com/project/${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID}/firestore/indexes`,
+            description: `A query for dashboard data failed. Please create the required Firestore index. Check your browser's developer console for a Firebase error message that includes a link to create the required index (e.g., for 'invoices' collection: status ASC, isoDate DESC). You can also create indexes manually in your Firebase console.`,
             variant: "destructive",
-            duration: 15000, // Longer duration for important messages
+            duration: 20000,
         });
       } else {
         toast({
@@ -140,10 +146,16 @@ export default function AdminDashboardPage() {
             variant: "destructive",
         });
       }
-      metrics.forEach(m => updateMetric(m.title, { value: "Error", isLoading: false }));
+      // Ensure all metrics show error and stop loading if general fetch fails
+      setMetrics(prevMetrics => 
+        prevMetrics.map(m => ({ ...m, value: m.isLoading ? "Error" : m.value, isLoading: false }))
+      );
+    } finally {
+      // Ensure all individual metric loading states are false even if some succeed and others fail before a general catch
+      setMetrics(prevMetrics => prevMetrics.map(m => ({...m, isLoading: false})));
       setIsLoadingSalesChart(false);
     }
-  }, [toast, metrics]); // metrics was originally missing, added it.
+  }, [toast]); // Removed 'metrics' from dependencies
 
   useEffect(() => {
     fetchDashboardData();
@@ -196,6 +208,7 @@ export default function AdminDashboardPage() {
                  </div>
             ) : recentSales.length > 0 ? (
               <div className="h-64 flex items-center justify-center bg-muted/20 dark:bg-muted/10 rounded-md border border-dashed">
+                {/* Placeholder for actual chart component */}
                 <p className="text-muted-foreground p-4 text-center">Sales chart data loaded ({recentSales.length} entries).<br/> Actual chart component to be implemented here.</p>
               </div>
             ) : (
@@ -225,7 +238,7 @@ export default function AdminDashboardPage() {
             ))}
              <Link href="/managers" passHref legacyBehavior>
                 <Button variant="outline" className="w-full h-auto justify-start p-3 text-left flex items-start gap-3 hover:bg-accent/10 transition-colors group">
-                    <Users className="h-6 w-6 text-primary mt-1 transition-transform group-hover:scale-110 shrink-0" />
+                    <Users className="h-6 w-6 text-primary mt-1 transition-transform group-hover:scale-110 shrink-0" /> {/* Changed from UserCog to Users for consistency */}
                     <div className="flex-1">
                         <span className="font-medium text-foreground">Manage Staff</span>
                         <p className="text-xs text-muted-foreground">Administer Store Manager accounts and permissions.</p>
@@ -238,4 +251,3 @@ export default function AdminDashboardPage() {
     </>
   );
 }
-
