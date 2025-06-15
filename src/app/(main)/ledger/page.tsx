@@ -11,17 +11,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose } from '@/components/ui/dialog';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
-import { useForm, useFieldArray, Controller } from 'react-hook-form';
+import { useForm, useFieldArray } from 'react-hook-form'; // Removed Controller as it's not used directly now
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { BookOpen, PlusCircle, Trash2, Search, Users, Truck, DollarSign, Edit, XCircle } from 'lucide-react';
+import { BookOpen, PlusCircle, Trash2, Search, Users, Truck, DollarSign, XCircle } from 'lucide-react'; // Removed Edit, not used in this page directly for ledger entries, price edit is conditional
 import { useToast } from "@/hooks/use-toast";
 import { collection, getDocs, addDoc, serverTimestamp, query, orderBy, where, doc, runTransaction, Timestamp } from 'firebase/firestore';
 import { db, auth } from '@/lib/firebase/firebaseConfig';
-import type { User as FirebaseUser } from "firebase/auth";
+// Removed User as FirebaseUser type as it's not directly used here; auth.currentUser is used.
 import type { Customer } from './../customers/page';
 import type { Seller } from './../sellers/page';
-import type { Product } from './../products/page'; // Using Product type from products page
+import type { Product } from './../products/page';
 import { format, parseISO } from 'date-fns';
 
 /**
@@ -70,11 +70,11 @@ export interface LedgerEntry {
 // Zod Schemas for form validation
 const ledgerItemSchema = z.object({
   productId: z.string().min(1, "Product selection is required."),
-  productName: z.string(), // Included for form array management, not directly submitted if derived
-  quantity: z.number().min(0.01, "Quantity must be greater than 0."), // Allow fractional quantities
+  productName: z.string(), 
+  quantity: z.number().min(0.01, "Quantity must be greater than 0."), 
   unitPrice: z.number().min(0, "Unit price cannot be negative."),
-  totalPrice: z.number(), // This will be calculated in the form logic
-  unitOfMeasure: z.string(), // Derived from product
+  totalPrice: z.number(), 
+  unitOfMeasure: z.string(), 
 });
 
 const ledgerEntrySchema = z.object({
@@ -90,23 +90,14 @@ const ledgerEntrySchema = z.object({
 });
 type LedgerFormValues = z.infer<typeof ledgerEntrySchema>;
 
-// Schemas for quick-adding new customers/sellers
 const newCustomerSchema = z.object({ name: z.string().min(2, "Name requires at least 2 chars."), phone: z.string().min(10, "Phone requires at least 10 digits.") });
 type NewCustomerFormValues = z.infer<typeof newCustomerSchema>;
 const newSellerSchema = z.object({ name: z.string().min(2, "Name requires at least 2 chars."), phone: z.string().min(10, "Phone requires at least 10 digits.") });
 type NewSellerFormValues = z.infer<typeof newSellerSchema>;
 
 // Constants
-const LOW_STOCK_THRESHOLD = 10; // Example threshold for low stock warning
-const BUSINESS_STATE_CODE = "29"; // Example: Karnataka state code for GST (if applicable)
-const GST_RATE = 0.18; // Example GST rate (18%)
+const GST_RATE = 0.18; 
 
-/**
- * Retrieves a cookie value by name.
- * Used here to determine the current user's role for admin-only price editing.
- * @param {string} name - The name of the cookie.
- * @returns {string | undefined} The cookie value or undefined if not found.
- */
 const getCookie = (name: string): string | undefined => {
   if (typeof window === 'undefined') return undefined;
   const value = `; ${document.cookie}`;
@@ -122,18 +113,17 @@ const getCookie = (name: string): string | undefined => {
  */
 export default function DailyLedgerPage() {
   const { toast } = useToast();
-  const [isLoading, setIsLoading] = useState(true); // For initial data load & date changes
+  const [isLoading, setIsLoading] = useState(true); 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [sellers, setSellers] = useState<Seller[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
-  const [ledgerEntries, setLedgerEntries] = useState<LedgerEntry[]>([]); // Entries for the selected date
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]); // Default to today
+  const [ledgerEntries, setLedgerEntries] = useState<LedgerEntry[]>([]); 
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]); 
   
   const [isNewCustomerDialogOpen, setIsNewCustomerDialogOpen] = useState(false);
   const [isNewSellerDialogOpen, setIsNewSellerDialogOpen] = useState(false);
   const [productSearchTerm, setProductSearchTerm] = useState('');
   
-  // Determine user role for conditional UI (e.g., price editing)
   const [currentUserRole, setCurrentUserRole] = useState<'admin' | 'store_manager' | undefined>();
 
   useEffect(() => {
@@ -143,7 +133,6 @@ export default function DailyLedgerPage() {
     }
   }, []);
 
-  // Main form for ledger entry
   const form = useForm<LedgerFormValues>({
     resolver: zodResolver(ledgerEntrySchema),
     defaultValues: {
@@ -152,28 +141,17 @@ export default function DailyLedgerPage() {
       entityType: 'customer',
       entityName: '',
       items: [],
-      paymentStatus: 'paid', // Default payment status
-      paymentMethod: 'cash', // Default payment method
+      paymentStatus: 'paid', 
+      paymentMethod: 'cash', 
     },
   });
   const { fields, append, remove, update } = useFieldArray({ control: form.control, name: "items" });
 
-  // Forms for adding new customer/seller dialogs
   const newCustomerForm = useForm<NewCustomerFormValues>({ resolver: zodResolver(newCustomerSchema), defaultValues: {name: "", phone: ""} });
   const newSellerForm = useForm<NewSellerFormValues>({ resolver: zodResolver(newSellerSchema), defaultValues: {name: "", phone: ""} });
   
-  /**
-   * Formats a number into Indian Rupee currency string.
-   * @param {number} num - The number to format.
-   * @returns {string} Currency string (e.g., "₹1,234.56").
-   */
   const formatCurrency = useCallback((num: number): string => `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, []);
 
-  /**
-   * Fetches initial data: customers, sellers, products from Firestore.
-   * Also fetches ledger entries for the `selectedDate`.
-   * @param {string} date - The date for which to fetch ledger entries (YYYY-MM-DD).
-   */
   const fetchData = useCallback(async (date: string) => {
     setIsLoading(true);
     try {
@@ -181,12 +159,12 @@ export default function DailyLedgerPage() {
         getDocs(query(collection(db, "customers"), orderBy("name"))),
         getDocs(query(collection(db, "sellers"), orderBy("name"))),
         getDocs(query(collection(db, "products"), orderBy("name"))),
+        // Firestore Index Required: 'ledgerEntries' collection, index on 'date' (ASC) and 'createdAt' (DESC).
         getDocs(query(collection(db, "ledgerEntries"), where("date", "==", date), orderBy("createdAt", "desc")))
       ]);
       
       setCustomers(custSnap.docs.map(d => ({ id: d.id, ...d.data() } as Customer)));
       setSellers(sellSnap.docs.map(d => ({ id: d.id, ...d.data() } as Seller)));
-      // Ensure products have displayPrice formatted
       setProducts(prodSnap.docs.map(d => {
         const data = d.data();
         return { 
@@ -195,63 +173,63 @@ export default function DailyLedgerPage() {
             displayPrice: formatCurrency(data.numericPrice || 0) 
         } as Product;
       }));
-      // Transform ledger entries, converting Firestore Timestamps to Date objects for display if needed
       setLedgerEntries(entrySnap.docs.map(d => {
         const data = d.data();
         return { 
             id: d.id, 
             ...data, 
             createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : new Date() 
-        } as unknown as LedgerEntry; // Cast needed due to Timestamp conversion
+        } as unknown as LedgerEntry; 
       }));
 
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error fetching data for ledger:", error);
-      toast({ title: "Data Load Error", description: "Could not load required data for the ledger. Please try again.", variant: "destructive" });
+      if (error.code === 'failed-precondition') {
+        toast({
+            title: "Database Index Required",
+            description: `A query for ledger data failed. Please create the required Firestore index for 'ledgerEntries' (date ASC, createdAt DESC). Check the console for a link from Firebase or create manually. Go to: https://console.firebase.google.com/project/${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID}/firestore/indexes`,
+            variant: "destructive",
+            duration: 15000,
+        });
+      } else {
+        toast({ title: "Data Load Error", description: "Could not load required data for the ledger. Please try again.", variant: "destructive" });
+      }
     } finally {
       setIsLoading(false);
     }
   }, [toast, formatCurrency]);
 
-  // Fetch data when the component mounts or when selectedDate changes
   useEffect(() => {
     fetchData(selectedDate);
   }, [selectedDate, fetchData]);
 
-  // Watch for changes in transaction type to update entity type and clear entity selection
   const transactionTypeWatcher = form.watch("type");
   useEffect(() => {
     form.setValue("entityType", transactionTypeWatcher === 'sale' ? 'customer' : 'seller');
     form.setValue("entityId", undefined);
     form.setValue("entityName", "");
     if (transactionTypeWatcher === 'sale') {
-      form.setValue("paymentStatus", "paid"); // Default for sales
+      form.setValue("paymentStatus", "paid"); 
     } else {
-      form.setValue("paymentStatus", "pending"); // Default for purchases
+      form.setValue("paymentStatus", "pending"); 
     }
   }, [transactionTypeWatcher, form]);
 
-  // Watch for changes in entity type to handle "Unknown Customer"
   const entityTypeWatcher = form.watch("entityType");
   useEffect(() => {
     if (entityTypeWatcher === "unknown_customer") {
-      form.setValue("entityId", undefined); // No ID for unknown customer
-      form.setValue("entityName", "Unknown Customer"); // Set name explicitly
-      form.setValue("paymentStatus", "paid"); // Unknown customers usually pay immediately
+      form.setValue("entityId", undefined); 
+      form.setValue("entityName", "Unknown Customer"); 
+      form.setValue("paymentStatus", "paid"); 
     } else if (form.getValues("entityName") === "Unknown Customer" && entityTypeWatcher !== "unknown_customer") {
-         form.setValue("entityName", ""); // Clear "Unknown Customer" if switching to known entity
+         form.setValue("entityName", ""); 
     }
   }, [entityTypeWatcher, form]);
 
-  /**
-   * Adds a selected product to the ledger items array or updates its quantity if already present.
-   * @param {Product} product - The product to add.
-   */
   const handleAddProductToLedger = (product: Product) => {
     const existingItemIndex = fields.findIndex(item => item.productId === product.id);
-    if (existingItemIndex > -1) { // Item already in ledger
+    if (existingItemIndex > -1) { 
         const currentItem = fields[existingItemIndex];
-        // Ensure stock check for sales
         if (form.getValues("type") === 'sale' && currentItem.quantity + 1 > product.stock) {
             toast({ title: "Stock Alert", description: `Cannot add more ${product.name}. Max available: ${product.stock}`, variant: "destructive"});
             return;
@@ -261,8 +239,7 @@ export default function DailyLedgerPage() {
             quantity: currentItem.quantity + 1,
             totalPrice: (currentItem.quantity + 1) * currentItem.unitPrice,
         });
-    } else { // New item for ledger
-        // Ensure stock check for sales
+    } else { 
         if (form.getValues("type") === 'sale' && 1 > product.stock) {
              toast({ title: "Out of Stock", description: `${product.name} is out of stock.`, variant: "destructive"});
             return;
@@ -271,60 +248,48 @@ export default function DailyLedgerPage() {
             productId: product.id,
             productName: product.name,
             quantity: 1,
-            unitPrice: product.numericPrice, // Default to product's base price
+            unitPrice: product.numericPrice, 
             totalPrice: product.numericPrice,
             unitOfMeasure: product.unitOfMeasure,
         });
     }
-    setProductSearchTerm(''); // Clear search term after adding
+    setProductSearchTerm(''); 
   };
 
-  /**
-   * Handles changes to an item's quantity in the ledger.
-   * Removes item if quantity becomes less than or equal to 0.
-   * @param {number} index - The index of the item in the `fields` array.
-   * @param {number} quantity - The new quantity.
-   */
-  const handleItemQuantityChange = (index: number, quantity: number) => {
+  const handleItemQuantityChange = (index: number, quantityStr: string) => { // quantityStr is string from input
+    const quantity = parseFloat(quantityStr);
     const item = fields[index];
     const productDetails = products.find(p => p.id === item.productId);
 
-    if (quantity <= 0) { // Remove item if quantity is zero or less
+    if (isNaN(quantity) || quantity <= 0) { 
         remove(index);
         return;
     }
-    // Check stock for sales
-    if (form.getValues("type") === 'sale' && productDetails && quantity > productDetails.stock) {
+    
+    let newQuantity = quantity;
+    if (form.getValues("type") === 'sale' && productDetails && newQuantity > productDetails.stock) {
         toast({ title: "Stock Alert", description: `Quantity for ${item.productName} exceeds stock (${productDetails.stock}). Setting to max.`, variant: "destructive"});
-        quantity = productDetails.stock;
+        newQuantity = productDetails.stock;
+        // Update the input field visually if controlled, or form value if using RHF Controller
+        form.setValue(`items.${index}.quantity`, newQuantity); 
     }
-    update(index, { ...item, quantity, totalPrice: quantity * item.unitPrice });
+    update(index, { ...item, quantity: newQuantity, totalPrice: newQuantity * item.unitPrice });
   };
   
-  /**
-   * Handles changes to an item's unit price in the ledger. (Admin-only)
-   * @param {number} index - The index of the item.
-   * @param {number} unitPrice - The new unit price.
-   */
-  const handleItemPriceChange = (index: number, unitPrice: number) => {
-    if (currentUserRole !== 'admin') { // Admin check
+  const handleItemPriceChange = (index: number, unitPriceStr: string) => { // unitPriceStr is string from input
+    if (currentUserRole !== 'admin') { 
         toast({ title: "Permission Denied", description: "Only Admins can change item prices directly in the ledger.", variant: "destructive" });
-        // Optionally revert the input field visually if not using Controller
-        // For now, relies on disabled state of input for non-admins.
+        // Revert the value in the form to prevent visual change if not using Controller
+        const item = fields[index];
+        form.setValue(`items.${index}.unitPrice`, item.unitPrice); // Revert to original price
         return;
     }
-    if (unitPrice < 0) unitPrice = 0; // Prevent negative price
+    let unitPrice = parseFloat(unitPriceStr);
+    if (isNaN(unitPrice) || unitPrice < 0) unitPrice = 0; 
     const item = fields[index];
     update(index, { ...item, unitPrice, totalPrice: item.quantity * unitPrice });
   };
 
-  /**
-   * Submits the ledger entry form.
-   * Performs a Firestore transaction to:
-   *  1. Add the new ledger entry to the 'ledgerEntries' collection.
-   *  2. Update product stock levels in the 'products' collection.
-   * @param {LedgerFormValues} data - The validated form data.
-   */
   const onLedgerSubmit = async (data: LedgerFormValues) => {
     const currentUser = auth.currentUser;
     if (!currentUser) {
@@ -332,96 +297,97 @@ export default function DailyLedgerPage() {
       return;
     }
 
-    // Calculate totals based on current items in the form
     const subTotal = data.items.reduce((sum, item) => sum + item.totalPrice, 0);
-    // Simplified tax calculation (applies GST_RATE on sales, 0 for purchases)
     const taxAmount = (data.type === 'sale' && data.entityType !== 'unknown_customer') ? subTotal * GST_RATE : 0; 
     const grandTotal = subTotal + taxAmount;
 
-    // Prepare ledger entry data for Firestore
     const ledgerEntryData: Omit<LedgerEntry, 'id' | 'createdAt'> & {createdAt: any} = {
       ...data,
       subTotal,
       taxAmount,
       grandTotal,
-      createdBy: currentUser.uid, // Store UID of the user creating the entry
-      createdAt: serverTimestamp(), // Use Firestore server-side timestamp
+      createdBy: currentUser.uid, 
+      createdAt: serverTimestamp(), 
     };
 
     try {
       await runTransaction(db, async (transaction) => {
-        // 1. Add ledger entry to Firestore
         const newLedgerRef = doc(collection(db, "ledgerEntries"));
         transaction.set(newLedgerRef, ledgerEntryData);
 
-        // 2. Update product stock levels
         for (const item of data.items) {
           const productRef = doc(db, "products", item.productId);
           const productSnap = await transaction.get(productRef);
           if (!productSnap.exists()) throw new Error(`Product ${item.productName} (ID: ${item.productId}) not found.`);
           
           const currentStock = productSnap.data().stock as number;
-          const newStock = data.type === 'sale' 
-            ? currentStock - item.quantity  // Decrement stock for sales
-            : currentStock + item.quantity; // Increment stock for purchases
+          let newStock = data.type === 'sale' 
+            ? currentStock - item.quantity  
+            : currentStock + item.quantity; 
           
-          if (data.type === 'sale' && newStock < 0) { // Check for sufficient stock only for sales
+          if (data.type === 'sale' && newStock < 0) {
             throw new Error(`Insufficient stock for ${item.productName}. Available: ${currentStock}, Requested: ${item.quantity}.`);
           }
-          transaction.update(productRef, { stock: newStock });
+          // Ensure stock doesn't go below zero due to float precision issues if quantity wasn't perfectly int
+          if (newStock < 0) newStock = 0;
+          transaction.update(productRef, { stock: newStock, updatedAt: serverTimestamp() });
         }
       });
       toast({ title: "Ledger Entry Saved", description: "The transaction has been recorded and stock levels updated." });
-      form.reset({ date: selectedDate, type: 'sale', entityType: 'customer', entityName: '', items: [], paymentStatus: 'paid', paymentMethod: 'cash' }); // Reset form
-      fetchData(selectedDate); // Refresh ledger entries for the current date
-      setProductSearchTerm(''); // Clear product search
+      form.reset({ date: selectedDate, type: 'sale', entityType: 'customer', entityName: '', items: [], paymentStatus: 'paid', paymentMethod: 'cash' }); 
+      fetchData(selectedDate); 
+      setProductSearchTerm(''); 
     } catch (error: any) {
       console.error("Error saving ledger entry:", error);
       toast({ title: "Save Error", description: error.message || "Failed to save ledger entry. Please check details and try again.", variant: "destructive" });
     }
   };
 
-  /**
-   * Handles submission of the new customer dialog.
-   * Adds a new customer to Firestore and auto-selects them in the main ledger form.
-   * @param {NewCustomerFormValues} data - Validated new customer form data.
-   */
   const onNewCustomerSubmit = async (data: NewCustomerFormValues) => {
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      toast({ title: "Auth Error", description: "Please log in.", variant: "destructive" });
+      return;
+    }
     try {
-      const docRef = await addDoc(collection(db, "customers"), { ...data, createdAt: serverTimestamp(), totalSpent: "₹0.00", email: "" }); // Add default fields
+      const docRef = await addDoc(collection(db, "customers"), { 
+          ...data, 
+          createdAt: serverTimestamp(), 
+          totalSpent: "₹0.00", // Initial value
+          email: "", // Default empty email
+          createdBy: currentUser.uid // Track who created customer
+      });
       toast({ title: "Customer Added", description: `${data.name} has been added successfully.` });
       setIsNewCustomerDialogOpen(false);
       newCustomerForm.reset();
-      fetchData(selectedDate); // Re-fetch all data to update dropdowns
-      // Auto-select the newly added customer in the main ledger form
+      // Re-fetch customers to update the dropdown list and auto-select
+      const custSnap = await getDocs(query(collection(db, "customers"), orderBy("name")));
+      setCustomers(custSnap.docs.map(d => ({ id: d.id, ...d.data() } as Customer)));
+      
       form.setValue("entityId", docRef.id); 
       form.setValue("entityName", data.name);
-    } catch (error) {
-      toast({ title: "Error Adding Customer", description: "Failed to add new customer. Please try again.", variant: "destructive" });
+    } catch (error: any) {
+      toast({ title: "Error Adding Customer", description: error.message || "Failed to add new customer.", variant: "destructive" });
     }
   };
 
-  /**
-   * Handles submission of the new seller dialog.
-   * Adds a new seller to Firestore and auto-selects them in the main ledger form.
-   * @param {NewSellerFormValues} data - Validated new seller form data.
-   */
   const onNewSellerSubmit = async (data: NewSellerFormValues) => {
      try {
-      const docRef = await addDoc(collection(db, "sellers"), { ...data, createdAt: serverTimestamp(), email:"" }); // Add default fields
+      const docRef = await addDoc(collection(db, "sellers"), { ...data, createdAt: serverTimestamp(), email:"" }); 
       toast({ title: "Seller Added", description: `${data.name} has been added successfully.` });
       setIsNewSellerDialogOpen(false);
       newSellerForm.reset();
-      fetchData(selectedDate); // Re-fetch to update dropdowns
-      // Auto-select the newly added seller
+      // Re-fetch sellers to update the dropdown list and auto-select
+      const sellSnap = await getDocs(query(collection(db, "sellers"), orderBy("name")));
+      setSellers(sellSnap.docs.map(d => ({ id: d.id, ...d.data() } as Seller)));
+
       form.setValue("entityId", docRef.id); 
       form.setValue("entityName", data.name);
-    } catch (error) {
-      toast({ title: "Error Adding Seller", description: "Failed to add new seller. Please try again.", variant: "destructive" });
+    } catch (error: any) {
+      toast({ title: "Error Adding Seller", description: error.message || "Failed to add new seller.", variant: "destructive" });
     }
   };
 
-  // Filter products based on search term (name or SKU)
   const filteredProducts = productSearchTerm
     ? products.filter(p => 
         p.name.toLowerCase().includes(productSearchTerm.toLowerCase()) || 
@@ -429,13 +395,11 @@ export default function DailyLedgerPage() {
       )
     : [];
 
-  // Calculate current totals for display in summary section, reacting to form changes
   const currentItems = form.watch("items");
   const currentSubtotal = currentItems.reduce((acc, item) => acc + (item.totalPrice || 0), 0);
   const currentTax = (form.watch("type") === 'sale' && form.watch("entityType") !== 'unknown_customer') ? currentSubtotal * GST_RATE : 0;
   const currentGrandTotal = currentSubtotal + currentTax;
 
-  // Display loading state if initial data fetch is in progress
   if (isLoading && !customers.length && !products.length && !sellers.length) { 
     return <PageHeader title="Daily Ledger" description="Loading essential data from database..." icon={BookOpen} />;
   }
@@ -444,13 +408,11 @@ export default function DailyLedgerPage() {
     <>
       <PageHeader title="Daily Ledger" description="Record daily sales, purchases, and manage stock movements." icon={BookOpen} />
       
-      {/* Main Ledger Entry Form Card */}
       <Card className="mb-6 shadow-lg rounded-xl">
         <CardHeader><CardTitle className="font-headline text-foreground">New Ledger Entry</CardTitle></CardHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onLedgerSubmit)}>
             <CardContent className="space-y-6">
-              {/* Date, Transaction Type, Entity Type Selection */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <FormField control={form.control} name="date" render={({ field }) => (
                     <FormItem><FormLabel>Date of Transaction</FormLabel><FormControl><Input type="date" {...field} onChange={e => { field.onChange(e); setSelectedDate(e.target.value); }} /></FormControl><FormMessage /></FormItem>)} />
@@ -473,7 +435,6 @@ export default function DailyLedgerPage() {
                     </FormItem>)} />
               </div>
 
-              {/* Entity Selection (Customer/Seller) or "Add New" Button */}
               {form.getValues("entityType") !== "unknown_customer" && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
                     <FormField control={form.control} name="entityId" render={({ field }) => (
@@ -497,10 +458,8 @@ export default function DailyLedgerPage() {
                     </Button>
                 </div>
               )}
-              {/* Readonly input for "Unknown Customer" name */}
                <FormField control={form.control} name="entityName" render={({ field }) => (<FormItem className={form.getValues("entityType") === "unknown_customer" ? "" : "hidden"}><FormLabel>Entity Name</FormLabel><FormControl><Input {...field} readOnly /></FormControl><FormMessage /></FormItem>)} />
 
-              {/* Items Array Section: Product Search and Added Items List */}
               <div className="space-y-4 pt-4 border-t">
                 <Label className="text-lg font-medium">Items for this Transaction</Label>
                  <div className="relative">
@@ -512,7 +471,6 @@ export default function DailyLedgerPage() {
                         </Button>
                     )}
                  </div>
-                 {/* Display filtered product search results */}
                  {productSearchTerm && filteredProducts.length > 0 && (
                   <div className="mt-1 border rounded-md max-h-48 overflow-y-auto bg-background shadow-sm z-10">
                     {filteredProducts.map(p => (
@@ -532,7 +490,6 @@ export default function DailyLedgerPage() {
                     <p className="mt-2 text-sm text-center text-muted-foreground">No products found matching "{productSearchTerm}".</p>
                  )}
 
-                {/* List of items added to the ledger */}
                 {fields.map((item, index) => (
                   <Card key={item.id} className="p-3 space-y-2 bg-muted/20 dark:bg-muted/10">
                     <div className="flex justify-between items-center">
@@ -543,18 +500,21 @@ export default function DailyLedgerPage() {
                         <FormField
                             control={form.control}
                             name={`items.${index}.quantity`}
-                            render={({ field }) => (
-                                <FormItem><FormLabel className="text-xs">Quantity</FormLabel><FormControl><Input type="number" {...field} onChange={e => {field.onChange(parseFloat(e.target.value) || 0); handleItemQuantityChange(index, parseFloat(e.target.value) || 0);}} placeholder="Qty" aria-label="Quantity"/></FormControl><FormMessage/></FormItem>
+                            render={({ field }) => ( // field already includes onChange, value, etc.
+                                <FormItem><FormLabel className="text-xs">Quantity</FormLabel>
+                                  <FormControl><Input type="number" {...field} onChange={e => { field.onChange(parseFloat(e.target.value) || 0); handleItemQuantityChange(index, e.target.value); }} placeholder="Qty" aria-label="Quantity"/></FormControl>
+                                <FormMessage/></FormItem>
                             )}
                         />
                         <FormField
                             control={form.control}
                             name={`items.${index}.unitPrice`}
                             render={({ field }) => (
-                                <FormItem><FormLabel className="text-xs">Unit Price (₹)</FormLabel><FormControl><Input type="number" {...field} onChange={e => {field.onChange(parseFloat(e.target.value) || 0); handleItemPriceChange(index, parseFloat(e.target.value) || 0);}} placeholder="Price/Unit" aria-label="Unit Price" disabled={currentUserRole !== 'admin'}/></FormControl><FormMessage/></FormItem>
+                                <FormItem><FormLabel className="text-xs">Unit Price (₹)</FormLabel>
+                                  <FormControl><Input type="number" {...field} onChange={e => { field.onChange(parseFloat(e.target.value) || 0); handleItemPriceChange(index, e.target.value); }} placeholder="Price/Unit" aria-label="Unit Price" disabled={currentUserRole !== 'admin'}/></FormControl>
+                                <FormMessage/></FormItem>
                             )}
                         />
-                        {/* Display total price for the item (read-only) */}
                         <FormItem><FormLabel className="text-xs">Total (₹)</FormLabel><Input value={formatCurrency(item.totalPrice)} readOnly placeholder="Total" aria-label="Total Price"/></FormItem>
                     </div>
                      {currentUserRole !== 'admin' && form.getValues(`items.${index}.unitPrice`) !== products.find(p => p.id === item.productId)?.numericPrice && (
@@ -565,14 +525,12 @@ export default function DailyLedgerPage() {
                 {fields.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No items added to this transaction yet.</p>}
               </div>
               
-              {/* Summary Section: Subtotal, Tax, Grand Total */}
               <div className="pt-4 border-t space-y-3">
                  <div className="flex justify-between"><span className="text-muted-foreground">Subtotal:</span><span className="font-medium">{formatCurrency(currentSubtotal)}</span></div>
                  {(form.watch("type") === 'sale' && form.watch("entityType") !== 'unknown_customer') && <div className="flex justify-between"><span className="text-muted-foreground">Tax (GST {GST_RATE*100}%):</span><span className="font-medium">{formatCurrency(currentTax)}</span></div>}
                  <div className="flex justify-between text-lg font-bold"><span >Grand Total:</span><span>{formatCurrency(currentGrandTotal)}</span></div>
               </div>
 
-              {/* Payment Details Section */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                  <FormField control={form.control} name="paymentMethod" render={({ field }) => (
                     <FormItem><FormLabel>Payment Method</FormLabel>
@@ -607,7 +565,6 @@ export default function DailyLedgerPage() {
         </Form>
       </Card>
 
-      {/* Display Ledger Entries for the selectedDate */}
       <Card className="mt-8 shadow-lg rounded-xl">
         <CardHeader><CardTitle className="font-headline text-foreground">Entries for {format(parseISO(selectedDate), "MMMM dd, yyyy")}</CardTitle></CardHeader>
         <CardContent>
@@ -630,7 +587,6 @@ export default function DailyLedgerPage() {
         </CardContent>
       </Card>
 
-      {/* New Customer Dialog */}
       <Dialog open={isNewCustomerDialogOpen} onOpenChange={setIsNewCustomerDialogOpen}>
         <DialogContent><DialogHeader><DialogTitle>Add New Customer</DialogTitle><DialogDescription>Quickly add a new customer to the database.</DialogDescription></DialogHeader>
           <Form {...newCustomerForm}><form onSubmit={newCustomerForm.handleSubmit(onNewCustomerSubmit)} className="space-y-4">
@@ -640,7 +596,6 @@ export default function DailyLedgerPage() {
           </form></Form>
         </DialogContent>
       </Dialog>
-      {/* New Seller Dialog */}
       <Dialog open={isNewSellerDialogOpen} onOpenChange={setIsNewSellerDialogOpen}>
          <DialogContent><DialogHeader><DialogTitle>Add New Seller</DialogTitle><DialogDescription>Quickly add a new seller to the database.</DialogDescription></DialogHeader>
           <Form {...newSellerForm}><form onSubmit={newSellerForm.handleSubmit(onNewSellerSubmit)} className="space-y-4">

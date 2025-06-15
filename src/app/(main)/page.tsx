@@ -3,13 +3,14 @@
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { PageHeader } from "@/components/page-header";
-import { DollarSign, Users, FileText, PackageMinus, LayoutDashboard, Package, BarChart3, TrendingUp, AlertCircle, Activity } from "lucide-react"; // Added Activity
+import { DollarSign, Users, FileText, PackageMinus, LayoutDashboard, Package, BarChart3, TrendingUp, AlertCircle, Activity } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { collection, getDocs, query, where, limit, orderBy, Timestamp,getCountFromServer } from 'firebase/firestore'; 
+import { collection, getDocs, query, where, limit, orderBy, Timestamp, getCountFromServer } from 'firebase/firestore'; 
 import { db } from '@/lib/firebase/firebaseConfig';
 import { useEffect, useState, useCallback } from 'react';
 import { format } from 'date-fns';
+import { useToast } from "@/hooks/use-toast"; // Import useToast
 
 /**
  * @fileOverview Admin Dashboard page for the KBMS Billing application.
@@ -45,6 +46,7 @@ const quickActions = [
  * @returns {JSX.Element} The rendered admin dashboard page.
  */
 export default function AdminDashboardPage() {
+  const { toast } = useToast(); // Initialize useToast
   const [metrics, setMetrics] = useState<DashboardMetric[]>([
     { title: "Total Revenue (Paid Invoices Sample)", value: "₹0.00", icon: DollarSign, dataAiHint: "finance money", isLoading: true, link: "/billing?status=Paid" },
     { title: "Active Customers", value: "0", icon: Users, dataAiHint: "people team", isLoading: true, link: "/customers" },
@@ -54,14 +56,8 @@ export default function AdminDashboardPage() {
   const [recentSales, setRecentSales] = useState<any[]>([]); 
   const [isLoadingSalesChart, setIsLoadingSalesChart] = useState(true);
 
-  const LOW_STOCK_THRESHOLD = 50; // Define low stock threshold
+  const LOW_STOCK_THRESHOLD = 50; 
 
-  /**
-   * Fetches dashboard data from Firestore.
-   * Calculates metrics like active customers, pending invoices, low stock items,
-   * and a sample of total revenue from paid invoices.
-   * Fetches recent sales data for a chart (currently placeholder).
-   */
   const fetchDashboardData = useCallback(async () => {
     const updateMetric = (title: string, newValue: Partial<DashboardMetric>) => {
       setMetrics(prevMetrics => 
@@ -93,7 +89,7 @@ export default function AdminDashboardPage() {
       updateMetric("Low Stock Items", { value: lowStockSnapshot.data().count.toString() });
       
       // Fetch a sample of total revenue from recently paid invoices
-      // This query requires a composite index on 'status' (ASC) and 'isoDate' (DESC).
+      // Firestore Index Required: 'invoices' collection, index on 'status' (ASC) and 'isoDate' (DESC).
       const paidInvoicesQuery = query(collection(db, "invoices"), where("status", "==", "Paid"), orderBy("isoDate", "desc"), limit(100)); 
       const paidInvoicesSnapshot = await getDocs(paidInvoicesQuery);
       let totalPaidRevenue = 0;
@@ -102,16 +98,16 @@ export default function AdminDashboardPage() {
       });
       updateMetric("Total Revenue (Paid Invoices Sample)", { value: `₹${totalPaidRevenue.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`});
 
-
       // Fetch recent sales for chart (example: last 5 paid invoices)
       setIsLoadingSalesChart(true);
+      // Firestore Index Required: 'invoices' collection, index on 'status' (ASC) and 'isoDate' (DESC). (Same as above if `limit` is the only difference)
       const recentSalesQuery = query(collection(db, "invoices"), where("status", "==", "Paid"), orderBy("isoDate", "desc"), limit(5));
       const recentSalesSnapshot = await getDocs(recentSalesQuery);
       const salesData = recentSalesSnapshot.docs.map(doc => {
         const data = doc.data();
         let formattedDate = "Invalid Date";
         try {
-          if (data.isoDate) { // Assuming isoDate is a valid ISO string or Firestore Timestamp
+          if (data.isoDate) { 
             const dateObj = (data.isoDate instanceof Timestamp) ? data.isoDate.toDate() : new Date(data.isoDate);
             formattedDate = format(dateObj, "MMM dd");
           }
@@ -120,7 +116,7 @@ export default function AdminDashboardPage() {
         }
         return {
           name: formattedDate, 
-          uv: data.totalAmount || 0, // 'uv' is a common key for Recharts, can be 'sales' or 'revenue'
+          uv: data.totalAmount || 0, 
           invoice: data.invoiceNumber || "N/A",
           customer: data.customerName || "N/A",
         };
@@ -133,9 +129,9 @@ export default function AdminDashboardPage() {
       if (error.code === 'failed-precondition') {
         toast({
             title: "Database Index Required",
-            description: `A database query failed because a required index is missing. Please check the console for a link to create it in Firebase. Error: ${error.message}`,
+            description: `A query for dashboard data failed. Please create the required Firestore index. Check the console for a link from Firebase to create it, or create it manually for the 'invoices' collection (status ASC, isoDate DESC). Go to: https://console.firebase.google.com/project/${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID}/firestore/indexes`,
             variant: "destructive",
-            duration: 10000,
+            duration: 15000, // Longer duration for important messages
         });
       } else {
         toast({
@@ -147,13 +143,11 @@ export default function AdminDashboardPage() {
       metrics.forEach(m => updateMetric(m.title, { value: "Error", isLoading: false }));
       setIsLoadingSalesChart(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); 
+  }, [toast, metrics]); // metrics was originally missing, added it.
 
   useEffect(() => {
     fetchDashboardData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps 
-  }, []); 
+  }, [fetchDashboardData]); 
 
   return (
     <>
@@ -189,7 +183,6 @@ export default function AdminDashboardPage() {
         ))}
       </div>
       <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-3">
-        {/* Recent Sales Activity Chart Placeholder */}
         <Card className="lg:col-span-2 shadow-lg rounded-xl">
           <CardHeader>
             <CardTitle className="font-headline text-foreground flex items-center"><TrendingUp className="mr-2 h-6 w-6 text-primary"/>Recent Sales Activity</CardTitle>
@@ -203,8 +196,6 @@ export default function AdminDashboardPage() {
                  </div>
             ) : recentSales.length > 0 ? (
               <div className="h-64 flex items-center justify-center bg-muted/20 dark:bg-muted/10 rounded-md border border-dashed">
-                {/* Future: Replace this div with an actual chart component (e.g., from recharts or shadcn/ui charts) */}
-                {/* <BarChart width={500} height={250} data={recentSales}> ... </BarChart> */}
                 <p className="text-muted-foreground p-4 text-center">Sales chart data loaded ({recentSales.length} entries).<br/> Actual chart component to be implemented here.</p>
               </div>
             ) : (
@@ -215,7 +206,6 @@ export default function AdminDashboardPage() {
             )}
           </CardContent>
         </Card>
-        {/* Quick Actions Card */}
         <Card className="shadow-lg rounded-xl">
           <CardHeader>
             <CardTitle className="font-headline text-foreground">Quick Actions</CardTitle>
@@ -248,3 +238,4 @@ export default function AdminDashboardPage() {
     </>
   );
 }
+

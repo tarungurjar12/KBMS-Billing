@@ -3,12 +3,12 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"; // Removed CardFooter as it's not used
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/page-header";
-import { CreditCard, PlusCircle, MoreHorizontal, Edit, Trash2, DollarSign } from "lucide-react"; // Added DollarSign
+import { CreditCard, PlusCircle, MoreHorizontal, Edit, Trash2, DollarSign } from "lucide-react"; 
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -105,7 +105,7 @@ export default function PaymentsPage() {
   const fetchPayments = useCallback(async () => {
     setIsLoading(true);
     try {
-      // Query requires an index on 'isoDate' (DESC).
+      // Firestore Index Required: 'payments' collection, index on 'isoDate' (DESC).
       const q = query(collection(db, "payments"), orderBy("isoDate", "desc"));
       const querySnapshot = await getDocs(q);
       const fetchedPayments = querySnapshot.docs.map(docSnapshot => {
@@ -146,9 +146,9 @@ export default function PaymentsPage() {
        if (error.code === 'failed-precondition') {
         toast({
             title: "Database Index Required",
-            description: `A query for payments failed. Please ensure the necessary Firestore index for 'isoDate' (descending) is created. Check console for link. Error: ${error.message}`,
+            description: `A query for payments failed. Please create the required Firestore index for 'payments' (orderBy 'isoDate' descending). Check console for a link from Firebase or create manually. Go to: https://console.firebase.google.com/project/${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID}/firestore/indexes`,
             variant: "destructive",
-            duration: 10000,
+            duration: 15000,
         });
       } else {
         toast({ title: "Database Error", description: `Could not load payment records: ${error.message}`, variant: "destructive" });
@@ -196,7 +196,6 @@ export default function PaymentsPage() {
 
       if (editingPayment) { 
         const paymentRef = doc(db, "payments", editingPayment.id);
-        // createdAt is not part of dataToSave if editing, so original is preserved
         await updateDoc(paymentRef, dataToSave); 
         toast({ title: "Payment Updated", description: "Payment record updated successfully." });
       } else { 
@@ -223,6 +222,8 @@ export default function PaymentsPage() {
   };
   
   const handleDeletePayment = async (paymentId: string) => {
+    // Future: Consider soft delete or archiving instead of hard delete for financial records.
+    // For now, it's a hard delete.
     try {
         await deleteDoc(doc(db, "payments", paymentId));
         toast({ title: "Payment Deleted", description: "Payment record deleted successfully." });
@@ -409,3 +410,4 @@ export default function PaymentsPage() {
     </>
   );
 }
+

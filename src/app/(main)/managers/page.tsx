@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PageHeader } from "@/components/page-header";
-import { UserCog, PlusCircle, MoreHorizontal, ShieldAlert, ShieldCheck, KeyRound, Users } from "lucide-react"; // Added Users icon
+import { UserCog, PlusCircle, MoreHorizontal, ShieldAlert, ShieldCheck, KeyRound, Users } from "lucide-react"; 
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -77,7 +77,8 @@ export default function ManageManagersPage() {
   const fetchManagers = useCallback(async () => {
     setIsLoading(true);
     try {
-      // Query requires a composite index on 'role' (ASC) and 'name' (ASC).
+      // Firestore Index Required: 'users' collection, index on 'role' (ASC) and 'name' (ASC).
+      // This is needed for the where("role", ...) combined with orderBy("name", ...).
       const q = query(collection(db, "users"), where("role", "==", "store_manager"), orderBy("name", "asc"));
       const querySnapshot = await getDocs(q);
       const fetchedManagers = querySnapshot.docs.map(docSnapshot => {
@@ -99,9 +100,9 @@ export default function ManageManagersPage() {
        if (error.code === 'failed-precondition') {
         toast({
             title: "Database Index Required",
-            description: `A query for managers failed. Please ensure the necessary Firestore index is created. Check console for a link to create it. Error: ${error.message}`,
+            description: `A query for managers failed. Please create the required Firestore index for 'users' (role ASC, name ASC). Check console for a link from Firebase or create manually. Go to: https://console.firebase.google.com/project/${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID}/firestore/indexes`,
             variant: "destructive",
-            duration: 10000,
+            duration: 15000,
         });
       } else {
         toast({ title: "Database Error", description: `Could not load managers: ${error.message}`, variant: "destructive" });
@@ -368,3 +369,4 @@ export default function ManageManagersPage() {
     </>
   );
 }
+

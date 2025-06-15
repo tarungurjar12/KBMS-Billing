@@ -82,7 +82,8 @@ export default function PricingRulesPage() {
   const fetchRules = useCallback(async () => {
     setIsLoading(true);
     try {
-      // Query requires a composite index on 'priority' (ASC) and 'name' (ASC).
+      // Firestore Index Required: 'pricingRules' collection, index on 'priority' (ASC) and 'name' (ASC).
+      // This is needed for the multiple orderBy clauses.
       const q = query(collection(db, "pricingRules"), orderBy("priority", "asc"), orderBy("name", "asc")); 
       const querySnapshot = await getDocs(q);
       const fetchedRules = querySnapshot.docs.map(docSnapshot => ({ id: docSnapshot.id, ...docSnapshot.data() } as PricingRule));
@@ -92,9 +93,9 @@ export default function PricingRulesPage() {
       if (error.code === 'failed-precondition') {
         toast({
             title: "Database Index Required",
-            description: `A query for pricing rules failed. Please ensure the necessary Firestore index is created (e.g., on 'priority' and 'name'). Check console for link. Error: ${error.message}`,
+            description: `A query for pricing rules failed. Please create the required Firestore index for 'pricingRules' (priority ASC, name ASC). Check console for a link from Firebase or create manually. Go to: https://console.firebase.google.com/project/${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID}/firestore/indexes`,
             variant: "destructive",
-            duration: 10000,
+            duration: 15000,
         });
       } else {
         toast({ title: "Database Error", description: `Could not load pricing rules: ${error.message}`, variant: "destructive" });
@@ -314,7 +315,6 @@ export default function PricingRulesPage() {
                 </CardFooter>
             </Card>
             ))}
-            {/* Placeholder card for adding new rule, if list is not empty */}
             {pricingRules.length > 0 && (
                 <Card 
                     className="shadow-lg rounded-xl border-dashed border-2 flex flex-col items-center justify-center hover:border-primary transition-colors cursor-pointer min-h-[200px] group" 
@@ -339,3 +339,4 @@ export default function PricingRulesPage() {
     </>
   );
 }
+

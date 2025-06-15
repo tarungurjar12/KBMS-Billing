@@ -7,11 +7,11 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/page-header";
-import { FileText, PlusCircle, MoreHorizontal, Download, Printer, Edit, Eye, Trash2, AlertCircle } from "lucide-react"; // Added AlertCircle
+import { FileText, PlusCircle, MoreHorizontal, Download, Printer, Edit, Eye, Trash2, AlertCircle } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
-import { collection, getDocs, doc, updateDoc, deleteDoc, query, orderBy, Timestamp } from 'firebase/firestore';
+import { collection, getDocs, doc, updateDoc, deleteDoc, query, orderBy, Timestamp, serverTimestamp } from 'firebase/firestore'; // Added serverTimestamp
 import { db } from '@/lib/firebase/firebaseConfig';
 import { format, parseISO } from 'date-fns';
 
@@ -58,6 +58,7 @@ export interface Invoice {
   createdBy?: string; // UID of the user who created the invoice
   createdAt?: Timestamp; // Firestore Timestamp of creation
   dueDate?: string; // Optional ISO date string for due date
+  updatedAt?: Timestamp; // Firestore Timestamp of last update
 }
 
 /**
@@ -82,17 +83,17 @@ export default function BillingPage() {
   const fetchInvoices = useCallback(async () => {
     setIsLoading(true);
     try {
-      // This query requires a composite index on 'isoDate' (DESC).
+      // Firestore Index Required: 'invoices' collection, index on 'isoDate' (DESC).
+      // This is needed for the orderBy clause.
       const q = query(collection(db, "invoices"), orderBy("isoDate", "desc"));
       const querySnapshot = await getDocs(q);
       const fetchedInvoices = querySnapshot.docs.map(docSnapshot => {
         const data = docSnapshot.data();
         let invoiceDate = "";
-        // Handle both ISO string and Firestore Timestamp for isoDate field
         if (data.isoDate) {
             if (typeof data.isoDate === 'string') {
                  try {
-                    invoiceDate = format(parseISO(data.isoDate), "MMM dd, yyyy"); // Use parseISO for ISO strings
+                    invoiceDate = format(parseISO(data.isoDate), "MMM dd, yyyy"); 
                 } catch (e) {
                     console.warn("Invalid isoDate string format:", data.isoDate, e);
                     invoiceDate = "Invalid Date";
@@ -100,15 +101,12 @@ export default function BillingPage() {
             } else if (data.isoDate instanceof Timestamp) {
                 invoiceDate = format(data.isoDate.toDate(), "MMM dd, yyyy");
             } else {
-                 invoiceDate = "Unknown Date"; // Fallback for unexpected type
+                 invoiceDate = "Unknown Date"; 
             }
+        } else if (data.createdAt instanceof Timestamp) { // Fallback to createdAt if isoDate is missing
+            invoiceDate = format(data.createdAt.toDate(), "MMM dd, yyyy");
         } else {
-            // Fallback if isoDate is missing, using createdAt if available
-            if (data.createdAt instanceof Timestamp) {
-                invoiceDate = format(data.createdAt.toDate(), "MMM dd, yyyy");
-            } else {
-                invoiceDate = "Date N/A";
-            }
+            invoiceDate = "Date N/A";
         }
 
         return {
@@ -129,6 +127,7 @@ export default function BillingPage() {
           createdBy: data.createdBy,
           createdAt: data.createdAt,
           dueDate: data.dueDate,
+          updatedAt: data.updatedAt,
         } as Invoice;
       });
       setInvoices(fetchedInvoices);
@@ -137,9 +136,9 @@ export default function BillingPage() {
       if (error.code === 'failed-precondition') {
         toast({
             title: "Database Index Required",
-            description: `A query for invoices failed. Please ensure the necessary Firestore index for 'isoDate' (descending) is created. Check console for link. Error: ${error.message}`,
+            description: `A query for invoices failed. Please create the required Firestore index for 'invoices' collection (orderBy 'isoDate' descending). Check console for a link from Firebase or create manually. Go to: https://console.firebase.google.com/project/${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID}/firestore/indexes`,
             variant: "destructive",
-            duration: 10000, // Longer duration for important messages
+            duration: 15000, 
         });
       } else {
         toast({ title: "Database Error", description: `Could not load invoices: ${error.message}`, variant: "destructive" });
@@ -264,7 +263,7 @@ export default function BillingPage() {
                           variant={getBadgeVariant(invoice.status)}
                           className={
                               invoice.status === "Paid" ? "bg-accent text-accent-foreground" : 
-                              invoice.status === "Partially Paid" ? "border-yellow-500 text-yellow-600 dark:border-yellow-400 dark:text-yellow-300 bg-transparent" : // Added bg-transparent for better theme compatibility
+                              invoice.status === "Partially Paid" ? "border-yellow-500 text-yellow-600 dark:border-yellow-400 dark:text-yellow-300 bg-transparent" : 
                               invoice.status === "Cancelled" ? "bg-muted text-muted-foreground border-muted-foreground/30" : ""
                           }
                       >
@@ -323,3 +322,4 @@ export default function BillingPage() {
     </>
   );
 }
+
