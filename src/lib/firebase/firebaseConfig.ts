@@ -3,14 +3,15 @@ import { initializeApp, getApps, getApp, type FirebaseOptions } from 'firebase/a
 import { getAuth } from 'firebase/auth';
 // import { getFirestore } from 'firebase/firestore'; // Import when ready for Firestore
 
+// Your web app's Firebase configuration
 const firebaseConfig: FirebaseOptions = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-  measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID, // Optional
+  apiKey: "AIzaSyBEM8txyg1-PYPbFNG9LH7PQL_xSItsB30",
+  authDomain: "kbms-billing.firebaseapp.com",
+  projectId: "kbms-billing",
+  storageBucket: "kbms-billing.appspot.com", // Corrected from your provided snippet which likely had a typo
+  messagingSenderId: "448501672122",
+  appId: "1:448501672122:web:ba56d20d8c1910ff6fba83"
+  // measurementId is optional
 };
 
 // Initialize Firebase
@@ -18,11 +19,6 @@ let app;
 
 // Check if Firebase is already initialized to prevent re-initialization
 if (!getApps().length) {
-  if (!firebaseConfig.apiKey) {
-    console.error("Firebase API Key is missing. Check your .env.local file and ensure NEXT_PUBLIC_FIREBASE_API_KEY is set.");
-    // Potentially throw an error or handle this case as appropriate for your app
-    // For now, we'll let initializeApp throw the error if critical configs are missing.
-  }
   app = initializeApp(firebaseConfig);
 } else {
   app = getApp();
