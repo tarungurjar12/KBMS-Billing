@@ -17,43 +17,46 @@ import { z } from "zod";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
-import { createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth'; // Firebase auth functions for user creation
-import { auth, db } from '@/lib/firebase/firebaseConfig'; // Firebase auth and db instances
-import { doc, setDoc, getDocs, collection, updateDoc, serverTimestamp, query, orderBy, Timestamp } from 'firebase/firestore'; // Firestore functions
+import { createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
+import { auth, db } from '@/lib/firebase/firebaseConfig';
+import { doc, setDoc, getDocs, collection, updateDoc, serverTimestamp, query, orderBy, Timestamp, where } from 'firebase/firestore'; // Added 'where'
 
 /**
  * @fileOverview Page for Admin to manage Store Manager accounts.
  * Allows Admin to:
- * - View a list of all managers from Firestore.
+ * - View a list of all managers from the 'users' collection in Firestore (filtered by role 'store_manager').
  * - Add new managers (creating their login credentials in Firebase Auth and profile in Firestore).
- * - Freeze/Unfreeze manager accounts (application-level status in Firestore).
- * - Reset passwords for managers (using Firebase Auth).
- * Manager accounts are never permanently deleted from Firestore to preserve historical data, only 'Frozen'.
- * Their Firebase Auth account can be disabled/deleted separately if needed, but this UI focuses on application status.
+ * - Freeze/Unfreeze manager accounts (updates 'status' field in Firestore).
+ * - Reset passwords for managers (using Firebase Auth's password reset email functionality).
+ * Manager accounts are 'Frozen' rather than deleted to preserve historical data.
  */
 
+/**
+ * Interface representing a Store Manager document in Firestore.
+ * This is typically stored in a 'users' collection with a 'role' field.
+ */
 export interface Manager {
-  id: string; // Firestore document ID (should be Firebase Auth UID)
+  id: string; // Firestore document ID (should be the same as Firebase Auth UID)
   name: string;
   email: string; // Used as User ID for login
-  status: "Active" | "Frozen";
+  status: "Active" | "Frozen"; // Application-level status
   authUid: string; // Firebase Auth UID
-  createdAt?: Timestamp; // Firestore Timestamp
-  // Future: lastLogin, role ('store_manager' explicitly)
+  role: "store_manager"; // Explicit role field
+  createdAt?: Timestamp; // Firestore Timestamp of creation
 }
 
-// Zod schema for the add manager form
+// Zod schema for the "Add New Manager" form validation
 const managerSchema = z.object({
   name: z.string().min(3, { message: "Name must be at least 3 characters." }),
   email: z.string().email({ message: "Invalid email address. This will be their login ID."}),
-  password: z.string().min(6, { message: "Password must be at least 6 characters." }),
+  password: z.string().min(6, { message: "Password must be at least 6 characters for security." }),
 });
 
 type ManagerFormValues = z.infer<typeof managerSchema>;
 
 /**
  * ManageManagersPage component.
- * Provides UI and logic for Admin to manage Store Manager accounts using Firebase.
+ * Provides UI and logic for Admin to manage Store Manager accounts using Firebase Auth and Firestore.
  * @returns {JSX.Element} The rendered manage managers page.
  */
 export default function ManageManagersPage() {
@@ -73,33 +76,37 @@ export default function ManageManagersPage() {
   });
 
   /**
-   * Fetches manager list from Firestore.
+   * Fetches the list of store managers from Firestore.
+   * Filters users by role 'store_manager' and orders them by name.
    */
   const fetchManagers = useCallback(async () => {
     setIsLoading(true);
     try {
+      // Query the 'users' collection, filtering for documents where role is 'store_manager'
       const q = query(collection(db, "users"), where("role", "==", "store_manager"), orderBy("name", "asc"));
       const querySnapshot = await getDocs(q);
       const fetchedManagers = querySnapshot.docs.map(docSnapshot => {
         const data = docSnapshot.data();
         return {
-          id: docSnapshot.id, // Firestore doc ID (which should be Auth UID)
+          id: docSnapshot.id, // Firestore document ID
           name: data.name,
           email: data.email,
           status: data.status || "Active", // Default to Active if status is missing
-          authUid: data.authUid,
+          authUid: data.authUid, // This should be the Firebase Auth UID
+          role: data.role, // Should be 'store_manager'
           createdAt: data.createdAt,
         } as Manager;
       });
       setManagers(fetchedManagers);
     } catch (error) {
       console.error("Error fetching managers: ", error);
-      toast({ title: "Error", description: "Could not load managers from database.", variant: "destructive" });
+      toast({ title: "Database Error", description: "Could not load managers from the database. Please try again.", variant: "destructive" });
     } finally {
       setIsLoading(false);
     }
   }, [toast]);
 
+  // Fetch managers when the component mounts
   useEffect(() => {
     fetchManagers();
   }, [fetchManagers]);
@@ -107,80 +114,94 @@ export default function ManageManagersPage() {
 
   /**
    * Handles submission of the "Add New Manager" form.
-   * Creates user in Firebase Auth and manager profile in Firestore 'users' collection with role 'store_manager'.
+   * 1. Creates a new user in Firebase Authentication.
+   * 2. Creates a corresponding manager profile in Firestore's 'users' collection,
+   *    using the Firebase Auth UID as the document ID and setting role to 'store_manager'.
+   * @param {ManagerFormValues} values - The validated form values.
    */
   const handleAddManagerSubmit = async (values: ManagerFormValues) => {
-    // Note: Creating users client-side like this is generally okay for admin panels,
-    // but for higher security, this could be a call to a Firebase Cloud Function with Admin SDK.
     try {
+      // Create user in Firebase Authentication
       const userCredential = await createUserWithEmailAndPassword(auth, values.email, values.password);
-      const newUserId = userCredential.user.uid;
+      const newUserId = userCredential.user.uid; // This is the Firebase Auth UID
       
-      const newManagerData = { 
+      // Prepare manager data for Firestore
+      const newManagerData: Omit<Manager, 'id' | 'createdAt'> & {createdAt: any} = { 
         name: values.name, 
         email: values.email, 
-        status: "Active", 
-        authUid: newUserId,
+        status: "Active", // Default status
+        authUid: newUserId, // Store the Auth UID
         role: "store_manager", // Explicitly set role
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp() // Firestore server-side timestamp
       };
       
-      await setDoc(doc(db, "users", newUserId), newManagerData); // Use authUid as doc ID in 'users' collection
+      // Create manager document in Firestore 'users' collection, using authUid as the document ID
+      await setDoc(doc(db, "users", newUserId), newManagerData); 
       
       toast({
-        title: "Manager Added",
-        description: `${values.name} has been added. They can now log in with the provided credentials.`,
+        title: "Manager Added Successfully",
+        description: `${values.name} can now log in. A password reset might be needed for them to set their own password if this was temporary.`,
       });
       fetchManagers(); // Refresh manager list
-      form.reset();
-      setIsAddManagerDialogOpen(false);
+      form.reset(); // Reset form fields
+      setIsAddManagerDialogOpen(false); // Close the dialog
     } catch (error: any) {
       console.error("Error adding manager: ", error);
-      let errorMessage = "Failed to add manager.";
+      let errorMessage = "Failed to add manager. Please check the details and try again.";
       if (error.code === 'auth/email-already-in-use') {
-        errorMessage = "This email is already registered. Please use a different email.";
+        errorMessage = "This email address is already registered. Please use a different email.";
       } else if (error.code === 'auth/weak-password') {
-        errorMessage = "The password is too weak. Please use a stronger password.";
+        errorMessage = "The password is too weak. Please use a stronger password (at least 6 characters).";
       }
-      toast({ title: "Error", description: errorMessage, variant: "destructive" });
+      toast({ title: "Adding Manager Failed", description: errorMessage, variant: "destructive" });
     }
   };
 
+  /**
+   * Opens the confirmation dialog for toggling a manager's account status.
+   * @param {Manager} manager - The manager whose status is to be toggled.
+   */
   const openToggleStatusDialog = (manager: Manager) => {
     setManagerToToggleStatus(manager);
     setIsToggleStatusConfirmOpen(true);
   };
 
   /**
-   * Toggles a manager's account status (Active/Frozen) in Firestore.
+   * Toggles a manager's account status (Active/Frozen) in their Firestore document.
+   * 'Frozen' status typically means the user cannot perform actions within the application,
+   * though their Firebase Auth account remains active unless disabled separately in Firebase Console.
    */
   const confirmToggleStatus = async () => {
     if (!managerToToggleStatus) return;
     const newStatus = managerToToggleStatus.status === "Active" ? "Frozen" : "Active";
     try {
-      const managerRef = doc(db, "users", managerToToggleStatus.authUid); // Use authUid as ID
+      const managerRef = doc(db, "users", managerToToggleStatus.authUid); // Use authUid to reference the document
       await updateDoc(managerRef, { status: newStatus });
       toast({
         title: `Manager Account ${newStatus === "Active" ? "Activated" : "Frozen"}`,
-        description: `${managerToToggleStatus.name}'s account is now ${newStatus.toLowerCase()}.`,
+        description: `${managerToToggleStatus.name}'s account status is now ${newStatus.toLowerCase()}.`,
       });
-      fetchManagers(); // Refresh list
+      fetchManagers(); // Refresh list to reflect the change
     } catch (error) {
       console.error("Error updating manager status: ", error);
-      toast({ title: "Error", description: "Failed to update manager status in database.", variant: "destructive" });
+      toast({ title: "Status Update Error", description: "Failed to update manager status in the database.", variant: "destructive" });
     } finally {
-        setIsToggleStatusConfirmOpen(false);
+        setIsToggleStatusConfirmOpen(false); // Close confirmation dialog
         setManagerToToggleStatus(null);
     }
   };
 
+  /**
+   * Opens the confirmation dialog for sending a password reset email.
+   * @param {Manager} manager - The manager for whom to reset the password.
+   */
   const openResetPasswordDialog = (manager: Manager) => {
     setManagerToResetPassword(manager);
     setIsResetPasswordConfirmOpen(true);
   };
 
   /**
-   * Sends a password reset email using Firebase Auth.
+   * Sends a password reset email to the manager using Firebase Authentication.
    */
   const confirmResetPassword = async () => {
     if (!managerToResetPassword) return;
@@ -188,17 +209,18 @@ export default function ManageManagersPage() {
       await sendPasswordResetEmail(auth, managerToResetPassword.email);
       toast({
         title: "Password Reset Email Sent",
-        description: `A password reset email has been sent to ${managerToResetPassword.email}.`,
+        description: `A password reset email has been successfully sent to ${managerToResetPassword.email}.`,
       });
     } catch (error: any) {
       console.error("Error sending password reset email: ", error);
-      toast({ title: "Error", description: error.message || "Failed to send password reset email.", variant: "destructive" });
+      toast({ title: "Password Reset Error", description: error.message || "Failed to send password reset email. Please try again.", variant: "destructive" });
     } finally {
-        setIsResetPasswordConfirmOpen(false);
+        setIsResetPasswordConfirmOpen(false); // Close confirmation dialog
         setManagerToResetPassword(null);
     }
   };
 
+  // Display loading state while fetching managers
   if (isLoading) {
     return <PageHeader title="Manage Managers" description="Loading manager data from database..." icon={UserCog} />;
   }
@@ -207,7 +229,7 @@ export default function ManageManagersPage() {
     <>
       <PageHeader
         title="Manage Managers"
-        description="Administer Store Manager accounts and permissions."
+        description="Administer Store Manager accounts, permissions, and status."
         icon={UserCog}
         actions={
           <Button onClick={() => { form.reset(); setIsAddManagerDialogOpen(true); }}>
@@ -220,13 +242,14 @@ export default function ManageManagersPage() {
       {/* Add Manager Dialog */}
       <Dialog open={isAddManagerDialogOpen} onOpenChange={(isOpen) => {
           setIsAddManagerDialogOpen(isOpen);
-          if (!isOpen) form.reset();
+          if (!isOpen) form.reset(); // Reset form when dialog closes
         }}>
         <DialogContent className="sm:max-w-[480px]">
           <DialogHeader>
             <DialogTitle>Add New Store Manager</DialogTitle>
             <DialogDescription>
               Fill in the details to create a new Store Manager account. The email will be their login ID.
+              The manager will receive instructions to set their password if this is temporary.
             </DialogDescription>
           </DialogHeader>
           <Form {...form}>
@@ -249,15 +272,17 @@ export default function ManageManagersPage() {
               />
               <FormField control={form.control} name="password" render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Temporary Password</FormLabel>
-                    <FormControl><Input type="password" placeholder="Set a temporary password" {...field} /></FormControl>
+                    <FormLabel>Initial Password</FormLabel>
+                    <FormControl><Input type="password" placeholder="Set an initial password" {...field} /></FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
               <DialogFooter className="pt-4">
                 <DialogClose asChild><Button type="button" variant="outline">Cancel</Button></DialogClose>
-                <Button type="submit">Add Manager</Button>
+                <Button type="submit" disabled={form.formState.isSubmitting}>
+                  {form.formState.isSubmitting ? "Adding Manager..." : "Add Manager"}
+                </Button>
               </DialogFooter>
             </form>
           </Form>
@@ -272,8 +297,8 @@ export default function ManageManagersPage() {
             <AlertDialogDescription>
               Are you sure you want to {managerToToggleStatus?.status === "Active" ? "freeze" : "unfreeze"} the account for {managerToToggleStatus?.name}?
               {managerToToggleStatus?.status === "Active" 
-                ? " Freezing will prevent them from logging in (application-level check)."
-                : " Unfreezing will allow them to log in again."}
+                ? " Freezing will change their application status, potentially limiting access."
+                : " Unfreezing will restore their active application status."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -291,7 +316,7 @@ export default function ManageManagersPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Confirm Password Reset</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to send a password reset email to {managerToResetPassword?.name} ({managerToResetPassword?.email})?
+              This will send a password reset link to {managerToResetPassword?.name} ({managerToResetPassword?.email}). They can use this link to set a new password. Are you sure?
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -303,6 +328,7 @@ export default function ManageManagersPage() {
         </AlertDialogContent>
       </AlertDialog>
 
+      {/* Manager List Table */}
       <Card className="shadow-lg rounded-xl">
         <CardHeader>
           <CardTitle className="font-headline text-foreground">Manager List</CardTitle>
@@ -346,7 +372,7 @@ export default function ManageManagersPage() {
                             )}
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => openResetPasswordDialog(manager)}>
-                            <KeyRound className="mr-2 h-4 w-4" /> Reset Password
+                            <KeyRound className="mr-2 h-4 w-4" /> Send Password Reset
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -355,7 +381,7 @@ export default function ManageManagersPage() {
                 ))}
               </TableBody>
             </Table>
-          ) : (
+          ) : ( // Display message if no managers are found
             <div className="text-center py-8 text-muted-foreground">
                 No managers found in the database. Click "Add New Manager" to get started.
             </div>
@@ -365,3 +391,4 @@ export default function ManageManagersPage() {
     </>
   );
 }
+

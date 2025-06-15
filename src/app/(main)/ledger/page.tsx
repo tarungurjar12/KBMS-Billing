@@ -11,124 +11,169 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose } from '@/components/ui/dialog';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
-import { useForm, useFieldArray } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
-import { BookOpen, PlusCircle, Trash2, Search, Users, Truck, DollarSign, Edit } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
+import { useForm, useFieldArray, Controller } from 'react-hook-form';
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import { BookOpen, PlusCircle, Trash2, Search, Users, Truck, DollarSign, Edit, XCircle } from 'lucide-react';
+import { useToast } from "@/hooks/use-toast";
 import { collection, getDocs, addDoc, serverTimestamp, query, orderBy, where, doc, runTransaction, Timestamp } from 'firebase/firestore';
 import { db, auth } from '@/lib/firebase/firebaseConfig';
+import type { User as FirebaseUser } from "firebase/auth";
 import type { Customer } from './../customers/page';
 import type { Seller } from './../sellers/page';
-import type { Product } from './../products/page';
+import type { Product } from './../products/page'; // Using Product type from products page
 import { format, parseISO } from 'date-fns';
 
 /**
  * @fileOverview Daily Ledger page for recording sales and purchases.
- * Allows selection of existing customers/sellers or adding new ones.
- * Integrates with product stock and saves entries to Firestore.
- * Price editing is admin-only.
+ * Allows selection of existing customers/sellers or adding new ones on the fly.
+ * Supports "Unknown Customer" for cash sales.
+ * Integrates with product stock, updating Firestore.
+ * Price editing for ledger items is admin-only.
+ * Data is fetched from and saved to Firebase Firestore.
  */
 
 // Interfaces
+/**
+ * Interface for individual items within a ledger entry.
+ */
 interface LedgerItem {
   productId: string;
   productName: string;
   quantity: number;
-  unitPrice: number; // Price per unit
-  totalPrice: number; // quantity * unitPrice
+  unitPrice: number; // Price per unit for this specific transaction
+  totalPrice: number; // Calculated: quantity * unitPrice
   unitOfMeasure: string;
 }
 
+/**
+ * Interface representing a Ledger Entry document in Firestore.
+ */
 export interface LedgerEntry {
-  id?: string; // Firestore document ID
-  date: string; // ISOString YYYY-MM-DD
-  type: 'sale' | 'purchase' | 'stock_adjustment'; // Extended for future
-  entityType: 'customer' | 'seller' | 'internal';
-  entityId?: string; // Customer or Seller ID
-  entityName: string; // Customer/Seller Name, or "Unknown Customer", or "Stock Adjustment"
-  items: LedgerItem[];
-  subTotal: number;
-  taxAmount: number; // Combined GST or other taxes
-  grandTotal: number;
-  paymentMethod?: string;
-  paymentStatus?: 'paid' | 'pending' | 'partial';
-  notes?: string;
-  createdBy: string; // UID of user who created entry
-  createdAt: Timestamp;
+  id?: string; // Firestore document ID, generated automatically
+  date: string; // Date of transaction, stored as ISOString YYYY-MM-DD
+  type: 'sale' | 'purchase'; // Type of transaction
+  entityType: 'customer' | 'seller' | 'unknown_customer'; // Type of entity involved
+  entityId?: string; // Firestore ID of Customer or Seller (if not 'unknown_customer')
+  entityName: string; // Name of Customer/Seller, or "Unknown Customer"
+  items: LedgerItem[]; // Array of products involved in the transaction
+  subTotal: number; // Sum of totalPrice for all items
+  taxAmount: number; // Calculated tax amount (e.g., GST)
+  grandTotal: number; // subTotal + taxAmount
+  paymentMethod?: string; // e.g., "Cash", "UPI", "Card"
+  paymentStatus?: 'paid' | 'pending' | 'partial'; // Status of payment
+  notes?: string; // Optional notes for the transaction
+  createdBy: string; // UID of the Firebase user who created the entry
+  createdAt: Timestamp; // Firestore Timestamp when the entry was created
 }
 
-// Zod Schemas
+// Zod Schemas for form validation
 const ledgerItemSchema = z.object({
-  productId: z.string().min(1, "Product is required."),
-  productName: z.string(), // For display, not directly submitted but part of the item object
-  quantity: z.number().min(1, "Quantity must be at least 1."),
-  unitPrice: z.number().min(0, "Price cannot be negative."),
-  totalPrice: z.number(), // Calculated
-  unitOfMeasure: z.string(),
+  productId: z.string().min(1, "Product selection is required."),
+  productName: z.string(), // Included for form array management, not directly submitted if derived
+  quantity: z.number().min(0.01, "Quantity must be greater than 0."), // Allow fractional quantities
+  unitPrice: z.number().min(0, "Unit price cannot be negative."),
+  totalPrice: z.number(), // This will be calculated in the form logic
+  unitOfMeasure: z.string(), // Derived from product
 });
 
 const ledgerEntrySchema = z.object({
-  date: z.string().refine(val => !isNaN(parseISO(val).valueOf()), { message: "Invalid date" }),
-  type: z.enum(['sale', 'purchase']),
-  entityType: z.enum(['customer', 'seller', 'unknown_customer']),
+  date: z.string().refine(val => !isNaN(parseISO(val).valueOf()), { message: "A valid date is required." }),
+  type: z.enum(['sale', 'purchase'], { required_error: "Transaction type is required." }),
+  entityType: z.enum(['customer', 'seller', 'unknown_customer'], { required_error: "Entity type is required." }),
   entityId: z.string().optional(),
-  entityName: z.string().min(1, "Entity name is required (or select Unknown)."),
-  items: z.array(ledgerItemSchema).min(1, "At least one item is required."),
+  entityName: z.string().min(1, "Entity name is required (select Customer/Seller or use 'Unknown Customer')."),
+  items: z.array(ledgerItemSchema).min(1, "At least one item must be added to the ledger."),
   paymentMethod: z.string().optional(),
   paymentStatus: z.enum(['paid', 'pending', 'partial']).optional(),
   notes: z.string().optional(),
 });
 type LedgerFormValues = z.infer<typeof ledgerEntrySchema>;
 
-const newCustomerSchema = z.object({ name: z.string().min(2), phone: z.string().min(10) });
+// Schemas for quick-adding new customers/sellers
+const newCustomerSchema = z.object({ name: z.string().min(2, "Name requires at least 2 chars."), phone: z.string().min(10, "Phone requires at least 10 digits.") });
 type NewCustomerFormValues = z.infer<typeof newCustomerSchema>;
-const newSellerSchema = z.object({ name: z.string().min(2), phone: z.string().min(10) });
+const newSellerSchema = z.object({ name: z.string().min(2, "Name requires at least 2 chars."), phone: z.string().min(10, "Phone requires at least 10 digits.") });
 type NewSellerFormValues = z.infer<typeof newSellerSchema>;
 
+// Constants
+const LOW_STOCK_THRESHOLD = 10; // Example threshold for low stock warning
+const BUSINESS_STATE_CODE = "29"; // Example: Karnataka state code for GST (if applicable)
+const GST_RATE = 0.18; // Example GST rate (18%)
 
-const LOW_STOCK_THRESHOLD = 10; // Example
-const BUSINESS_STATE_CODE = "29"; // Example: Karnataka
-const GST_RATE = 0.18; // Example
-
+/**
+ * Retrieves a cookie value by name.
+ * Used here to determine the current user's role for admin-only price editing.
+ * @param {string} name - The name of the cookie.
+ * @returns {string | undefined} The cookie value or undefined if not found.
+ */
+const getCookie = (name: string): string | undefined => {
+  if (typeof window === 'undefined') return undefined;
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  if (parts.length === 2) return parts.pop()?.split(';').shift();
+  return undefined;
+};
 
 /**
  * DailyLedgerPage component.
+ * Handles recording of daily sales and purchases, updating stock, and interacting with Firestore.
  * @returns {JSX.Element} The rendered ledger page.
  */
 export default function DailyLedgerPage() {
   const { toast } = useToast();
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true); // For initial data load & date changes
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [sellers, setSellers] = useState<Seller[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
-  const [ledgerEntries, setLedgerEntries] = useState<LedgerEntry[]>([]);
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [ledgerEntries, setLedgerEntries] = useState<LedgerEntry[]>([]); // Entries for the selected date
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]); // Default to today
   
   const [isNewCustomerDialogOpen, setIsNewCustomerDialogOpen] = useState(false);
   const [isNewSellerDialogOpen, setIsNewSellerDialogOpen] = useState(false);
   const [productSearchTerm, setProductSearchTerm] = useState('');
   
-  const currentUserRole = typeof window !== 'undefined' ? window.document.cookie.includes('userRole=admin') ? 'admin' : 'store_manager' : 'store_manager';
+  // Determine user role for conditional UI (e.g., price editing)
+  const [currentUserRole, setCurrentUserRole] = useState<'admin' | 'store_manager' | undefined>();
 
+  useEffect(() => {
+    const role = getCookie('userRole');
+    if (role === 'admin' || role === 'store_manager') {
+      setCurrentUserRole(role);
+    }
+  }, []);
+
+  // Main form for ledger entry
   const form = useForm<LedgerFormValues>({
     resolver: zodResolver(ledgerEntrySchema),
     defaultValues: {
       date: selectedDate,
       type: 'sale',
       entityType: 'customer',
+      entityName: '',
       items: [],
-      paymentStatus: 'paid',
+      paymentStatus: 'paid', // Default payment status
+      paymentMethod: 'cash', // Default payment method
     },
   });
   const { fields, append, remove, update } = useFieldArray({ control: form.control, name: "items" });
 
-  const newCustomerForm = useForm<NewCustomerFormValues>({ resolver: zodResolver(newCustomerSchema) });
-  const newSellerForm = useForm<NewSellerFormValues>({ resolver: zodResolver(newSellerSchema) });
+  // Forms for adding new customer/seller dialogs
+  const newCustomerForm = useForm<NewCustomerFormValues>({ resolver: zodResolver(newCustomerSchema), defaultValues: {name: "", phone: ""} });
+  const newSellerForm = useForm<NewSellerFormValues>({ resolver: zodResolver(newSellerSchema), defaultValues: {name: "", phone: ""} });
   
-  const formatCurrency = useCallback((num: number) => `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, []);
+  /**
+   * Formats a number into Indian Rupee currency string.
+   * @param {number} num - The number to format.
+   * @returns {string} Currency string (e.g., "₹1,234.56").
+   */
+  const formatCurrency = useCallback((num: number): string => `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, []);
 
-  // Fetch initial data (customers, sellers, products, ledger entries for selectedDate)
+  /**
+   * Fetches initial data: customers, sellers, products from Firestore.
+   * Also fetches ledger entries for the `selectedDate`.
+   * @param {string} date - The date for which to fetch ledger entries (YYYY-MM-DD).
+   */
   const fetchData = useCallback(async (date: string) => {
     setIsLoading(true);
     try {
@@ -138,43 +183,90 @@ export default function DailyLedgerPage() {
         getDocs(query(collection(db, "products"), orderBy("name"))),
         getDocs(query(collection(db, "ledgerEntries"), where("date", "==", date), orderBy("createdAt", "desc")))
       ]);
+      
       setCustomers(custSnap.docs.map(d => ({ id: d.id, ...d.data() } as Customer)));
       setSellers(sellSnap.docs.map(d => ({ id: d.id, ...d.data() } as Seller)));
-      setProducts(prodSnap.docs.map(d => ({ id: d.id, ...d.data(), price: formatCurrency(d.data().numericPrice), displayPrice: formatCurrency(d.data().numericPrice) } as Product))); // Add displayPrice
-      setLedgerEntries(entrySnap.docs.map(d => ({ id: d.id, ...d.data(), createdAt: d.data().createdAt.toDate() } as unknown as LedgerEntry)));
+      // Ensure products have displayPrice formatted
+      setProducts(prodSnap.docs.map(d => {
+        const data = d.data();
+        return { 
+            id: d.id, 
+            ...data, 
+            displayPrice: formatCurrency(data.numericPrice || 0) 
+        } as Product;
+      }));
+      // Transform ledger entries, converting Firestore Timestamps to Date objects for display if needed
+      setLedgerEntries(entrySnap.docs.map(d => {
+        const data = d.data();
+        return { 
+            id: d.id, 
+            ...data, 
+            createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : new Date() 
+        } as unknown as LedgerEntry; // Cast needed due to Timestamp conversion
+      }));
+
     } catch (error) {
-      console.error("Error fetching data:", error);
-      toast({ title: "Error", description: "Could not load data.", variant: "destructive" });
+      console.error("Error fetching data for ledger:", error);
+      toast({ title: "Data Load Error", description: "Could not load required data for the ledger. Please try again.", variant: "destructive" });
     } finally {
       setIsLoading(false);
     }
   }, [toast, formatCurrency]);
 
+  // Fetch data when the component mounts or when selectedDate changes
   useEffect(() => {
     fetchData(selectedDate);
   }, [selectedDate, fetchData]);
 
-  // Watch for entityType changes to clear entityId/Name if switching to "Unknown Customer"
+  // Watch for changes in transaction type to update entity type and clear entity selection
+  const transactionTypeWatcher = form.watch("type");
+  useEffect(() => {
+    form.setValue("entityType", transactionTypeWatcher === 'sale' ? 'customer' : 'seller');
+    form.setValue("entityId", undefined);
+    form.setValue("entityName", "");
+    if (transactionTypeWatcher === 'sale') {
+      form.setValue("paymentStatus", "paid"); // Default for sales
+    } else {
+      form.setValue("paymentStatus", "pending"); // Default for purchases
+    }
+  }, [transactionTypeWatcher, form]);
+
+  // Watch for changes in entity type to handle "Unknown Customer"
   const entityTypeWatcher = form.watch("entityType");
   useEffect(() => {
     if (entityTypeWatcher === "unknown_customer") {
-      form.setValue("entityId", undefined);
-      form.setValue("entityName", "Unknown Customer");
-    } else if (form.getValues("entityName") === "Unknown Customer") {
-         form.setValue("entityName", ""); // Clear if switching away from unknown
+      form.setValue("entityId", undefined); // No ID for unknown customer
+      form.setValue("entityName", "Unknown Customer"); // Set name explicitly
+      form.setValue("paymentStatus", "paid"); // Unknown customers usually pay immediately
+    } else if (form.getValues("entityName") === "Unknown Customer" && entityTypeWatcher !== "unknown_customer") {
+         form.setValue("entityName", ""); // Clear "Unknown Customer" if switching to known entity
     }
   }, [entityTypeWatcher, form]);
 
+  /**
+   * Adds a selected product to the ledger items array or updates its quantity if already present.
+   * @param {Product} product - The product to add.
+   */
   const handleAddProductToLedger = (product: Product) => {
     const existingItemIndex = fields.findIndex(item => item.productId === product.id);
-    if (existingItemIndex > -1) {
+    if (existingItemIndex > -1) { // Item already in ledger
         const currentItem = fields[existingItemIndex];
+        // Ensure stock check for sales
+        if (form.getValues("type") === 'sale' && currentItem.quantity + 1 > product.stock) {
+            toast({ title: "Stock Alert", description: `Cannot add more ${product.name}. Max available: ${product.stock}`, variant: "destructive"});
+            return;
+        }
         update(existingItemIndex, {
             ...currentItem,
             quantity: currentItem.quantity + 1,
             totalPrice: (currentItem.quantity + 1) * currentItem.unitPrice,
         });
-    } else {
+    } else { // New item for ledger
+        // Ensure stock check for sales
+        if (form.getValues("type") === 'sale' && 1 > product.stock) {
+             toast({ title: "Out of Stock", description: `${product.name} is out of stock.`, variant: "destructive"});
+            return;
+        }
         append({
             productId: product.id,
             productName: product.name,
@@ -184,137 +276,187 @@ export default function DailyLedgerPage() {
             unitOfMeasure: product.unitOfMeasure,
         });
     }
-    setProductSearchTerm('');
+    setProductSearchTerm(''); // Clear search term after adding
   };
 
+  /**
+   * Handles changes to an item's quantity in the ledger.
+   * Removes item if quantity becomes less than or equal to 0.
+   * @param {number} index - The index of the item in the `fields` array.
+   * @param {number} quantity - The new quantity.
+   */
   const handleItemQuantityChange = (index: number, quantity: number) => {
     const item = fields[index];
-    if (quantity < 1) { // Remove item if quantity is less than 1
+    const productDetails = products.find(p => p.id === item.productId);
+
+    if (quantity <= 0) { // Remove item if quantity is zero or less
         remove(index);
         return;
+    }
+    // Check stock for sales
+    if (form.getValues("type") === 'sale' && productDetails && quantity > productDetails.stock) {
+        toast({ title: "Stock Alert", description: `Quantity for ${item.productName} exceeds stock (${productDetails.stock}). Setting to max.`, variant: "destructive"});
+        quantity = productDetails.stock;
     }
     update(index, { ...item, quantity, totalPrice: quantity * item.unitPrice });
   };
   
+  /**
+   * Handles changes to an item's unit price in the ledger. (Admin-only)
+   * @param {number} index - The index of the item.
+   * @param {number} unitPrice - The new unit price.
+   */
   const handleItemPriceChange = (index: number, unitPrice: number) => {
-    if (currentUserRole !== 'admin') {
-        toast({ title: "Permission Denied", description: "Only Admins can change item prices.", variant: "destructive" });
+    if (currentUserRole !== 'admin') { // Admin check
+        toast({ title: "Permission Denied", description: "Only Admins can change item prices directly in the ledger.", variant: "destructive" });
+        // Optionally revert the input field visually if not using Controller
+        // For now, relies on disabled state of input for non-admins.
         return;
     }
+    if (unitPrice < 0) unitPrice = 0; // Prevent negative price
     const item = fields[index];
     update(index, { ...item, unitPrice, totalPrice: item.quantity * unitPrice });
   };
 
-
+  /**
+   * Submits the ledger entry form.
+   * Performs a Firestore transaction to:
+   *  1. Add the new ledger entry to the 'ledgerEntries' collection.
+   *  2. Update product stock levels in the 'products' collection.
+   * @param {LedgerFormValues} data - The validated form data.
+   */
   const onLedgerSubmit = async (data: LedgerFormValues) => {
     const currentUser = auth.currentUser;
     if (!currentUser) {
-      toast({ title: "Error", description: "You must be logged in.", variant: "destructive" });
+      toast({ title: "Authentication Error", description: "You must be logged in to save a ledger entry.", variant: "destructive" });
       return;
     }
 
+    // Calculate totals based on current items in the form
     const subTotal = data.items.reduce((sum, item) => sum + item.totalPrice, 0);
-    // Simplified tax calculation
-    const taxAmount = (data.type === 'sale') ? subTotal * GST_RATE : 0; // Tax only on sales for now
+    // Simplified tax calculation (applies GST_RATE on sales, 0 for purchases)
+    const taxAmount = (data.type === 'sale' && data.entityType !== 'unknown_customer') ? subTotal * GST_RATE : 0; 
     const grandTotal = subTotal + taxAmount;
 
+    // Prepare ledger entry data for Firestore
     const ledgerEntryData: Omit<LedgerEntry, 'id' | 'createdAt'> & {createdAt: any} = {
       ...data,
       subTotal,
       taxAmount,
       grandTotal,
-      createdBy: currentUser.uid,
-      createdAt: serverTimestamp(),
+      createdBy: currentUser.uid, // Store UID of the user creating the entry
+      createdAt: serverTimestamp(), // Use Firestore server-side timestamp
     };
 
     try {
       await runTransaction(db, async (transaction) => {
-        // 1. Add ledger entry
+        // 1. Add ledger entry to Firestore
         const newLedgerRef = doc(collection(db, "ledgerEntries"));
         transaction.set(newLedgerRef, ledgerEntryData);
 
-        // 2. Update product stock
+        // 2. Update product stock levels
         for (const item of data.items) {
           const productRef = doc(db, "products", item.productId);
           const productSnap = await transaction.get(productRef);
-          if (!productSnap.exists()) throw new Error(`Product ${item.productName} not found.`);
+          if (!productSnap.exists()) throw new Error(`Product ${item.productName} (ID: ${item.productId}) not found.`);
           
-          const currentStock = productSnap.data().stock;
+          const currentStock = productSnap.data().stock as number;
           const newStock = data.type === 'sale' 
-            ? currentStock - item.quantity 
-            : currentStock + item.quantity;
+            ? currentStock - item.quantity  // Decrement stock for sales
+            : currentStock + item.quantity; // Increment stock for purchases
           
-          if (data.type === 'sale' && newStock < 0) {
-            throw new Error(`Insufficient stock for ${item.productName}. Available: ${currentStock}`);
+          if (data.type === 'sale' && newStock < 0) { // Check for sufficient stock only for sales
+            throw new Error(`Insufficient stock for ${item.productName}. Available: ${currentStock}, Requested: ${item.quantity}.`);
           }
           transaction.update(productRef, { stock: newStock });
         }
       });
-      toast({ title: "Success", description: "Ledger entry saved and stock updated." });
-      form.reset({ date: selectedDate, type: 'sale', entityType: 'customer', items: [], paymentStatus: 'paid' });
+      toast({ title: "Ledger Entry Saved", description: "The transaction has been recorded and stock levels updated." });
+      form.reset({ date: selectedDate, type: 'sale', entityType: 'customer', entityName: '', items: [], paymentStatus: 'paid', paymentMethod: 'cash' }); // Reset form
       fetchData(selectedDate); // Refresh ledger entries for the current date
-      setProductSearchTerm('');
+      setProductSearchTerm(''); // Clear product search
     } catch (error: any) {
       console.error("Error saving ledger entry:", error);
-      toast({ title: "Error", description: error.message || "Failed to save ledger entry.", variant: "destructive" });
+      toast({ title: "Save Error", description: error.message || "Failed to save ledger entry. Please check details and try again.", variant: "destructive" });
     }
   };
 
-  // New Customer/Seller Dialog Submit Handlers
+  /**
+   * Handles submission of the new customer dialog.
+   * Adds a new customer to Firestore and auto-selects them in the main ledger form.
+   * @param {NewCustomerFormValues} data - Validated new customer form data.
+   */
   const onNewCustomerSubmit = async (data: NewCustomerFormValues) => {
     try {
-      const docRef = await addDoc(collection(db, "customers"), { ...data, createdAt: serverTimestamp(), totalSpent: "₹0.00", email: "" }); // Add other default fields as needed
-      toast({ title: "Customer Added", description: `${data.name} added.` });
+      const docRef = await addDoc(collection(db, "customers"), { ...data, createdAt: serverTimestamp(), totalSpent: "₹0.00", email: "" }); // Add default fields
+      toast({ title: "Customer Added", description: `${data.name} has been added successfully.` });
       setIsNewCustomerDialogOpen(false);
       newCustomerForm.reset();
       fetchData(selectedDate); // Re-fetch all data to update dropdowns
-      form.setValue("entityId", docRef.id); // Auto-select new customer
+      // Auto-select the newly added customer in the main ledger form
+      form.setValue("entityId", docRef.id); 
       form.setValue("entityName", data.name);
     } catch (error) {
-      toast({ title: "Error", description: "Failed to add customer.", variant: "destructive" });
+      toast({ title: "Error Adding Customer", description: "Failed to add new customer. Please try again.", variant: "destructive" });
     }
   };
+
+  /**
+   * Handles submission of the new seller dialog.
+   * Adds a new seller to Firestore and auto-selects them in the main ledger form.
+   * @param {NewSellerFormValues} data - Validated new seller form data.
+   */
   const onNewSellerSubmit = async (data: NewSellerFormValues) => {
      try {
-      const docRef = await addDoc(collection(db, "sellers"), { ...data, createdAt: serverTimestamp(), email:"" });
-      toast({ title: "Seller Added", description: `${data.name} added.` });
+      const docRef = await addDoc(collection(db, "sellers"), { ...data, createdAt: serverTimestamp(), email:"" }); // Add default fields
+      toast({ title: "Seller Added", description: `${data.name} has been added successfully.` });
       setIsNewSellerDialogOpen(false);
       newSellerForm.reset();
-      fetchData(selectedDate); // Re-fetch
-      form.setValue("entityId", docRef.id); // Auto-select new seller
+      fetchData(selectedDate); // Re-fetch to update dropdowns
+      // Auto-select the newly added seller
+      form.setValue("entityId", docRef.id); 
       form.setValue("entityName", data.name);
     } catch (error) {
-      toast({ title: "Error", description: "Failed to add seller.", variant: "destructive" });
+      toast({ title: "Error Adding Seller", description: "Failed to add new seller. Please try again.", variant: "destructive" });
     }
   };
 
+  // Filter products based on search term (name or SKU)
   const filteredProducts = productSearchTerm
-    ? products.filter(p => p.name.toLowerCase().includes(productSearchTerm.toLowerCase()) || p.sku.toLowerCase().includes(productSearchTerm.toLowerCase()))
+    ? products.filter(p => 
+        p.name.toLowerCase().includes(productSearchTerm.toLowerCase()) || 
+        (p.sku && p.sku.toLowerCase().includes(productSearchTerm.toLowerCase()))
+      )
     : [];
 
-  const currentSubtotal = fields.reduce((acc, item) => acc + item.totalPrice, 0);
-  const currentTax = form.getValues("type") === 'sale' ? currentSubtotal * GST_RATE : 0;
+  // Calculate current totals for display in summary section, reacting to form changes
+  const currentItems = form.watch("items");
+  const currentSubtotal = currentItems.reduce((acc, item) => acc + (item.totalPrice || 0), 0);
+  const currentTax = (form.watch("type") === 'sale' && form.watch("entityType") !== 'unknown_customer') ? currentSubtotal * GST_RATE : 0;
   const currentGrandTotal = currentSubtotal + currentTax;
 
-  if (isLoading && !customers.length && !products.length) { // Initial full load
-    return <PageHeader title="Daily Ledger" description="Loading data..." icon={BookOpen} />;
+  // Display loading state if initial data fetch is in progress
+  if (isLoading && !customers.length && !products.length && !sellers.length) { 
+    return <PageHeader title="Daily Ledger" description="Loading essential data from database..." icon={BookOpen} />;
   }
 
   return (
     <>
-      <PageHeader title="Daily Ledger" description="Record daily sales, purchases, and stock movements." icon={BookOpen} />
+      <PageHeader title="Daily Ledger" description="Record daily sales, purchases, and manage stock movements." icon={BookOpen} />
       
+      {/* Main Ledger Entry Form Card */}
       <Card className="mb-6 shadow-lg rounded-xl">
-        <CardHeader><CardTitle>New Ledger Entry</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="font-headline text-foreground">New Ledger Entry</CardTitle></CardHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onLedgerSubmit)}>
             <CardContent className="space-y-6">
+              {/* Date, Transaction Type, Entity Type Selection */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <FormField control={form.control} name="date" render={({ field }) => (
-                    <FormItem><FormLabel>Date</FormLabel><FormControl><Input type="date" {...field} onChange={e => { field.onChange(e); setSelectedDate(e.target.value); }} /></FormControl><FormMessage /></FormItem>)} />
+                    <FormItem><FormLabel>Date of Transaction</FormLabel><FormControl><Input type="date" {...field} onChange={e => { field.onChange(e); setSelectedDate(e.target.value); }} /></FormControl><FormMessage /></FormItem>)} />
                 <FormField control={form.control} name="type" render={({ field }) => (
                     <FormItem><FormLabel>Transaction Type</FormLabel>
-                        <Select onValueChange={(value) => { field.onChange(value); form.setValue("entityType", value === 'sale' ? 'customer' : 'seller'); form.setValue("entityId", undefined); form.setValue("entityName", "");}} defaultValue={field.value}>
+                        <Select onValueChange={field.onChange} value={field.value}>
                             <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
                             <SelectContent><SelectItem value="sale">Sale / Stock Out</SelectItem><SelectItem value="purchase">Purchase / Stock In</SelectItem></SelectContent>
                         </Select><FormMessage />
@@ -331,14 +473,22 @@ export default function DailyLedgerPage() {
                     </FormItem>)} />
               </div>
 
+              {/* Entity Selection (Customer/Seller) or "Add New" Button */}
               {form.getValues("entityType") !== "unknown_customer" && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
                     <FormField control={form.control} name="entityId" render={({ field }) => (
                         <FormItem><FormLabel>{form.getValues("type") === 'sale' ? 'Select Customer' : 'Select Seller'}</FormLabel>
-                            <Select onValueChange={(value) => { field.onChange(value); const selected = (form.getValues("type") === 'sale' ? customers : sellers).find(e => e.id === value); form.setValue("entityName", selected?.name || ""); }} value={field.value || ""}>
+                            <Select 
+                                onValueChange={(value) => { 
+                                    field.onChange(value); 
+                                    const selectedEntity = (form.getValues("type") === 'sale' ? customers : sellers).find(e => e.id === value); 
+                                    form.setValue("entityName", selectedEntity?.name || ""); 
+                                }} 
+                                value={field.value || ""}
+                            >
                                 <FormControl><SelectTrigger><SelectValue placeholder={`Select existing ${form.getValues("type") === 'sale' ? 'customer' : 'seller'}`} /></SelectTrigger></FormControl>
                                 <SelectContent>
-                                    {(form.getValues("type") === 'sale' ? customers : sellers).map(e => <SelectItem key={e.id} value={e.id}>{e.name} ({e.phone})</SelectItem>)}
+                                    {(form.getValues("type") === 'sale' ? customers : sellers).map(e => <SelectItem key={e.id} value={e.id}>{e.name} {e.phone ? `(${e.phone})` : ''}</SelectItem>)}
                                 </SelectContent>
                             </Select><FormMessage />
                         </FormItem>)} />
@@ -347,21 +497,30 @@ export default function DailyLedgerPage() {
                     </Button>
                 </div>
               )}
-               <FormField control={form.control} name="entityName" render={({ field }) => (<FormItem className={form.getValues("entityType") === "unknown_customer" ? "" : "hidden"}><FormLabel>Entity Name (Readonly)</FormLabel><FormControl><Input {...field} readOnly /></FormControl><FormMessage /></FormItem>)} />
+              {/* Readonly input for "Unknown Customer" name */}
+               <FormField control={form.control} name="entityName" render={({ field }) => (<FormItem className={form.getValues("entityType") === "unknown_customer" ? "" : "hidden"}><FormLabel>Entity Name</FormLabel><FormControl><Input {...field} readOnly /></FormControl><FormMessage /></FormItem>)} />
 
-
-              {/* Items Array */}
+              {/* Items Array Section: Product Search and Added Items List */}
               <div className="space-y-4 pt-4 border-t">
-                <Label className="text-lg font-medium">Items</Label>
+                <Label className="text-lg font-medium">Items for this Transaction</Label>
                  <div className="relative">
                     <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input placeholder="Search products to add..." className="pl-8" value={productSearchTerm} onChange={e => setProductSearchTerm(e.target.value)} />
+                    <Input placeholder="Search products by name or SKU to add..." className="pl-8" value={productSearchTerm} onChange={e => setProductSearchTerm(e.target.value)} />
+                    {productSearchTerm && (
+                        <Button variant="ghost" size="icon" className="absolute right-1 top-0.5 h-8 w-8" onClick={() => setProductSearchTerm("")} title="Clear search">
+                            <XCircle className="h-4 w-4" />
+                        </Button>
+                    )}
                  </div>
+                 {/* Display filtered product search results */}
                  {productSearchTerm && filteredProducts.length > 0 && (
                   <div className="mt-1 border rounded-md max-h-48 overflow-y-auto bg-background shadow-sm z-10">
                     {filteredProducts.map(p => (
                       <div key={p.id} className="p-2 hover:bg-accent/80 dark:hover:bg-accent/20 cursor-pointer flex justify-between items-center" onClick={() => handleAddProductToLedger(p)}>
-                        <span>{p.name} ({p.sku}) - Stock: {p.stock}</span>
+                        <div>
+                            <p>{p.name} <span className="text-xs text-muted-foreground">({p.sku})</span></p>
+                            <p className="text-xs text-muted-foreground">Price: {p.displayPrice} - Stock: {p.stock} {p.unitOfMeasure}</p>
+                        </div>
                         <Button variant="ghost" size="sm" disabled={p.stock <= 0 && form.getValues("type") === 'sale'}>
                             {p.stock > 0 || form.getValues("type") === 'purchase' ? "Add" : "Out of stock"}
                         </Button>
@@ -369,47 +528,66 @@ export default function DailyLedgerPage() {
                     ))}
                   </div>
                 )}
+                 {productSearchTerm && filteredProducts.length === 0 && (
+                    <p className="mt-2 text-sm text-center text-muted-foreground">No products found matching "{productSearchTerm}".</p>
+                 )}
+
+                {/* List of items added to the ledger */}
                 {fields.map((item, index) => (
-                  <Card key={item.id} className="p-3 space-y-2 bg-muted/30">
+                  <Card key={item.id} className="p-3 space-y-2 bg-muted/20 dark:bg-muted/10">
                     <div className="flex justify-between items-center">
-                        <p className="font-medium">{item.productName} <span className="text-xs text-muted-foreground">({products.find(p=>p.id === item.productId)?.sku})</span></p>
-                        <Button type="button" variant="ghost" size="icon" onClick={() => remove(index)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                        <p className="font-medium">{item.productName} <span className="text-xs text-muted-foreground">({products.find(p=>p.id === item.productId)?.sku}) - Unit: {item.unitOfMeasure}</span></p>
+                        <Button type="button" variant="ghost" size="icon" onClick={() => remove(index)} title="Remove item"><Trash2 className="h-4 w-4 text-destructive" /></Button>
                     </div>
-                    <div className="grid grid-cols-3 gap-2">
-                        <Input type="number" value={item.quantity} onChange={e => handleItemQuantityChange(index, parseInt(e.target.value))} placeholder="Qty" aria-label="Quantity"/>
-                        <Input type="number" value={item.unitPrice} onChange={e => handleItemPriceChange(index, parseFloat(e.target.value))} placeholder="Price/Unit" aria-label="Unit Price" disabled={currentUserRole !== 'admin'}/>
-                        <Input value={formatCurrency(item.totalPrice)} readOnly placeholder="Total" aria-label="Total Price"/>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <FormField
+                            control={form.control}
+                            name={`items.${index}.quantity`}
+                            render={({ field }) => (
+                                <FormItem><FormLabel className="text-xs">Quantity</FormLabel><FormControl><Input type="number" {...field} onChange={e => {field.onChange(parseFloat(e.target.value) || 0); handleItemQuantityChange(index, parseFloat(e.target.value) || 0);}} placeholder="Qty" aria-label="Quantity"/></FormControl><FormMessage/></FormItem>
+                            )}
+                        />
+                        <FormField
+                            control={form.control}
+                            name={`items.${index}.unitPrice`}
+                            render={({ field }) => (
+                                <FormItem><FormLabel className="text-xs">Unit Price (₹)</FormLabel><FormControl><Input type="number" {...field} onChange={e => {field.onChange(parseFloat(e.target.value) || 0); handleItemPriceChange(index, parseFloat(e.target.value) || 0);}} placeholder="Price/Unit" aria-label="Unit Price" disabled={currentUserRole !== 'admin'}/></FormControl><FormMessage/></FormItem>
+                            )}
+                        />
+                        {/* Display total price for the item (read-only) */}
+                        <FormItem><FormLabel className="text-xs">Total (₹)</FormLabel><Input value={formatCurrency(item.totalPrice)} readOnly placeholder="Total" aria-label="Total Price"/></FormItem>
                     </div>
-                     {currentUserRole !== 'admin' && form.getValues("items")[index].unitPrice !== products.find(p => p.id === item.productId)?.numericPrice && (
-                        <p className="text-xs text-amber-600">Price determined by rules. Admin can override.</p>
+                     {currentUserRole !== 'admin' && form.getValues(`items.${index}.unitPrice`) !== products.find(p => p.id === item.productId)?.numericPrice && (
+                        <p className="text-xs text-amber-600 dark:text-amber-400">Price is based on product database. Only Admins can override price here.</p>
                     )}
                   </Card>
                 ))}
-                {fields.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No items added yet.</p>}
+                {fields.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No items added to this transaction yet.</p>}
               </div>
               
-              {/* Summary & Payment */}
+              {/* Summary Section: Subtotal, Tax, Grand Total */}
               <div className="pt-4 border-t space-y-3">
                  <div className="flex justify-between"><span className="text-muted-foreground">Subtotal:</span><span className="font-medium">{formatCurrency(currentSubtotal)}</span></div>
-                 {form.getValues("type") === 'sale' && <div className="flex justify-between"><span className="text-muted-foreground">Tax (GST {GST_RATE*100}%):</span><span className="font-medium">{formatCurrency(currentTax)}</span></div>}
+                 {(form.watch("type") === 'sale' && form.watch("entityType") !== 'unknown_customer') && <div className="flex justify-between"><span className="text-muted-foreground">Tax (GST {GST_RATE*100}%):</span><span className="font-medium">{formatCurrency(currentTax)}</span></div>}
                  <div className="flex justify-between text-lg font-bold"><span >Grand Total:</span><span>{formatCurrency(currentGrandTotal)}</span></div>
               </div>
 
+              {/* Payment Details Section */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                  <FormField control={form.control} name="paymentMethod" render={({ field }) => (
                     <FormItem><FormLabel>Payment Method</FormLabel>
-                        <Select onValueChange={field.onChange} defaultValue={field.value}>
+                        <Select onValueChange={field.onChange} value={field.value || "cash"}>
                             <FormControl><SelectTrigger><SelectValue placeholder="Select method" /></SelectTrigger></FormControl>
                             <SelectContent>
                                 <SelectItem value="cash">Cash</SelectItem><SelectItem value="upi">UPI</SelectItem>
                                 <SelectItem value="card">Card</SelectItem><SelectItem value="bank_transfer">Bank Transfer</SelectItem>
-                                <SelectItem value="credit">Credit (Pay Later)</SelectItem>
+                                <SelectItem value="credit">Credit (Pay Later)</SelectItem><SelectItem value="other">Other</SelectItem>
                             </SelectContent>
                         </Select><FormMessage />
                     </FormItem>)} />
                 <FormField control={form.control} name="paymentStatus" render={({ field }) => (
                     <FormItem><FormLabel>Payment Status</FormLabel>
-                        <Select onValueChange={field.onChange} defaultValue={field.value}>
+                        <Select onValueChange={field.onChange} value={field.value || "paid"}>
                             <FormControl><SelectTrigger><SelectValue placeholder="Select status" /></SelectTrigger></FormControl>
                             <SelectContent>
                                 <SelectItem value="paid">Paid</SelectItem><SelectItem value="pending">Pending</SelectItem>
@@ -418,22 +596,24 @@ export default function DailyLedgerPage() {
                         </Select><FormMessage />
                     </FormItem>)} />
               </div>
-              <FormField control={form.control} name="notes" render={({ field }) => (<FormItem><FormLabel>Notes (Optional)</FormLabel><FormControl><Input placeholder="Any notes for this transaction..." {...field} /></FormControl><FormMessage /></FormItem>)} />
+              <FormField control={form.control} name="notes" render={({ field }) => (<FormItem><FormLabel>Notes (Optional)</FormLabel><FormControl><Input placeholder="Any specific notes for this transaction..." {...field} /></FormControl><FormMessage /></FormItem>)} />
             </CardContent>
             <CardFooter>
-              <Button type="submit" className="w-full" disabled={isLoading || fields.length === 0}>Save Ledger Entry</Button>
+              <Button type="submit" className="w-full" disabled={isLoading || fields.length === 0 || form.formState.isSubmitting}>
+                {form.formState.isSubmitting ? "Saving..." : "Save Ledger Entry"}
+              </Button>
             </CardFooter>
           </form>
         </Form>
       </Card>
 
-      {/* Display Ledger Entries for selectedDate */}
+      {/* Display Ledger Entries for the selectedDate */}
       <Card className="mt-8 shadow-lg rounded-xl">
-        <CardHeader><CardTitle>Entries for {format(parseISO(selectedDate), "MMMM dd, yyyy")}</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="font-headline text-foreground">Entries for {format(parseISO(selectedDate), "MMMM dd, yyyy")}</CardTitle></CardHeader>
         <CardContent>
-          {isLoading && ledgerEntries.length === 0 ? <p>Loading entries...</p> : ledgerEntries.length === 0 ? <p>No entries for this date.</p> : (
+          {isLoading && ledgerEntries.length === 0 ? <p className="text-center text-muted-foreground py-4">Loading entries...</p> : ledgerEntries.length === 0 ? <p  className="text-center text-muted-foreground py-4">No ledger entries found for this date.</p> : (
             <Table>
-              <TableHeader><TableRow><TableHead>Type</TableHead><TableHead>Entity</TableHead><TableHead>Items</TableHead><TableHead className="text-right">Total</TableHead><TableHead>Payment</TableHead></TableRow></TableHeader>
+              <TableHeader><TableRow><TableHead>Type</TableHead><TableHead>Entity</TableHead><TableHead>Items</TableHead><TableHead className="text-right">Total (₹)</TableHead><TableHead>Payment</TableHead></TableRow></TableHeader>
               <TableBody>
                 {ledgerEntries.map(entry => (
                   <TableRow key={entry.id}>
@@ -441,7 +621,7 @@ export default function DailyLedgerPage() {
                     <TableCell>{entry.entityName}</TableCell>
                     <TableCell>{entry.items.map(i => `${i.productName} (x${i.quantity})`).join(', ')}</TableCell>
                     <TableCell className="text-right">{formatCurrency(entry.grandTotal)}</TableCell>
-                    <TableCell className="capitalize">{entry.paymentStatus} ({entry.paymentMethod})</TableCell>
+                    <TableCell className="capitalize">{entry.paymentStatus} {entry.paymentMethod ? `(${entry.paymentMethod})` : ''}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -452,24 +632,25 @@ export default function DailyLedgerPage() {
 
       {/* New Customer Dialog */}
       <Dialog open={isNewCustomerDialogOpen} onOpenChange={setIsNewCustomerDialogOpen}>
-        <DialogContent><DialogHeader><DialogTitle>Add New Customer</DialogTitle><DialogDescription>Quickly add a new customer.</DialogDescription></DialogHeader>
+        <DialogContent><DialogHeader><DialogTitle>Add New Customer</DialogTitle><DialogDescription>Quickly add a new customer to the database.</DialogDescription></DialogHeader>
           <Form {...newCustomerForm}><form onSubmit={newCustomerForm.handleSubmit(onNewCustomerSubmit)} className="space-y-4">
-            <FormField control={newCustomerForm.control} name="name" render={({ field }) => (<FormItem><FormLabel>Name</FormLabel><FormControl><Input {...field} /></FormControl><FormMessage /></FormItem>)} />
-            <FormField control={newCustomerForm.control} name="phone" render={({ field }) => (<FormItem><FormLabel>Phone</FormLabel><FormControl><Input {...field} /></FormControl><FormMessage /></FormItem>)} />
-            <DialogFooter><DialogClose asChild><Button type="button" variant="outline">Cancel</Button></DialogClose><Button type="submit">Add Customer</Button></DialogFooter>
+            <FormField control={newCustomerForm.control} name="name" render={({ field }) => (<FormItem><FormLabel>Name</FormLabel><FormControl><Input placeholder="Customer full name" {...field} /></FormControl><FormMessage /></FormItem>)} />
+            <FormField control={newCustomerForm.control} name="phone" render={({ field }) => (<FormItem><FormLabel>Phone</FormLabel><FormControl><Input placeholder="Customer phone number" {...field} /></FormControl><FormMessage /></FormItem>)} />
+            <DialogFooter><DialogClose asChild><Button type="button" variant="outline">Cancel</Button></DialogClose><Button type="submit" disabled={newCustomerForm.formState.isSubmitting}>{newCustomerForm.formState.isSubmitting ? "Adding..." : "Add Customer"}</Button></DialogFooter>
           </form></Form>
         </DialogContent>
       </Dialog>
       {/* New Seller Dialog */}
       <Dialog open={isNewSellerDialogOpen} onOpenChange={setIsNewSellerDialogOpen}>
-         <DialogContent><DialogHeader><DialogTitle>Add New Seller</DialogTitle><DialogDescription>Quickly add a new seller.</DialogDescription></DialogHeader>
+         <DialogContent><DialogHeader><DialogTitle>Add New Seller</DialogTitle><DialogDescription>Quickly add a new seller to the database.</DialogDescription></DialogHeader>
           <Form {...newSellerForm}><form onSubmit={newSellerForm.handleSubmit(onNewSellerSubmit)} className="space-y-4">
-            <FormField control={newSellerForm.control} name="name" render={({ field }) => (<FormItem><FormLabel>Name</FormLabel><FormControl><Input {...field} /></FormControl><FormMessage /></FormItem>)} />
-            <FormField control={newSellerForm.control} name="phone" render={({ field }) => (<FormItem><FormLabel>Phone</FormLabel><FormControl><Input {...field} /></FormControl><FormMessage /></FormItem>)} />
-            <DialogFooter><DialogClose asChild><Button type="button" variant="outline">Cancel</Button></DialogClose><Button type="submit">Add Seller</Button></DialogFooter>
+            <FormField control={newSellerForm.control} name="name" render={({ field }) => (<FormItem><FormLabel>Name</FormLabel><FormControl><Input placeholder="Seller company name" {...field} /></FormControl><FormMessage /></FormItem>)} />
+            <FormField control={newSellerForm.control} name="phone" render={({ field }) => (<FormItem><FormLabel>Phone</FormLabel><FormControl><Input placeholder="Seller contact number" {...field} /></FormControl><FormMessage /></FormItem>)} />
+            <DialogFooter><DialogClose asChild><Button type="button" variant="outline">Cancel</Button></DialogClose><Button type="submit" disabled={newSellerForm.formState.isSubmitting}>{newSellerForm.formState.isSubmitting ? "Adding..." : "Add Seller"}</Button></DialogFooter>
           </form></Form>
         </DialogContent>
       </Dialog>
     </>
   );
 }
+

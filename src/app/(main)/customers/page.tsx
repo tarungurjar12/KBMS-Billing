@@ -18,28 +18,32 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { useToast } from "@/hooks/use-toast";
 import { collection, addDoc, getDocs, doc, updateDoc, deleteDoc, serverTimestamp, query, orderBy, Timestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase/firebaseConfig';
+import { useRouter, useSearchParams } from 'next/navigation'; // Added useSearchParams
+
 
 /**
  * @fileOverview Page for managing customer profiles.
- * Allows Admin to perform full CRUD operations on customers.
+ * Allows Admin to perform full CRUD operations on customers in Firestore.
  * Allows Store Manager to:
  *  - Create new customers.
  *  - View customer list.
  *  - View customer details, past transactions (placeholder).
  *  - Update payment status of customer bills (placeholder).
- * Store Managers cannot delete customers. Data is managed in Firestore.
+ * Store Managers cannot delete customers. Data is managed in Firebase Firestore.
  */
 
+/**
+ * Interface representing a Customer document in Firestore.
+ */
 export interface Customer {
   id: string; // Firestore document ID
   name: string;
-  email: string; // Should be optional
+  email: string; // Optional email
   phone: string;
   gstin?: string; // Optional GSTIN
-  totalSpent: string; // Display string, e.g., "₹10,000.00" - Placeholder for now, complex to calculate dynamically
-  // address?: string; // Consider adding address field
-  // stateCode?: string; // For IGST calculation if address is detailed
-  createdAt?: Timestamp; // Firestore Timestamp
+  totalSpent: string; // Display string, e.g., "₹10,000.00" - Placeholder, calculated or updated separately
+  address?: string; // Optional address
+  createdAt?: Timestamp; // Firestore Timestamp of creation
 }
 
 // Zod schema for customer form validation
@@ -48,18 +52,19 @@ const customerSchema = z.object({
   email: z.string().email({ message: "Invalid email address." }).optional().or(z.literal('')),
   phone: z.string().min(10, { message: "Phone number must be at least 10 digits." }).regex(/^\d+[\d\s-]*$/, { message: "Phone number must contain valid characters (digits, spaces, hyphens)."}),
   gstin: z.string().optional().or(z.literal('')),
-  // address: z.string().optional(),
+  address: z.string().optional(),
 });
 
 type CustomerFormValues = z.infer<typeof customerSchema>;
 
 /**
  * Retrieves a cookie value by name.
+ * Used here to determine the current user's role for access control.
  * @param {string} name - The name of the cookie.
  * @returns {string | undefined} The cookie value or undefined if not found.
  */
 const getCookie = (name: string): string | undefined => {
-  if (typeof window === 'undefined') return undefined;
+  if (typeof window === 'undefined') return undefined; // Ensure running in browser
   const value = `; ${document.cookie}`;
   const parts = value.split(`; ${name}=`);
   if (parts.length === 2) return parts.pop()?.split(';').shift();
@@ -69,9 +74,13 @@ const getCookie = (name: string): string | undefined => {
 /**
  * CustomersPage component.
  * Provides UI and logic for managing customer data in Firestore.
+ * Handles CRUD operations, dialogs for add/edit, and role-based action availability.
  * @returns {JSX.Element} The rendered customers page.
  */
 export default function CustomersPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams(); // For query parameters like `addNew`
+
   const [customerList, setCustomerList] = useState<Customer[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isAddCustomerDialogOpen, setIsAddCustomerDialogOpen] = useState(false);
@@ -85,16 +94,16 @@ export default function CustomersPage() {
 
   const form = useForm<CustomerFormValues>({
     resolver: zodResolver(customerSchema),
-    defaultValues: { name: "", email: "", phone: "", gstin: "" },
+    defaultValues: { name: "", email: "", phone: "", gstin: "", address: "" },
   });
 
   /**
-   * Fetches customer list from Firestore.
+   * Fetches customer list from Firestore, ordered by name.
    */
   const fetchCustomers = useCallback(async () => {
     setIsLoading(true);
     try {
-      const q = query(collection(db, "customers"), orderBy("name", "asc")); // Sort by name
+      const q = query(collection(db, "customers"), orderBy("name", "asc"));
       const querySnapshot = await getDocs(q);
       const fetchedCustomers = querySnapshot.docs.map(docSnapshot => {
           const data = docSnapshot.data();
@@ -104,23 +113,37 @@ export default function CustomersPage() {
               email: data.email || "", // Ensure email is not undefined
               phone: data.phone,
               gstin: data.gstin || "",
-              totalSpent: data.totalSpent || "₹0.00", // Placeholder until calculated
+              address: data.address || "",
+              totalSpent: data.totalSpent || "₹0.00", // Placeholder until calculated dynamically
+              createdAt: data.createdAt,
           } as Customer;
       });
       setCustomerList(fetchedCustomers);
     } catch (error) {
       console.error("Error fetching customers: ", error);
-      toast({ title: "Error", description: "Could not load customers from database.", variant: "destructive" });
+      toast({ title: "Database Error", description: "Could not load customers. Please try again.", variant: "destructive" });
     } finally {
       setIsLoading(false);
     }
   }, [toast]);
 
+  // Fetch current user role and customer list on component mount
   useEffect(() => {
     setCurrentUserRole(getCookie('userRole'));
     fetchCustomers();
   }, [fetchCustomers]);
 
+  // If `addNew=true` is in URL params, open the add customer dialog
+  useEffect(() => {
+    if (searchParams.get('addNew') === 'true') {
+      setIsAddCustomerDialogOpen(true);
+      // Optional: Clear the query param after opening the dialog to avoid re-triggering
+      // router.replace('/customers', { scroll: false }); 
+    }
+  }, [searchParams, router]);
+
+
+  // Effect to reset form when editingCustomer or dialog state changes
   useEffect(() => {
     if (editingCustomer && isEditCustomerDialogOpen) {
       form.reset({
@@ -128,57 +151,75 @@ export default function CustomersPage() {
         email: editingCustomer.email,
         phone: editingCustomer.phone,
         gstin: editingCustomer.gstin || "",
+        address: editingCustomer.address || "",
       });
-    } else {
-      form.reset({ name: "", email: "", phone: "", gstin: "" });
+    } else if (isAddCustomerDialogOpen) { // Reset for add dialog as well
+      form.reset({ name: "", email: "", phone: "", gstin: "", address: "" });
     }
-  }, [editingCustomer, isEditCustomerDialogOpen, form]);
+  }, [editingCustomer, isEditCustomerDialogOpen, isAddCustomerDialogOpen, form]);
 
+  /**
+   * Handles submission of the "Add New Customer" form.
+   * Saves new customer data to Firestore.
+   * @param {CustomerFormValues} values - The validated form values.
+   */
   const handleAddSubmit = async (values: CustomerFormValues) => {
     try {
       const newCustomerData = { 
         ...values, 
-        email: values.email || "", // Ensure email is not undefined if empty
-        totalSpent: "₹0.00", // Initial value
-        createdAt: serverTimestamp() 
+        email: values.email || "", // Ensure email is string, not undefined
+        totalSpent: "₹0.00", // Initial value for total spent
+        createdAt: serverTimestamp() // Firestore server-side timestamp
       };
-      const docRef = await addDoc(collection(db, "customers"), newCustomerData);
-      // setCustomerList((prev) => [{ id: docRef.id, ...newCustomerData, createdAt: new Timestamp(Date.now()/1000,0) }, ...prev]);
-      toast({ title: "Customer Added", description: `${values.name} has been successfully added to Firestore.` });
-      fetchCustomers(); // Re-fetch to get the latest list including the new one
+      await addDoc(collection(db, "customers"), newCustomerData);
+      toast({ title: "Customer Added", description: `${values.name} has been successfully added.` });
+      fetchCustomers(); // Re-fetch to update the list
       form.reset();
       setIsAddCustomerDialogOpen(false);
     } catch (error) {
       console.error("Error adding customer: ", error);
-      toast({ title: "Error", description: "Failed to add customer to database.", variant: "destructive" });
+      toast({ title: "Save Error", description: "Failed to add customer to the database.", variant: "destructive" });
     }
   };
 
+  /**
+   * Handles submission of the "Edit Customer" form.
+   * Updates existing customer data in Firestore.
+   * @param {CustomerFormValues} values - The validated form values.
+   */
   const handleEditSubmit = async (values: CustomerFormValues) => {
-    if (!editingCustomer) return;
+    if (!editingCustomer) return; // Should not happen if dialog is open for edit
     try {
       const customerRef = doc(db, "customers", editingCustomer.id);
-      const updatedData = { ...values, email: values.email || "" };
+      const updatedData = { ...values, email: values.email || "" }; // Ensure email is string
       await updateDoc(customerRef, updatedData);
-      // setCustomerList((prev) => prev.map((c) => (c.id === editingCustomer.id ? { ...c, ...updatedData } : c)));
-      toast({ title: "Customer Updated", description: `${values.name} has been successfully updated in Firestore.` });
-      fetchCustomers(); // Re-fetch
+      toast({ title: "Customer Updated", description: `${values.name} has been successfully updated.` });
+      fetchCustomers(); // Re-fetch to update the list
       setEditingCustomer(null);
       setIsEditCustomerDialogOpen(false);
       form.reset();
     } catch (error) {
       console.error("Error updating customer: ", error);
-      toast({ title: "Error", description: "Failed to update customer in database.", variant: "destructive" });
+      toast({ title: "Update Error", description: "Failed to update customer in the database.", variant: "destructive" });
     }
   };
   
+  /**
+   * Opens the edit customer dialog and pre-fills form with customer data.
+   * @param {Customer} customer - The customer object to edit.
+   */
   const openEditDialog = (customer: Customer) => {
     setEditingCustomer(customer);
     setIsEditCustomerDialogOpen(true);
   };
 
+  /**
+   * Opens the delete confirmation dialog for a customer.
+   * Restricted to Admins.
+   * @param {Customer} customer - The customer object to delete.
+   */
   const openDeleteDialog = (customer: Customer) => {
-    if (currentUserRole !== 'admin') {
+    if (currentUserRole !== 'admin') { // Role check
       toast({ title: "Permission Denied", description: "Only Admins can delete customers.", variant: "destructive"});
       return;
     }
@@ -186,31 +227,43 @@ export default function CustomersPage() {
     setIsDeleteConfirmOpen(true);
   };
 
+  /**
+   * Confirms and executes deletion of a customer from Firestore.
+   * Restricted to Admins.
+   */
   const confirmDelete = async () => {
     if (!customerToDelete || currentUserRole !== 'admin') return;
     try {
       await deleteDoc(doc(db, "customers", customerToDelete.id));
-      // setCustomerList((prev) => prev.filter((c) => c.id !== customerToDelete.id));
-      toast({ title: "Customer Deleted", description: `${customerToDelete.name} has been successfully deleted from Firestore.`, variant: "default" });
-      fetchCustomers(); // Re-fetch
+      toast({ title: "Customer Deleted", description: `${customerToDelete.name} has been successfully deleted.`, variant: "default" });
+      fetchCustomers(); // Re-fetch to update the list
       setCustomerToDelete(null);
       setIsDeleteConfirmOpen(false);
     } catch (error) {
       console.error("Error deleting customer: ", error);
-      toast({ title: "Error", description: "Failed to delete customer from database.", variant: "destructive" });
+      toast({ title: "Deletion Error", description: "Failed to delete customer from the database.", variant: "destructive" });
     }
   };
 
+  /**
+   * Placeholder for viewing detailed customer history.
+   * @param {Customer} customer - The customer whose details to view.
+   */
   const handleViewDetails = (customer: Customer) => {
     toast({ title: "View Details (Placeholder)", description: `Viewing details for ${customer.name}. Purchase/payment history page to be implemented.`});
     // Future: router.push(`/customers/${customer.id}`);
   };
 
+  /**
+   * Placeholder for updating payment status related to a customer.
+   * @param {Customer} customer - The customer involved.
+   */
   const handleUpdatePaymentStatus = (customer: Customer) => {
     toast({ title: "Update Payment Status (Placeholder)", description: `Functionality to update payment status for ${customer.name}'s bills to be implemented.`});
     // Future: This would likely involve selecting a specific bill and then updating its status in Firestore.
   };
 
+  // Render loading state if data is being fetched
   if (isLoading) {
     return <PageHeader title="Manage Customers" description="Loading customer data from database..." icon={Users} />;
   }
@@ -229,15 +282,22 @@ export default function CustomersPage() {
         }
       />
 
-      {/* Add/Edit Customer Dialog (shared form) */}
+      {/* Add/Edit Customer Dialog (uses a shared form structure) */}
       <Dialog 
         open={isAddCustomerDialogOpen || isEditCustomerDialogOpen} 
         onOpenChange={(isOpen) => {
-          if (!isOpen) {
+          if (!isOpen) { // When dialog is closed
             setIsAddCustomerDialogOpen(false);
             setIsEditCustomerDialogOpen(false);
             setEditingCustomer(null);
-            form.reset();
+            form.reset(); // Reset form on close
+            // Optional: Remove query param if it was used to open dialog
+            if (searchParams.get('addNew') === 'true') {
+                 router.replace('/customers', { scroll: false });
+            }
+          } else { // When dialog is opened
+            if (editingCustomer) setIsEditCustomerDialogOpen(true);
+            else setIsAddCustomerDialogOpen(true);
           }
         }}
       >
@@ -249,12 +309,13 @@ export default function CustomersPage() {
             </DialogDescription>
           </DialogHeader>
           <Form {...form}>
+            {/* Form submission calls either handleEditSubmit or handleAddSubmit */}
             <form onSubmit={form.handleSubmit(editingCustomer ? handleEditSubmit : handleAddSubmit)} className="space-y-4 py-2">
               <FormField control={form.control} name="name" render={({ field }) => (
                   <FormItem>
                     <FormLabel>Full Name</FormLabel>
                     <FormControl><Input placeholder="e.g., Priya Sharma" {...field} /></FormControl>
-                    <FormMessage />
+                    <FormMessage /> {/* Displays validation errors */}
                   </FormItem>
                 )}
               />
@@ -282,9 +343,17 @@ export default function CustomersPage() {
                   </FormItem>
                 )}
               />
-              {/* Future: Add <FormField control={form.control} name="address" ... /> */}
+               <FormField control={form.control} name="address" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Address (Optional)</FormLabel>
+                    <FormControl><Input placeholder="e.g., 123 Main St, Bangalore" {...field} /></FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
               <DialogFooter className="pt-4">
-                <DialogClose asChild><Button type="button" variant="outline" onClick={() => { setIsAddCustomerDialogOpen(false); setIsEditCustomerDialogOpen(false); setEditingCustomer(null); }}>Cancel</Button></DialogClose>
+                {/* DialogClose wraps the Cancel button to handle closing */}
+                <DialogClose asChild><Button type="button" variant="outline">Cancel</Button></DialogClose>
                 <Button type="submit">{editingCustomer ? "Save Changes" : "Add Customer"}</Button>
               </DialogFooter>
             </form>
@@ -296,7 +365,7 @@ export default function CustomersPage() {
       <AlertDialog open={isDeleteConfirmOpen} onOpenChange={(isOpen) => { if(!isOpen) setCustomerToDelete(null); setIsDeleteConfirmOpen(isOpen);}}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
             <AlertDialogDescription>
               This action cannot be undone. This will permanently delete the customer &quot;{customerToDelete?.name}&quot; from the database.
             </AlertDialogDescription>
@@ -304,16 +373,17 @@ export default function CustomersPage() {
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => {setIsDeleteConfirmOpen(false); setCustomerToDelete(null);}}>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={confirmDelete} className="bg-destructive hover:bg-destructive/90" disabled={currentUserRole !== 'admin'}>
-              Delete
+              Delete Customer
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
+      {/* Customer List Table */}
       <Card className="shadow-lg rounded-xl">
         <CardHeader>
           <CardTitle className="font-headline text-foreground">Customer List</CardTitle>
-          <CardDescription>A list of all registered customers from Firestore.</CardDescription>
+          <CardDescription>A list of all registered customers from Firestore, ordered alphabetically.</CardDescription>
         </CardHeader>
         <CardContent>
           <Table>
@@ -331,9 +401,9 @@ export default function CustomersPage() {
               {customerList.map((customer) => (
                 <TableRow key={customer.id}>
                   <TableCell className="font-medium">{customer.name}</TableCell>
-                  <TableCell>{customer.email || "-"}</TableCell>
+                  <TableCell>{customer.email || "N/A"}</TableCell>
                   <TableCell>{customer.phone}</TableCell>
-                  <TableCell>{customer.gstin || "-"}</TableCell>
+                  <TableCell>{customer.gstin || "N/A"}</TableCell>
                   <TableCell className="text-right">{customer.totalSpent}</TableCell>
                   <TableCell className="text-right">
                     <DropdownMenu>
@@ -350,11 +420,13 @@ export default function CustomersPage() {
                         <DropdownMenuItem onClick={() => openEditDialog(customer)}>
                             <Edit className="mr-2 h-4 w-4" /> Edit Customer
                         </DropdownMenuItem>
+                        {/* Actions available to Store Manager and Admin */}
                         {(currentUserRole === 'store_manager' || currentUserRole === 'admin') && (
                             <DropdownMenuItem onClick={() => handleUpdatePaymentStatus(customer)}>
                                 <CreditCard className="mr-2 h-4 w-4" /> Update Payment Status
                             </DropdownMenuItem>
                         )}
+                        {/* Delete action only for Admin */}
                         {currentUserRole === 'admin' && (
                           <DropdownMenuItem onClick={() => openDeleteDialog(customer)} className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground">
                             <Trash2 className="mr-2 h-4 w-4" /> Delete Customer
@@ -367,7 +439,7 @@ export default function CustomersPage() {
               ))}
             </TableBody>
           </Table>
-           {customerList.length === 0 && !isLoading && (
+           {customerList.length === 0 && !isLoading && ( // Message if no customers are found
              <div className="text-center py-8 text-muted-foreground">
                 No customers found in the database. Click "Add New Customer" to get started.
              </div>
@@ -377,3 +449,4 @@ export default function CustomersPage() {
     </>
   );
 }
+
