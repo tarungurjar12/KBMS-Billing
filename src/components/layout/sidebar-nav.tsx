@@ -32,8 +32,15 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Button } from "../ui/button";
-import { auth } from '@/lib/firebase/firebaseConfig'; // Import Firebase auth
-import { signOut, onAuthStateChanged } from 'firebase/auth';
+import { auth } from '@/lib/firebase/firebaseConfig';
+import { signOut as firebaseSignOut, onAuthStateChanged } from 'firebase/auth'; // Renamed to avoid conflict
+
+/**
+ * @fileOverview Sidebar navigation component.
+ * Displays navigation links based on user role.
+ * Handles user logout using Firebase.
+ * Relies on a 'userRole' cookie to determine which links to show.
+ */
 
 interface NavItem {
   href: string;
@@ -56,10 +63,14 @@ const allNavItems: NavItem[] = [
   // Store Manager Specific
   { href: "/create-bill", label: "Create Bill", icon: ClipboardPlus, roles: ['store_manager'] },
   { href: "/view-products-stock", label: "View Products & Stock", icon: PackageSearch, roles: ['store_manager'] },
-  { href: "/my-profile", label: "My Profile", icon: UserCircle, roles: ['store_manager'] },
+  { href: "/my-profile", label: "My Profile", icon: UserCircle, roles: ['store_manager', 'admin'] }, // Admin might also want a profile page
 ];
 
-// Basic cookie utility for userRole
+/**
+ * Retrieves a cookie value by name.
+ * @param name - The name of the cookie.
+ * @returns The cookie value or undefined if not found.
+ */
 const getCookie = (name: string): string | undefined => {
   if (typeof document === 'undefined') return undefined;
   const value = `; ${document.cookie}`;
@@ -68,12 +79,22 @@ const getCookie = (name: string): string | undefined => {
   return undefined;
 };
 
+/**
+ * Deletes a cookie by name.
+ * @param name - The name of the cookie to delete.
+ */
 const deleteCookie = (name: string) => {
   if (typeof document !== 'undefined') {
     document.cookie = name + '=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;';
   }
 };
 
+/**
+ * Sets a cookie in the browser.
+ * @param name - The name of the cookie.
+ * @param value - The value of the cookie.
+ * @param days - The number of days until the cookie expires.
+ */
 const setCookie = (name: string, value: string, days: number) => {
     let expires = "";
     if (days) {
@@ -86,11 +107,14 @@ const setCookie = (name: string, value: string, days: number) => {
     }
 };
 
-
+/**
+ * SidebarNav component.
+ * Renders the sidebar navigation links and logout functionality.
+ */
 export function SidebarNav() {
   const pathname = usePathname();
   const router = useRouter();
-  const { open } = useSidebar();
+  const { open } = useSidebar(); // Context from SidebarProvider
   const [userRole, setUserRole] = useState<string | undefined>(undefined);
   const [mounted, setMounted] = useState(false);
 
@@ -103,8 +127,7 @@ export function SidebarNav() {
       if (!user) { // If Firebase user is logged out
         deleteCookie('userRole');
         setUserRole(undefined);
-        // Middleware should handle redirect, but can add router.push('/login') here if needed as a fallback
-        if (pathname !== '/login') { // Avoid redirect loop if already on login
+        if (pathname !== '/login') {
             router.push('/login');
         }
       } else {
@@ -120,41 +143,47 @@ export function SidebarNav() {
                setUserRole(newRole);
             }
         } else if (currentRole) {
-            setUserRole(currentRole);
+            setUserRole(currentRole); // Sync state with cookie if already exists
         }
       }
     });
 
-    return () => {
-        unsubscribe();
-    };
-
+    return () => unsubscribe();
   }, [router, pathname]);
 
+  /**
+   * Handles user logout.
+   * Signs out from Firebase, clears the userRole cookie, and redirects to login.
+   */
   const handleLogout = async () => {
     try {
-      await signOut(auth);
+      await firebaseSignOut(auth);
       deleteCookie('userRole');
-      setUserRole(undefined); // Clear local state
+      setUserRole(undefined);
       router.push('/login');
-      // router.refresh(); // May not be strictly necessary, Firebase state change should trigger UI updates
     } catch (error) {
       console.error("Error signing out: ", error);
-      // Optionally show a toast error
+      // Future: Show a toast message for logout error
     }
   };
 
   if (!mounted) {
-    // To prevent hydration mismatch, often good to return null or a skeleton here
+    // Avoid rendering mismatch during SSR/hydration for cookie-dependent UI
     return null; 
   }
 
   const navItemsForRole = allNavItems.filter(item => userRole && item.roles.includes(userRole as 'admin' | 'store_manager'));
 
+  const getDashboardLink = () => {
+    if (userRole === 'admin') return '/';
+    if (userRole === 'store_manager') return '/store-dashboard';
+    return '/login'; // Fallback
+  }
+
   return (
     <>
       <SidebarHeader className="p-4">
-        <Link href={userRole === 'admin' ? '/' : (userRole === 'store_manager' ? '/store-dashboard' : '/login')} className="flex items-center gap-2">
+        <Link href={getDashboardLink()} className="flex items-center gap-2">
           <Building className="h-7 w-7 text-primary" />
           {open && <h1 className="text-xl font-semibold text-primary font-headline">KBMS Billing</h1>}
         </Link>
