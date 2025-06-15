@@ -18,7 +18,7 @@ import {
   UserCircle,
   ClipboardPlus,
   PackageSearch,
-  BookOpen, // Icon for Ledger page
+  BookOpen, 
 } from "lucide-react";
 import React, { useEffect, useState, useCallback } from 'react';
 
@@ -33,8 +33,8 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Button } from "../ui/button";
-import { auth } from '@/lib/firebase/firebaseConfig'; // Firebase auth instance
-import { signOut as firebaseSignOut, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth'; // Firebase auth functions
+import { auth } from '@/lib/firebase/firebaseConfig'; 
+import { signOut as firebaseSignOut, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 
 /**
  * @fileOverview Sidebar navigation component for the application.
@@ -61,7 +61,6 @@ const allNavItems: NavItem[] = [
   { href: "/managers", label: "Manage Managers", icon: UserCog, roles: ['admin'] },
   { href: "/sellers", label: "Manage Sellers", icon: Truck, roles: ['admin'] },
   { href: "/products", label: "Product Database", icon: Package, roles: ['admin'] },
-  { href: "/ledger", label: "Daily Ledger", icon: BookOpen, roles: ['admin', 'store_manager'] }, // Ledger accessible by both
   { href: "/pricing-rules", label: "Pricing Rules", icon: SlidersHorizontal, roles: ['admin'] },
   { href: "/stock", label: "Inventory Levels", icon: Boxes, roles: ['admin'] },
   { href: "/payments", label: "Payment Records", icon: CreditCard, roles: ['admin'] },
@@ -71,6 +70,7 @@ const allNavItems: NavItem[] = [
   { href: "/view-products-stock", label: "View Products & Stock", icon: PackageSearch, roles: ['store_manager'] },
 
   // Shared routes
+  { href: "/ledger", label: "Daily Ledger", icon: BookOpen, roles: ['admin', 'store_manager'] }, 
   { href: "/billing", label: "Billing / Invoicing", icon: FileText, roles: ['admin', 'store_manager'] },
   { href: "/create-bill", label: "Create Bill/Invoice", icon: ClipboardPlus, roles: ['admin', 'store_manager'] },
   { href: "/customers", label: "Manage Customers", icon: Users, roles: ['admin', 'store_manager'] },
@@ -83,7 +83,7 @@ const allNavItems: NavItem[] = [
  * @returns {string | undefined} The cookie value, or undefined if not found.
  */
 const getCookie = (name: string): string | undefined => {
-  if (typeof document === 'undefined') return undefined; // Ensure browser environment
+  if (typeof document === 'undefined') return undefined; 
   const value = `; ${document.cookie}`;
   const parts = value.split(`; ${name}=`);
   if (parts.length === 2) return parts.pop()?.split(';').shift();
@@ -127,66 +127,69 @@ const setCookie = (name: string, value: string, days: number) => {
 export function SidebarNav() {
   const pathname = usePathname();
   const router = useRouter();
-  const { open } = useSidebar(); // Context for sidebar open/close state (visual only)
+  const { open } = useSidebar(); 
   const [userRole, setUserRole] = useState<string | undefined>(undefined);
-  const [mounted, setMounted] = useState(false); // Tracks if component has mounted on client
+  const [mounted, setMounted] = useState(false);
 
   /**
    * Updates the userRole state from the 'userRole' cookie.
+   * This function is memoized with useCallback to prevent unnecessary re-creations.
    */
   const updateUserRoleFromCookie = useCallback(() => {
     const roleFromCookie = getCookie('userRole');
-    setUserRole(roleFromCookie);
-  }, []);
+    if (roleFromCookie !== userRole) { // Only update if role actually changed
+        setUserRole(roleFromCookie);
+    }
+  }, [userRole]); // Dependency on userRole to compare current state with new cookie value
 
   // Effect for initial mount and auth state/cookie changes
   useEffect(() => {
-    setMounted(true); // Component has mounted
+    setMounted(true); 
     updateUserRoleFromCookie(); // Initial role check from cookie
 
-    // Listen to Firebase auth state changes
     const unsubscribe = onAuthStateChanged(auth, (user: FirebaseUser | null) => {
-      if (!user) { // If Firebase reports no user (e.g., signed out, session expired)
+      if (!user) { 
         console.log("SidebarNav: Firebase user logged out or session expired.");
-        deleteCookie('userRole'); // Clear role cookie
-        setUserRole(undefined); // Clear local role state
-        if (pathname !== '/login') { // If not already on login, redirect
+        deleteCookie('userRole'); 
+        setUserRole(undefined); 
+        if (pathname !== '/login') { 
             router.push('/login');
         }
-      } else { // User is authenticated in Firebase
+      } else { 
         const currentRoleCookie = getCookie('userRole');
-        if (currentRoleCookie) { // Role cookie exists, ensure local state matches
+        if (currentRoleCookie) { 
             if (userRole !== currentRoleCookie) setUserRole(currentRoleCookie);
-        } else if (user.email) { // No role cookie, but Firebase user exists (e.g., cookie expired)
-            // Attempt to re-determine and set role cookie based on email pattern
+        } else if (user.email) { 
             let newRole = '';
             if (user.email.toLowerCase().includes('admin@')) newRole = 'admin';
             else if (user.email.toLowerCase().includes('manager@')) newRole = 'store_manager';
             
-            if (newRole) { // If role can be determined
-               setCookie('userRole', newRole, 1); // Set cookie (e.g., for 1 day)
+            if (newRole) { 
+               setCookie('userRole', newRole, 1); 
                setUserRole(newRole);
-            } else { // Cannot determine role from email, treat as invalid session
+            } else { 
                 console.warn("SidebarNav: Firebase user exists, but role couldn't be determined from email. Forcing logout.");
                 deleteCookie('userRole');
                 setUserRole(undefined);
-                firebaseSignOut(auth).catch(console.error); // Sign out from Firebase
+                firebaseSignOut(auth).catch(console.error); 
                 if (pathname !== '/login') router.push('/login');
             }
         }
       }
     });
 
-    // Listen for custom 'userRoleChanged' event (e.g., dispatched after login)
-    // This helps update the sidebar immediately if the cookie changes elsewhere.
-    window.addEventListener('userRoleChanged', updateUserRoleFromCookie);
+    // Listen for custom 'userRoleChanged' event from login page
+    const handleRoleChanged = () => {
+        console.log("SidebarNav: 'userRoleChanged' event received. Updating role from cookie.");
+        updateUserRoleFromCookie();
+    };
+    window.addEventListener('userRoleChanged', handleRoleChanged);
 
-    // Cleanup listeners on component unmount
     return () => {
         unsubscribe();
-        window.removeEventListener('userRoleChanged', updateUserRoleFromCookie);
+        window.removeEventListener('userRoleChanged', handleRoleChanged);
     };
-  }, [router, pathname, updateUserRoleFromCookie, userRole]); // userRole added to re-evaluate if it changes externally
+  }, [router, pathname, updateUserRoleFromCookie, userRole]);
 
   /**
    * Handles user logout.
@@ -195,38 +198,31 @@ export function SidebarNav() {
   const handleLogout = async () => {
     try {
       await firebaseSignOut(auth);
-      // The onAuthStateChanged listener above will handle cookie deletion and redirection to /login.
+      // onAuthStateChanged will handle cookie deletion and redirection to /login
+      console.log("SidebarNav: Logout successful. Firebase sign-out initiated.");
     } catch (error) {
       console.error("Error signing out from Firebase: ", error);
-      // Fallback: Manually clear cookie and redirect if Firebase signout fails for some reason
+      // Fallback: Manually clear cookie and redirect if Firebase signout fails
       deleteCookie('userRole');
       setUserRole(undefined);
       router.push('/login');
     }
   };
 
-  // Don't render anything until component has mounted on the client
   if (!mounted) return null; 
 
-  // Filter navigation items based on the current user's role
   const navItemsForRole = allNavItems.filter(item => 
     userRole && item.roles.includes(userRole as 'admin' | 'store_manager')
   );
 
-  /**
-   * Determines the correct dashboard link based on user role.
-   * @returns {string} The path to the user's dashboard or login page.
-   */
   const getDashboardLink = (): string => {
     if (userRole === 'admin') return '/';
     if (userRole === 'store_manager') return '/store-dashboard';
-    return '/login'; // Default to login if role is somehow undefined
+    return '/login'; 
   }
 
-  // If no user role is determined (e.g., not logged in), don't render the main sidebar content.
-  // This is a fallback; middleware and layout effects should handle redirection.
   if (!userRole && pathname !== '/login') {
-    return null; // Or a minimal loading/error state if preferred
+    return null; 
   }
 
 
@@ -240,20 +236,20 @@ export function SidebarNav() {
       </SidebarHeader>
       <SidebarSeparator />
       
-      <SidebarMenu className="flex-1 p-4 overflow-y-auto"> {/* Added overflow-y-auto for long lists */}
+      <SidebarMenu className="flex-1 p-4 overflow-y-auto">
         {navItemsForRole.map((item) => (
           <SidebarMenuItem key={item.href}>
             <SidebarMenuButton
-              asChild // Allows Link component to be the actual button for navigation
+              asChild 
               variant="default"
               className={cn(
                 "w-full justify-start",
                 pathname === item.href 
-                  ? "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90" // Active link style
-                  : "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground" // Hover style for inactive links
+                  ? "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90" 
+                  : "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground" 
               )}
-              isActive={pathname === item.href} // Prop for internal styling if SidebarMenuButton uses it
-              tooltip={item.label} // Tooltip for collapsed sidebar
+              isActive={pathname === item.href} 
+              tooltip={item.label} 
             >
               <Link href={item.href}>
                 <item.icon className="h-5 w-5" />
@@ -270,7 +266,7 @@ export function SidebarNav() {
           <LogOut className="h-5 w-5 mr-2" />
           {open && <span>Logout</span>}
         </Button>
-        {open && <p className="text-xs text-muted-foreground">&copy; {new Date().getFullYear()} Your Company</p>}
+        {open && <p className="text-xs text-muted-foreground">&copy; {new Date().getFullYear()} KBMS</p>}
       </SidebarFooter>
     </>
   );

@@ -3,19 +3,19 @@
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { PageHeader } from "@/components/page-header";
-import { LayoutDashboard, ClipboardPlus, Users, PackageSearch, ReceiptText, TrendingUp, AlertTriangle } from "lucide-react"; // Added AlertTriangle
+import { LayoutDashboard, ClipboardPlus, Users, PackageSearch, ReceiptText, TrendingUp, AlertTriangle } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { useEffect, useState, useCallback } from "react";
-import { collection, getDocs, query, where, limit, orderBy, Timestamp, getCountFromServer } from 'firebase/firestore'; // Added getCountFromServer
+import { collection, getDocs, query, where, limit, orderBy, Timestamp, getCountFromServer } from 'firebase/firestore';
 import { db, auth } from '@/lib/firebase/firebaseConfig';
 import type { User as FirebaseUser } from "firebase/auth";
-import { format } from 'date-fns'; // For formatting dates
+import { format, startOfWeek, endOfWeek, startOfDay, endOfDay } from 'date-fns'; // For formatting dates
 
 /**
  * @fileOverview Store Manager Dashboard page.
  * Provides Store Managers with an overview of daily operations, key metrics relevant to them,
- * and quick actions. Data is fetched from Firebase Firestore, filtered for the current manager where applicable.
+ * and quick actions. Data is fetched from Firebase Firestore, filtered for the current manager.
  */
 
 /**
@@ -27,7 +27,7 @@ interface Metric {
   icon: React.ElementType;
   description?: string;
   dataAiHint?: string;
-  link?: string; // Optional link to a relevant page
+  link?: string; 
   isLoading: boolean;
 }
 
@@ -58,10 +58,10 @@ export default function StoreManagerDashboardPage() {
   const [recentActivity, setRecentActivity] = useState<string[]>([]);
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
   const [metrics, setMetrics] = useState<Metric[]>([
-    { title: "Today's Bills Generated", value: "0", icon: ReceiptText, description: "Bills created by you today.", dataAiHint: "invoice document", isLoading: true, link: "/billing" },
+    { title: "Today's Bills Generated", value: "0", icon: ReceiptText, description: "Bills created by you today.", dataAiHint: "invoice document", isLoading: true, link: "/billing?filter=today&manager=me" },
     { title: "Customers Added This Week", value: "0", icon: Users, description: "New customers registered by you this week.", dataAiHint: "people team", isLoading: true, link: "/customers"},
     { title: "Pending Bills (Yours)", value: "0", icon: ReceiptText, description: "Your bills awaiting payment.", dataAiHint: "payment money", isLoading: true, link: "/billing?status=Pending&manager=me"},
-    { title: "Reported Product Issues", value: "0", icon: AlertTriangle, description: "Issues you've reported.", dataAiHint: "alert inventory", isLoading: true, link: "/view-products-stock" }, // Link to be more specific if issue tracking page exists
+    { title: "Reported Product Issues", value: "0", icon: AlertTriangle, description: "Issues you've reported (active).", dataAiHint: "alert inventory", isLoading: true, link: "/view-products-stock" }, 
   ]);
 
   // Get current authenticated user
@@ -76,18 +76,27 @@ export default function StoreManagerDashboardPage() {
    * Fetches dashboard data relevant to the current store manager from Firestore.
    */
   const fetchManagerDashboardData = useCallback(async () => {
-    if (!currentUser) return; // Don't fetch if user is not yet known
+    if (!currentUser) {
+      console.log("StoreManagerDashboard: No current user, skipping data fetch.");
+      // Set all metrics to not loading if user is null after initial check
+      setMetrics(prevMetrics => prevMetrics.map(m => ({ ...m, isLoading: false, value: "N/A" })));
+      return;
+    }
+    console.log("StoreManagerDashboard: Fetching data for user:", currentUser.uid);
 
     const today = new Date();
-    const todayISOStart = new Date(today.setHours(0,0,0,0)).toISOString();
-    const todayISOEnd = new Date(today.setHours(23,59,59,999)).toISOString();
+    // For "Today's Bills": Use ISO strings for date range queries if 'isoDate' is a string.
+    // If 'isoDate' is a Firestore Timestamp, convert `todayStart` and `todayEnd` to Timestamps.
+    const todayStartISO = startOfDay(today).toISOString();
+    const todayEndISO = endOfDay(today).toISOString();
     
-    const oneWeekAgo = new Date();
-    oneWeekAgo.setDate(today.getDate() - 7);
-    const oneWeekAgoTimestamp = Timestamp.fromDate(oneWeekAgo);
+    // For "Customers Added This Week": Use Firestore Timestamps for range queries on 'createdAt'.
+    const weekStart = startOfWeek(today, { weekStartsOn: 1 }); // Assuming week starts on Monday
+    const weekEnd = endOfWeek(today, { weekStartsOn: 1 });
+    const weekStartTimestamp = Timestamp.fromDate(weekStart);
+    const weekEndTimestamp = Timestamp.fromDate(weekEnd);
 
 
-    // Helper to update metric state
     const updateMetric = (title: string, newValue: Partial<Metric>) => {
       setMetrics(prevMetrics => 
         prevMetrics.map(m => m.title === title ? { ...m, ...newValue, isLoading: false } : m)
@@ -96,26 +105,29 @@ export default function StoreManagerDashboardPage() {
 
     try {
       // 1. Today's Bills Generated by this manager
+      // Assumes 'invoices' collection has 'createdBy' (UID) and 'isoDate' (ISO string YYYY-MM-DDTHH:mm:ss.sssZ)
       const todaysBillsQuery = query(
         collection(db, "invoices"), 
         where("createdBy", "==", currentUser.uid),
-        where("isoDate", ">=", todayISOStart),
-        where("isoDate", "<=", todayISOEnd)
+        where("isoDate", ">=", todayStartISO),
+        where("isoDate", "<=", todayEndISO)
       );
       const todaysBillsSnapshot = await getCountFromServer(todaysBillsQuery);
       updateMetric("Today's Bills Generated", { value: todaysBillsSnapshot.data().count.toString() });
 
-      // 2. Customers Added This Week by this manager (assuming a 'createdBy' field on customers)
-      // This requires 'createdBy' on customer documents. If not present, this metric will be inaccurate or needs different logic.
+      // 2. Customers Added This Week by this manager
+      // Assumes 'customers' collection has 'createdBy' (UID) and 'createdAt' (Firestore Timestamp)
       const customersAddedQuery = query(
         collection(db, "customers"),
-        where("createdBy", "==", currentUser.uid), // Assuming 'createdBy' field exists
-        where("createdAt", ">=", oneWeekAgoTimestamp)
+        where("createdBy", "==", currentUser.uid), 
+        where("createdAt", ">=", weekStartTimestamp),
+        where("createdAt", "<=", weekEndTimestamp)
       );
       const customersAddedSnapshot = await getCountFromServer(customersAddedQuery);
       updateMetric("Customers Added This Week", { value: customersAddedSnapshot.data().count.toString() });
 
       // 3. Pending Bills created by this manager
+      // Assumes 'invoices' collection has 'createdBy' (UID) and 'status'
       const pendingBillsQuery = query(
           collection(db, "invoices"),
           where("createdBy", "==", currentUser.uid),
@@ -124,17 +136,19 @@ export default function StoreManagerDashboardPage() {
       const pendingBillsSnapshot = await getCountFromServer(pendingBillsQuery);
       updateMetric("Pending Bills (Yours)", {value: pendingBillsSnapshot.data().count.toString()});
 
-      // 4. Reported Product Issues by this manager (requires 'issueReports' collection)
+      // 4. Reported Product Issues by this manager (active issues)
+      // Assumes 'issueReports' collection has 'reportedByUid' (UID) and 'status'
       const reportedIssuesQuery = query(
           collection(db, "issueReports"),
           where("reportedByUid", "==", currentUser.uid),
-          // where("status", "!=", "Resolved") // Optionally filter out resolved issues
+          where("status", "==", "New") // Only count 'New' or 'Investigating' issues
       );
       const reportedIssuesSnapshot = await getCountFromServer(reportedIssuesQuery);
       updateMetric("Reported Product Issues", {value: reportedIssuesSnapshot.data().count.toString()});
 
 
       // Fetch recent activity (e.g., last 3 bills created by this manager)
+      // Assumes 'invoices' collection has 'createdBy' (UID) and 'createdAt' (Firestore Timestamp)
       const recentActivityQuery = query(
         collection(db, "invoices"), 
         where("createdBy", "==", currentUser.uid), 
@@ -144,25 +158,28 @@ export default function StoreManagerDashboardPage() {
       const activitySnapshot = await getDocs(recentActivityQuery);
       const activities = activitySnapshot.docs.map(doc => {
         const data = doc.data();
-        const dateFormatted = data.createdAt instanceof Timestamp ? format(data.createdAt.toDate(), "MMM dd, HH:mm") : "Recently";
-        return `${dateFormatted}: Bill ${data.invoiceNumber} created for ${data.customerName}.`;
+        // Ensure createdAt is a Timestamp before calling toDate()
+        const dateFormatted = data.createdAt instanceof Timestamp 
+            ? format(data.createdAt.toDate(), "MMM dd, HH:mm") 
+            : (data.isoDate ? format(new Date(data.isoDate), "MMM dd, HH:mm") : "Recently");
+        return `${dateFormatted}: Bill ${data.invoiceNumber || 'N/A'} created for ${data.customerName || 'Unknown'}.`;
       });
       setRecentActivity(activities);
 
     } catch (error) {
       console.error("Error fetching store manager dashboard data:", error);
+      // Set all metrics to error state or display a general error toast
       metrics.forEach(m => updateMetric(m.title, { value: "Error", isLoading: false }));
-      setRecentActivity(["Failed to load recent activity."]);
+      setRecentActivity(["Failed to load recent activity due to an error."]);
     }
-  }, [currentUser, metrics]); // metrics in dependency array can cause re-fetch if not careful
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser]); // metrics removed from deps to avoid loop
 
-  // Fetch data when currentUser is available
   useEffect(() => {
     if (currentUser) {
       fetchManagerDashboardData();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentUser]); // Re-run when currentUser changes
+  }, [currentUser, fetchManagerDashboardData]);
 
   return (
     <>
@@ -171,7 +188,6 @@ export default function StoreManagerDashboardPage() {
         description="Your daily operations hub for sales, customers, and inventory management."
         icon={LayoutDashboard}
       />
-      {/* Metrics Display */}
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
         {metrics.map((metric) => (
           <Card key={metric.title} className="shadow-lg rounded-xl hover:shadow-primary/20 transition-shadow">
@@ -197,7 +213,6 @@ export default function StoreManagerDashboardPage() {
         ))}
       </div>
       
-      {/* Quick Actions Section */}
       <div className="mt-8">
         <Card className="shadow-lg rounded-xl">
           <CardHeader>
@@ -220,7 +235,6 @@ export default function StoreManagerDashboardPage() {
         </Card>
       </div>
 
-      {/* Recent Activity Feed */}
        <div className="mt-8">
         <Card className="shadow-lg rounded-xl">
           <CardHeader>
@@ -236,9 +250,9 @@ export default function StoreManagerDashboardPage() {
                         </li>
                     ))}
                 </ul>
-             ) : ( // Display if no recent activity or still loading initial user data
+             ) : ( 
                 <div className="h-48 flex items-center justify-center bg-muted/30 rounded-md border border-dashed">
-                    <p className="text-muted-foreground">{!currentUser ? "Loading user data..." : "No recent activity to display."}</p>
+                    <p className="text-muted-foreground">{!currentUser && metrics.some(m=>m.isLoading) ? "Loading user data..." : "No recent activity to display."}</p>
                 </div>
              )}
           </CardContent>

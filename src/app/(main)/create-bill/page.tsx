@@ -60,7 +60,16 @@ export default function CreateBillPage() {
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(true); // For initial data loading
   const [isSubmitting, setIsSubmitting] = useState(false); // For form submission state
-  const [originalBillItemsForEdit, setOriginalBillItemsForEdit] = useState<BillItem[]>([]); // Stores original items when editing
+  
+  /**
+   * Stores the original items of an invoice when it's being edited.
+   * This is crucial for calculating the correct stock adjustments.
+   * For example, if an item's quantity was 5 and is changed to 3, stock increases by 2.
+   * If changed from 5 to 8, stock decreases by 3.
+   * If a new item is added, its full quantity decreases stock.
+   * If an original item is removed, its original quantity is added back to stock.
+   */
+  const [originalBillItemsForEdit, setOriginalBillItemsForEdit] = useState<BillItem[]>([]);
 
   /**
    * Formats a number into Indian Rupee currency string.
@@ -71,12 +80,12 @@ export default function CreateBillPage() {
 
   /**
    * Fetches initial data: customers and products from Firestore.
-   * If `editInvoiceId` is present, fetches that invoice's data to pre-fill the form.
+   * If `editInvoiceId` is present, fetches that invoice's data to pre-fill the form
+   * and stores its original items for stock adjustment logic.
    */
   const fetchInitialData = useCallback(async () => {
     setIsLoading(true);
     try {
-      // Fetch customers and products in parallel
       const [customersSnapshot, productsSnapshot] = await Promise.all([
         getDocs(collection(db, "customers")),
         getDocs(collection(db, "products"))
@@ -92,7 +101,7 @@ export default function CreateBillPage() {
               name: data.name,
               sku: data.sku,
               numericPrice: data.numericPrice,
-              displayPrice: formatCurrency(data.numericPrice), // Format price for display
+              displayPrice: formatCurrency(data.numericPrice),
               stock: data.stock,
               unitOfMeasure: data.unitOfMeasure,
               category: data.category,
@@ -102,31 +111,54 @@ export default function CreateBillPage() {
       });
       setProducts(fetchedProducts);
 
-      // If editing an existing invoice, load its data
       if (editInvoiceId) {
         const invoiceRef = doc(db, "invoices", editInvoiceId);
         const invoiceSnap = await getDoc(invoiceRef);
         if (invoiceSnap.exists()) {
-          const invoiceData = invoiceSnap.data() as Invoice; // Assuming Invoice type
+          const invoiceData = invoiceSnap.data() as Invoice;
           setSelectedCustomerId(invoiceData.customerId);
-          // Map invoice items to BillItem structure
+          // Map invoice items to BillItem structure, ensuring product details are current
           const loadedBillItems = invoiceData.items.map(item => {
             const productDetails = fetchedProducts.find(p => p.id === item.productId);
+            if (!productDetails) {
+                // This case should ideally not happen if data integrity is maintained.
+                // It means a product ID on an old invoice no longer exists in the products collection.
+                // Handle by perhaps showing a warning or using placeholder data.
+                console.warn(`Product with ID ${item.productId} not found for invoice ${editInvoiceId}.`);
+                toast({title: "Product Missing", description: `Product ${item.name} (ID: ${item.productId}) from the original invoice was not found in the current product database. Its details might be incomplete.`, variant: "destructive"});
+                return {
+                  id: item.productId,
+                  name: item.name + " (Product Missing)",
+                  quantity: item.quantity,
+                  numericPrice: item.unitPrice,
+                  displayPrice: formatCurrency(item.unitPrice),
+                  total: item.total,
+                  stock: 0, // Assume 0 stock if product is missing
+                  unitOfMeasure: item.unitOfMeasure,
+                  category: "Unknown",
+                  sku: "N/A",
+                  imageUrl: `https://placehold.co/40x40.png?text=ERR`,
+                  dataAiHint: "error missing",
+                } as BillItem;
+            }
             return {
-              ...productDetails!, 
+              ...productDetails, 
               id: item.productId, 
               quantity: item.quantity,
-              total: item.total,
+              total: item.total, // Use total from invoice item, as price might have changed
+              numericPrice: item.unitPrice, // Use unit price from invoice item
+              displayPrice: formatCurrency(item.unitPrice),
             } as BillItem;
           });
           setBillItems(loadedBillItems);
-          setOriginalBillItemsForEdit(loadedBillItems.map(item => ({...item}))); // Store a deep copy for stock adjustment logic
+          // Store a deep copy of these loaded items as the "original" state for stock adjustment.
+          // This uses the product details *as they were when the invoice was created/last edited*.
+          setOriginalBillItemsForEdit(loadedBillItems.map(item => ({...item}))); 
         } else {
-          toast({ title: "Invoice Not Found", description: "The invoice you are trying to edit does not exist.", variant: "destructive"});
-          router.push("/billing"); // Redirect if invoice not found
+          toast({ title: "Invoice Not Found", description: "The invoice you are trying to edit does not exist or may have been deleted.", variant: "destructive"});
+          router.push("/billing"); 
         }
       }
-
     } catch (error) {
       console.error("Error fetching initial data: ", error);
       toast({ title: "Data Load Error", description: "Could not load required data from the database. Please try again.", variant: "destructive" });
@@ -154,11 +186,16 @@ export default function CreateBillPage() {
       if (existingItemIndex > -1) { // Item already in bill
         const updatedBillItems = [...prevItems];
         const existingItem = updatedBillItems[existingItemIndex];
-        if (existingItem.quantity < product.stock) {
+        
+        // Calculate available stock. If editing, consider the stock already "allocated" to this item in the original bill.
+        const originalItem = originalBillItemsForEdit.find(oi => oi.id === product.id);
+        const effectiveStockAvailable = product.stock + (originalItem ? originalItem.quantity : 0);
+
+        if (existingItem.quantity < effectiveStockAvailable) {
           existingItem.quantity += 1;
-          existingItem.total = existingItem.quantity * existingItem.numericPrice;
+          existingItem.total = existingItem.quantity * existingItem.numericPrice; // Use item's numericPrice for consistency
         } else {
-          toast({ title: "Max Stock Reached", description: `Cannot add more ${product.name} than available in stock (${product.stock}).`, variant: "destructive" });
+          toast({ title: "Max Stock Reached", description: `Cannot add more ${product.name} than available in stock (${product.stock}). Original bill quantity already accounts for some stock if editing.`, variant: "destructive" });
         }
         return updatedBillItems;
       } else { // New item for the bill
@@ -166,7 +203,7 @@ export default function CreateBillPage() {
       }
     });
     setProductSearchTerm(""); // Clear search term after adding
-  }, [toast]);
+  }, [toast, originalBillItemsForEdit]); // Added originalBillItemsForEdit dependency
 
   /**
    * Handles quantity change for an item in the bill.
@@ -178,27 +215,31 @@ export default function CreateBillPage() {
     const newQuantity = parseInt(newQuantityStr, 10);
     setBillItems(prevItems => {
       const itemIndex = prevItems.findIndex(item => item.id === productId);
-      if (itemIndex === -1) return prevItems; // Should not happen
+      if (itemIndex === -1) return prevItems; 
 
       const updatedBillItems = [...prevItems];
       const currentItem = { ...updatedBillItems[itemIndex] }; 
+      const productDetails = products.find(p => p.id === productId); // Get current product details from master list
 
-      if (isNaN(newQuantity) || newQuantity < 1) { // If new quantity is invalid or less than 1
-          updatedBillItems.splice(itemIndex, 1); // Remove item from bill
+      if (isNaN(newQuantity) || newQuantity < 1) { 
+          updatedBillItems.splice(itemIndex, 1); 
           return updatedBillItems;
       }
       
-      // Calculate available stock considering original quantity if editing
+      // Calculate the maximum quantity allowed for this item:
+      // It's the current actual stock of the product in the database,
+      // PLUS the quantity of this item that was on the original bill (if editing).
+      // This allows, for example, reducing an item from 5 to 3, then increasing back to 5, even if current DB stock is low.
       const originalItem = originalBillItemsForEdit.find(oi => oi.id === currentItem.id);
-      const effectiveStock = currentItem.stock + (originalItem ? originalItem.quantity : 0);
+      const effectiveStockLimit = (productDetails?.stock || 0) + (originalItem ? originalItem.quantity : 0);
 
-      if (newQuantity > effectiveStock) {
-          toast({ title: "Stock Limit Exceeded", description: `Cannot set quantity for ${currentItem.name} above total effective stock (${effectiveStock}). Setting to max available.`, variant: "destructive"});
-          currentItem.quantity = effectiveStock;
+      if (newQuantity > effectiveStockLimit) {
+          toast({ title: "Stock Limit Exceeded", description: `Cannot set quantity for ${currentItem.name} above total effective stock (${effectiveStockLimit}). Setting to max available.`, variant: "destructive"});
+          currentItem.quantity = effectiveStockLimit;
       } else {
           currentItem.quantity = newQuantity;
       }
-      currentItem.total = currentItem.quantity * currentItem.numericPrice;
+      currentItem.total = currentItem.quantity * currentItem.numericPrice; // Recalculate total based on item's current price
       updatedBillItems[itemIndex] = currentItem;
       return updatedBillItems;
     });
@@ -214,12 +255,11 @@ export default function CreateBillPage() {
 
   // Calculate bill summary: subtotal, GST, grand total
   const subTotal = billItems.reduce((acc, item) => acc + item.total, 0);
-  const selectedCustomer = customers.find(c => c.id === selectedCustomerId);
-  // Determine if the sale is inter-state based on customer's GSTIN prefix
-  const isInterState = selectedCustomer?.gstin ? selectedCustomer.gstin.substring(0, 2) !== BUSINESS_STATE_CODE : false;
+  const selectedCustomerDetails = customers.find(c => c.id === selectedCustomerId);
+  const isInterState = selectedCustomerDetails?.gstin ? selectedCustomerDetails.gstin.substring(0, 2) !== BUSINESS_STATE_CODE : false;
   
   let cgst = 0, sgst = 0, igst = 0;
-  if (selectedCustomer?.gstin) { // Apply GST only if customer has a GSTIN
+  if (selectedCustomerDetails?.gstin) { 
     if (isInterState) {
       igst = subTotal * GST_RATE;
     } else {
@@ -232,12 +272,12 @@ export default function CreateBillPage() {
   /**
    * Handles the generation of a new bill or update of an existing bill.
    * Performs a Firestore transaction to:
-   *  1. Update product stock levels based on changes in bill items.
+   *  1. Update product stock levels based on changes in bill items, comparing against original items if editing.
    *  2. Create or update the invoice document in Firestore.
    */
   const handleGenerateOrUpdateBill = async () => {
     if (!selectedCustomerId) {
-      toast({ title: "Customer Not Selected", description: "Please select a customer before generating the bill.", variant: "destructive" });
+      toast({ title: "Customer Not Selected", description: "Please select a customer.", variant: "destructive" });
       return;
     }
     if (billItems.length === 0) {
@@ -247,7 +287,7 @@ export default function CreateBillPage() {
     
     const currentFirebaseUser = auth.currentUser;
     if (!currentFirebaseUser) {
-      toast({ title: "Authentication Error", description: "You must be logged in to perform this action.", variant: "destructive" });
+      toast({ title: "Authentication Error", description: "You must be logged in.", variant: "destructive" });
       return;
     }
     setIsSubmitting(true);
@@ -255,45 +295,32 @@ export default function CreateBillPage() {
     try {
       await runTransaction(db, async (transaction) => {
         // Stock adjustment logic
-        for (const item of billItems) { // Iterate through current bill items
-            const productRef = doc(db, "products", item.id);
+        // Iterate through all products involved: current bill items + original bill items (to catch removals)
+        const allProductIdsInvolved = new Set([
+            ...billItems.map(item => item.id),
+            ...originalBillItemsForEdit.map(item => item.id)
+        ]);
+
+        for (const productId of allProductIdsInvolved) {
+            const productRef = doc(db, "products", productId);
             const productSnap = await transaction.get(productRef);
-            if (!productSnap.exists()) throw new Error(`Product ${item.name} (ID: ${item.id}) not found in database.`);
+            if (!productSnap.exists()) throw new Error(`Product with ID ${productId} not found in database during transaction.`);
             
             let currentDbStock = productSnap.data().stock as number;
-            let quantityChange = 0; // The net change in quantity for this product for this bill operation
+            const currentBillItem = billItems.find(item => item.id === productId);
+            const originalBillItem = originalBillItemsForEdit.find(item => item.id === productId);
 
-            if (editInvoiceId) { // Editing an existing bill
-                const originalItem = originalBillItemsForEdit.find(oi => oi.id === item.id);
-                if (originalItem) { // Item was in the original bill
-                    quantityChange = item.quantity - originalItem.quantity; // e.g., if original was 5, new is 8, change is +3 (stock decreases by 3)
-                                                                            // if original was 5, new is 2, change is -3 (stock increases by 3)
-                } else { // Item is newly added to this edited bill
-                    quantityChange = item.quantity; // Stock decreases by this new quantity
-                }
-            } else { // Creating a new bill
-                quantityChange = item.quantity; // Stock decreases by this quantity
-            }
+            const originalQuantity = originalBillItem ? originalBillItem.quantity : 0;
+            const newQuantity = currentBillItem ? currentBillItem.quantity : 0;
             
-            const newStock = currentDbStock - quantityChange;
+            // The net change in stock is original quantity (returned to stock) minus new quantity (taken from stock)
+            const stockChange = originalQuantity - newQuantity; 
+            const newStock = currentDbStock + stockChange;
+
             if (newStock < 0) {
-                 throw new Error(`Insufficient stock for ${item.name}. Available: ${currentDbStock}, Required for this change: ${quantityChange > 0 ? quantityChange : 0}. New stock would be ${newStock}.`);
+                 throw new Error(`Insufficient stock for ${productSnap.data().name}. Transaction would result in negative stock (${newStock}).`);
             }
             transaction.update(productRef, { stock: newStock });
-        }
-        
-        // If editing, handle items that were *removed* from the bill entirely
-        if (editInvoiceId) {
-            for (const originalItem of originalBillItemsForEdit) {
-                if (!billItems.find(bi => bi.id === originalItem.id)) { // Item was in original bill but not in current bill (i.e., removed)
-                    const productRef = doc(db, "products", originalItem.id);
-                    const productSnap = await transaction.get(productRef); // Re-fetch to be safe within transaction
-                    if (!productSnap.exists()) throw new Error(`Product ${originalItem.name} not found for stock restoration.`);
-                    let currentDbStock = productSnap.data().stock as number;
-                    // Add back the original quantity of the removed item
-                    transaction.update(productRef, { stock: currentDbStock + originalItem.quantity });
-                }
-            }
         }
         
         // Prepare bill data for Firestore
@@ -304,43 +331,39 @@ export default function CreateBillPage() {
               productId: i.id, 
               name: i.name, 
               quantity: i.quantity, 
-              unitPrice: i.numericPrice, 
+              unitPrice: i.numericPrice, // Price used for this item in this bill
               total: i.total, 
               unitOfMeasure: i.unitOfMeasure
           })), 
           subTotal, cgst, sgst, igst, 
-          totalAmount: grandTotal, // Consistent naming with Invoice interface
-          displayTotal: formatCurrency(grandTotal), // Store formatted total for easy display
-          status: "Pending", // Default status for new/edited bill
-          // Generate a new invoice number if not editing, or use existing if logic allows (could be complex)
-          // For simplicity, generate new if not editing, or retain existing if editing (or regenerate if rules require)
+          totalAmount: grandTotal, 
+          displayTotal: formatCurrency(grandTotal),
+          status: "Pending", 
+          // Invoice number generation: for new, simple timestamp-based; for edit, retain existing.
           invoiceNumber: editInvoiceId 
-            ? (await transaction.get(doc(db, "invoices", editInvoiceId))).data()?.invoiceNumber || `INV-${Date.now().toString().slice(-6)}` 
-            : `INV-${Date.now().toString().slice(-6)}`,
-          date: format(new Date(), "MMM dd, yyyy"), // Formatted date for display
-          isoDate: new Date().toISOString(), // ISO date for sorting and storage
+            ? (await transaction.get(doc(db, "invoices", editInvoiceId))).data()?.invoiceNumber || `INV-ED-${Date.now().toString().slice(-6)}` 
+            : `INV-${Date.now().toString().slice(-6)}`, // A more robust sequential number system might be needed for production.
+          date: format(new Date(), "MMM dd, yyyy"), 
+          isoDate: new Date().toISOString(), 
           createdBy: currentFirebaseUser.uid, 
         };
 
         if (editInvoiceId) {
             const invoiceRef = doc(db, "invoices", editInvoiceId);
-            // When updating, we explicitly don't set createdAt to preserve the original creation time.
-            // Firestore's updateDoc merges data, so only provided fields are changed.
-            transaction.update(invoiceRef, billData);
+            // For updates, we might want to add an `updatedAt` field.
+            transaction.update(invoiceRef, {...billData, updatedAt: serverTimestamp()});
         } else {
-            const newInvoiceRef = doc(collection(db, "invoices")); // Auto-generate ID for new invoice
-            // For new documents, add createdAt field using serverTimestamp
+            const newInvoiceRef = doc(collection(db, "invoices")); 
             transaction.set(newInvoiceRef, {...billData, createdAt: serverTimestamp()});
         }
       });
 
-      toast({ title: editInvoiceId ? "Bill Updated" : "Bill Generated", description: `Bill ${editInvoiceId ? 'updated' : 'created'} successfully. Inventory levels have been adjusted.` });
-      // Reset form state after successful submission
+      toast({ title: editInvoiceId ? "Bill Updated" : "Bill Generated", description: `Bill ${editInvoiceId ? 'updated' : 'created'} successfully. Inventory levels adjusted.` });
       setSelectedCustomerId(undefined);
       setBillItems([]);
       setProductSearchTerm("");
       setOriginalBillItemsForEdit([]);
-      router.push("/billing"); // Navigate to billing page
+      router.push("/billing"); 
     } catch (error: any) {
       console.error(`Error ${editInvoiceId ? 'updating' : 'generating'} bill: `, error);
       toast({ title: `Bill ${editInvoiceId ? 'Update' : 'Generation'} Failed`, description: error.message || "An unexpected error occurred. Please check stock and try again.", variant: "destructive" });
@@ -358,7 +381,6 @@ export default function CreateBillPage() {
       )
     : [];
 
-  // Display loading state while initial data is being fetched
   if (isLoading) {
     return <PageHeader title={editInvoiceId ? "Edit Bill" : "Create New Bill"} description="Loading data from database..." icon={ClipboardPlus} />;
   }
@@ -391,7 +413,6 @@ export default function CreateBillPage() {
                         ))}
                     </SelectContent>
                     </Select>
-                    {/* Button to navigate to customer page to add a new customer */}
                     <Button variant="outline" onClick={() => router.push("/customers?addNew=true")} disabled={isSubmitting}>
                         <PlusCircle className="mr-2 h-4 w-4" /> Add New
                     </Button>
@@ -410,13 +431,12 @@ export default function CreateBillPage() {
                     onChange={(e) => setProductSearchTerm(e.target.value)}
                     disabled={isSubmitting}
                   />
-                  {productSearchTerm && ( // Show clear button if search term exists
+                  {productSearchTerm && ( 
                     <Button variant="ghost" size="icon" className="absolute right-1 top-0.5 h-8 w-8" onClick={() => setProductSearchTerm("")} title="Clear search" disabled={isSubmitting}>
                         <XCircle className="h-4 w-4" />
                     </Button>
                   )}
                 </div>
-                {/* Display filtered products for selection */}
                 {productSearchTerm && filteredProducts.length > 0 && (
                   <div className="mt-2 border rounded-md max-h-60 overflow-y-auto bg-background shadow-md z-10">
                     {filteredProducts.map(product => (
@@ -436,7 +456,7 @@ export default function CreateBillPage() {
                     ))}
                   </div>
                 )}
-                 {productSearchTerm && filteredProducts.length === 0 && ( // Message if no products match search
+                 {productSearchTerm && filteredProducts.length === 0 && (
                      <p className="mt-2 text-sm text-muted-foreground">No products found matching "{productSearchTerm}".</p>
                  )}
               </div>
@@ -454,10 +474,10 @@ export default function CreateBillPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Product</TableHead>
-                      <TableHead className="w-[120px]">Quantity</TableHead> {/* Increased width for quantity input */}
+                      <TableHead className="w-[120px]">Quantity</TableHead>
                       <TableHead className="text-right">Unit Price</TableHead>
                       <TableHead className="text-right">Total</TableHead>
-                      <TableHead className="w-[50px]"> </TableHead> {/* For remove button */}
+                      <TableHead className="w-[50px]"> </TableHead> 
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -468,12 +488,11 @@ export default function CreateBillPage() {
                           <Input 
                             type="number" 
                             value={item.quantity} 
-                            min="0" // Allow 0, which will trigger removal if user types it and blurs
-                            // Max stock calculation considers if item was originally in an edited bill
-                            max={item.stock + (originalBillItemsForEdit.find(oi => oi.id === item.id)?.quantity || 0) } 
+                            min="0" 
+                            max={(products.find(p=>p.id === item.id)?.stock || 0) + (originalBillItemsForEdit.find(oi => oi.id === item.id)?.quantity || 0) } 
                             onChange={(e) => handleQuantityChange(item.id, e.target.value)}
-                            onBlur={(e) => { if (parseInt(e.target.value, 10) < 1) handleQuantityChange(item.id, "0");}} // Remove if quantity becomes 0 on blur
-                            className="h-8 w-24" // Adjusted width
+                            onBlur={(e) => { const val = parseInt(e.target.value, 10); if (isNaN(val) || val < 1) handleQuantityChange(item.id, "0");}}
+                            className="h-8 w-24"
                             disabled={isSubmitting}
                           />
                         </TableCell>
@@ -488,7 +507,7 @@ export default function CreateBillPage() {
                     ))}
                   </TableBody>
                 </Table>
-              ) : ( // Display message if no items in bill
+              ) : ( 
                 <div className="p-6 bg-muted/30 rounded-md text-center border border-dashed">
                   <p className="text-muted-foreground">Search and add products to build the bill.</p>
                 </div>
@@ -499,7 +518,7 @@ export default function CreateBillPage() {
 
         {/* Right Side: Bill Summary & Actions */}
         <div className="lg:col-span-1">
-          <Card className="shadow-lg rounded-xl sticky top-6"> {/* Sticky summary card */}
+          <Card className="shadow-lg rounded-xl sticky top-6"> 
             <CardHeader>
               <CardTitle className="font-headline text-foreground flex items-center gap-2"><Calculator className="h-5 w-5"/>3. Bill Summary</CardTitle>
             </CardHeader>
@@ -508,8 +527,7 @@ export default function CreateBillPage() {
                 <span className="text-muted-foreground">Subtotal:</span>
                 <span className="font-medium">{formatCurrency(subTotal)}</span>
               </div>
-              {/* Display CGST & SGST or IGST based on customer's GSTIN and state */}
-              {selectedCustomer?.gstin && !isInterState && (
+              {selectedCustomerDetails?.gstin && !isInterState && (
                 <>
                 <div className="flex justify-between">
                     <span className="text-muted-foreground">CGST ({(GST_RATE/2)*100}%):</span>
@@ -521,13 +539,13 @@ export default function CreateBillPage() {
                 </div>
                 </>
               )}
-              {selectedCustomer?.gstin && isInterState && (
+              {selectedCustomerDetails?.gstin && isInterState && (
                  <div className="flex justify-between">
                     <span className="text-muted-foreground">IGST ({GST_RATE*100}%):</span>
                     <span className="font-medium">{formatCurrency(igst)}</span>
                 </div>
               )}
-               {!selectedCustomer?.gstin && subTotal > 0 && ( // Note if GST is not applied
+               {!selectedCustomerDetails?.gstin && subTotal > 0 && (
                 <p className="text-xs text-muted-foreground text-center">(GST not applied as customer GSTIN is not provided)</p>
               )}
               <Separator />

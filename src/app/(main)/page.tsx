@@ -1,12 +1,12 @@
 
-"use client"; // Required for useState, useEffect, and client-side interactions
+"use client"; 
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { PageHeader } from "@/components/page-header";
 import { DollarSign, Users, FileText, PackageMinus, LayoutDashboard, Package, BarChart3, TrendingUp, AlertCircle } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { collection, getDocs, query, where, limit, orderBy, Timestamp,getCountFromServer } from 'firebase/firestore'; // Added getCountFromServer
+import { collection, getDocs, query, where, limit, orderBy, Timestamp,getCountFromServer } from 'firebase/firestore'; 
 import { db } from '@/lib/firebase/firebaseConfig';
 import { useEffect, useState, useCallback } from 'react';
 import { format } from 'date-fns';
@@ -25,8 +25,8 @@ interface DashboardMetric {
   value: string;
   change?: string; // Optional: for displaying change like "+5 this week"
   icon: React.ElementType;
-  dataAiHint?: string; // For placeholder image generation assistance
-  link?: string; // Optional link to related page
+  dataAiHint?: string; 
+  link?: string; 
   isLoading: boolean;
 }
 
@@ -36,7 +36,6 @@ const quickActions = [
     { label: "Add New Customer", href: "/customers?addNew=true", icon: Users, description: "Register a new customer profile directly." },
     { label: "Manage Products", href: "/products", icon: Package, description: "Update product database, prices, and inventory details." },
     { label: "Daily Ledger", href: "/ledger", icon: BarChart3, description: "View and manage daily sales and purchase transactions." },
-    // { label: "Manage Staff", href: "/managers", icon: Users, description: "Administer Store Manager accounts and permissions." }, // Can be uncommented if needed
 ];
 
 /**
@@ -47,23 +46,23 @@ const quickActions = [
  */
 export default function AdminDashboardPage() {
   const [metrics, setMetrics] = useState<DashboardMetric[]>([
-    { title: "Total Revenue (Pending)", value: "₹0.00", icon: DollarSign, dataAiHint: "finance money", isLoading: true, link: "/billing" },
+    { title: "Total Revenue (Paid Invoices Sample)", value: "₹0.00", icon: DollarSign, dataAiHint: "finance money", isLoading: true, link: "/billing?status=Paid" },
     { title: "Active Customers", value: "0", icon: Users, dataAiHint: "people team", isLoading: true, link: "/customers" },
     { title: "Pending Invoices", value: "0", icon: FileText, dataAiHint: "document paper", isLoading: true, link: "/billing?status=Pending" },
     { title: "Low Stock Items", value: "0", icon: PackageMinus, dataAiHint: "box inventory alert", isLoading: true, link: "/stock?filter=low" },
   ]);
-  const [recentSales, setRecentSales] = useState<any[]>([]); // Placeholder for chart data
+  const [recentSales, setRecentSales] = useState<any[]>([]); 
   const [isLoadingSalesChart, setIsLoadingSalesChart] = useState(true);
 
-  const LOW_STOCK_THRESHOLD = 50; // Define globally or fetch from settings
+  const LOW_STOCK_THRESHOLD = 50; // Define low stock threshold
 
   /**
    * Fetches dashboard data from Firestore.
-   * Calculates total revenue, active customers, pending invoices, and low stock items.
-   * Fetches recent sales for a chart (placeholder).
+   * Calculates metrics like active customers, pending invoices, low stock items,
+   * and a sample of total revenue from paid invoices.
+   * Fetches recent sales data for a chart (currently placeholder).
    */
   const fetchDashboardData = useCallback(async () => {
-    // Helper function to update a specific metric
     const updateMetric = (title: string, newValue: Partial<DashboardMetric>) => {
       setMetrics(prevMetrics => 
         prevMetrics.map(m => m.title === title ? { ...m, ...newValue, isLoading: false } : m)
@@ -85,7 +84,7 @@ export default function AdminDashboardPage() {
       });
       updateMetric("Pending Invoices", { 
         value: pendingInvoicesSnapshot.size.toString(),
-        change: `Total: ₹${totalPendingRevenue.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`
+        change: `Total Pending: ₹${totalPendingRevenue.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`
       });
 
       // Fetch low stock items count
@@ -93,16 +92,14 @@ export default function AdminDashboardPage() {
       const lowStockSnapshot = await getCountFromServer(lowStockQuery);
       updateMetric("Low Stock Items", { value: lowStockSnapshot.data().count.toString() });
       
-      // Placeholder for Total Revenue (e.g., sum of 'Paid' invoices)
-      // This can be complex and might need a dedicated backend function or careful querying.
-      // For now, setting a placeholder or fetching a limited sum.
-      const paidInvoicesQuery = query(collection(db, "invoices"), where("status", "==", "Paid"), limit(100)); // Example limit
+      // Fetch a sample of total revenue from recently paid invoices
+      const paidInvoicesQuery = query(collection(db, "invoices"), where("status", "==", "Paid"), orderBy("isoDate", "desc"), limit(100)); 
       const paidInvoicesSnapshot = await getDocs(paidInvoicesQuery);
       let totalPaidRevenue = 0;
       paidInvoicesSnapshot.forEach(doc => {
         totalPaidRevenue += doc.data().totalAmount || 0;
       });
-      updateMetric("Total Revenue (Pending)", { value: `₹${totalPaidRevenue.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`});
+      updateMetric("Total Revenue (Paid Invoices Sample)", { value: `₹${totalPaidRevenue.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`});
 
 
       // Fetch recent sales for chart (example: last 5 paid invoices)
@@ -112,27 +109,28 @@ export default function AdminDashboardPage() {
       const salesData = recentSalesSnapshot.docs.map(doc => {
         const data = doc.data();
         return {
-          name: format(new Date(data.isoDate), "MMM dd"), // Format date for chart label
-          uv: data.totalAmount, // 'uv' is a common key for Recharts
+          name: format(new Date(data.isoDate), "MMM dd"), 
+          uv: data.totalAmount, 
           invoice: data.invoiceNumber,
           customer: data.customerName,
         };
       });
-      setRecentSales(salesData.reverse()); // Reverse to show oldest first for chart trend
+      setRecentSales(salesData.reverse()); 
       setIsLoadingSalesChart(false);
 
     } catch (error) {
       console.error("Error fetching dashboard data: ", error);
-      // Set all metrics to error state or display a general error toast
       metrics.forEach(m => updateMetric(m.title, { value: "Error", isLoading: false }));
       setIsLoadingSalesChart(false);
     }
-  }, [metrics]); // metrics in dependency array can cause re-fetch if not careful, ensure it's stable or use alternative
+  // Removed `metrics` from dependency array to prevent potential re-fetch loops.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); 
 
   useEffect(() => {
     fetchDashboardData();
     // eslint-disable-next-line react-hooks/exhaustive-deps 
-  }, []); // Fetch data on component mount. Be cautious with dependencies here if `fetchDashboardData` isn't fully stable.
+  }, []); 
 
   return (
     <>
@@ -172,25 +170,21 @@ export default function AdminDashboardPage() {
         <Card className="lg:col-span-2 shadow-lg rounded-xl">
           <CardHeader>
             <CardTitle className="font-headline text-foreground flex items-center"><TrendingUp className="mr-2 h-6 w-6 text-primary"/>Recent Sales Activity</CardTitle>
-            <CardDescription>A summary of recent sales trends. (Placeholder: Chart to be implemented)</CardDescription>
+            <CardDescription>A summary of recent sales trends. (Placeholder: Chart component integration needed)</CardDescription>
           </CardHeader>
           <CardContent>
             {isLoadingSalesChart ? (
                  <div className="h-64 flex items-center justify-center bg-muted/30 rounded-md border border-dashed">
-                    <p className="text-muted-foreground">Loading sales data...</p>
+                    <p className="text-muted-foreground">Loading sales data for chart...</p>
                  </div>
             ) : recentSales.length > 0 ? (
               <div className="h-64 flex items-center justify-center bg-muted/30 rounded-md border border-dashed">
-                {/* Future: Replace with actual chart component using ShadCN Charts and `recentSales` data.
-                    Example: <SalesChart data={recentSales} /> 
-                    For now, show a placeholder or basic list.
-                */}
-                <p className="text-muted-foreground p-4">Sales chart data loaded ({recentSales.length} entries). Chart component to be implemented here.</p>
+                <p className="text-muted-foreground p-4">Sales chart data loaded ({recentSales.length} entries). Actual chart component to be implemented here using this data.</p>
               </div>
             ) : (
               <div className="h-64 flex items-center justify-center bg-muted/30 rounded-md border border-dashed">
                 <AlertCircle className="h-8 w-8 text-muted-foreground mr-2"/>
-                <p className="text-muted-foreground">No recent sales data to display for the chart.</p>
+                <p className="text-muted-foreground">No recent sales data available for the chart.</p>
               </div>
             )}
           </CardContent>

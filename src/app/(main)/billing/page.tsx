@@ -20,7 +20,7 @@ import { format } from 'date-fns';
  * Allows Admin to:
  *  - View a list of all generated invoices from Firestore.
  *  - Navigate to create new invoices.
- *  - Perform actions like view, download (placeholder), print (placeholder), edit, 
+ *  - Perform actions like view (placeholder), download (placeholder), print (placeholder), edit, 
  *    update status, and delete individual invoices.
  * Data is fetched from and saved to Firebase Firestore.
  */
@@ -106,7 +106,7 @@ export default function BillingPage() {
           customerName: data.customerName || 'N/A',
           customerId: data.customerId || '',
           date: invoiceDate,
-          isoDate: typeof data.isoDate === 'string' ? data.isoDate : (data.isoDate as Timestamp)?.toDate().toISOString() || new Date().toISOString(),
+          isoDate: typeof data.isoDate === 'string' ? data.isoDate : (data.isoDate instanceof Timestamp ? data.isoDate.toDate().toISOString() : new Date().toISOString()),
           totalAmount: data.totalAmount || data.grandTotal || 0, // Prioritize totalAmount, fallback to grandTotal for compatibility
           displayTotal: formatCurrency(data.totalAmount || data.grandTotal || 0),
           status: data.status || 'Pending',
@@ -142,6 +142,7 @@ export default function BillingPage() {
 
   /**
    * Handles viewing an invoice. (Placeholder for detailed view)
+   * Future: Implement a detailed view page or modal for the invoice.
    * @param {string} invoiceId - The ID of the invoice to view.
    */
   const handleViewInvoice = (invoiceId: string) => {
@@ -150,26 +151,25 @@ export default function BillingPage() {
         title: `View Invoice (Placeholder): ${invoice?.invoiceNumber || invoiceId}`, 
         description: `Customer: ${invoice?.customerName}, Total: ${invoice?.displayTotal}. Detailed view to be implemented.` 
     });
-    // Future: Implement a detailed view page or modal for the invoice
-    // router.push(`/billing/${invoiceId}`);
+    // Example: router.push(`/billing/${invoiceId}`);
   };
 
   /**
    * Handles downloading an invoice PDF. (Placeholder)
+   * Future: Implement PDF generation (e.g., using jsPDF or a backend service) and download.
    * @param {string} invoiceId - The ID of the invoice to download.
    */
   const handleDownloadPDF = (invoiceId: string) => {
     toast({ title: "Download PDF (Placeholder)", description: `Downloading PDF for invoice ID: ${invoiceId}. PDF generation to be implemented.` });
-    // Future: Implement PDF generation (e.g., using jsPDF or a backend service) and download.
   };
   
   /**
    * Handles printing an invoice. (Placeholder)
+   * Future: Implement print functionality, possibly opening window.print() on a formatted page.
    * @param {string} invoiceId - The ID of the invoice to print.
    */
   const handlePrintInvoice = (invoiceId: string) => {
     toast({ title: "Print Invoice (Placeholder)", description: `Printing invoice ID: ${invoiceId}. Print-friendly view/logic to be implemented.` });
-    // Future: Implement print functionality, possibly opening window.print() on a formatted page.
   };
 
   /**
@@ -199,11 +199,11 @@ export default function BillingPage() {
 
   /**
    * Deletes an invoice from Firestore.
+   * Future: Implement soft delete (archiving by setting an 'isArchived' flag) instead of hard delete for auditing and recovery.
    * @param {string} invoiceId - The ID of the invoice to delete.
    * @param {string} invoiceNumber - The number of the invoice, for display in toast.
    */
   const handleDeleteInvoice = async (invoiceId: string, invoiceNumber: string) => {
-    // Future: Implement soft delete (archiving) instead of hard delete for auditing.
     try {
       await deleteDoc(doc(db, "invoices", invoiceId));
       toast({ title: "Invoice Deleted", description: `Invoice ${invoiceNumber} has been successfully deleted.`, variant: "default" });
