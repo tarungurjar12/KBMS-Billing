@@ -14,7 +14,7 @@ import { signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebas
 /**
  * @fileOverview Login page for user authentication.
  * Handles user login using Firebase email/password authentication.
- * Sets a 'userRole' cookie based on the email address for UI differentiation and basic route protection.
+ * Sets a 'userRole' cookie based on the email address for UI differentiation.
  * Redirects users to appropriate dashboards upon successful login.
  * Also redirects already authenticated users away from the login page.
  */
@@ -32,9 +32,11 @@ const setCookie = (name: string, value: string, days: number) => {
     date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
     expires = "; expires=" + date.toUTCString();
   }
-  // Ensure document is available (client-side)
   if (typeof document !== 'undefined') {
     document.cookie = name + "=" + (value || "") + expires + "; path=/";
+    console.log(`Cookie set: ${name}=${value}`);
+  } else {
+    console.warn("setCookie: document is undefined (not in browser context).");
   }
 };
 
@@ -44,12 +46,29 @@ const setCookie = (name: string, value: string, days: number) => {
  * @returns {string | undefined} The cookie value or undefined if not found.
  */
 const getCookie = (name: string): string | undefined => {
-  if (typeof document === 'undefined') return undefined;
+  if (typeof document === 'undefined') {
+    console.warn("getCookie: document is undefined (not in browser context).");
+    return undefined;
+  }
   const value = `; ${document.cookie}`;
   const parts = value.split(`; ${name}=`);
   if (parts.length === 2) return parts.pop()?.split(';').shift();
   return undefined;
 };
+
+/**
+ * Helper function to delete a cookie by name.
+ * @param {string} name - The name of the cookie.
+ */
+const deleteCookie = (name: string) => {
+    if (typeof document !== 'undefined') {
+        document.cookie = name + '=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;';
+        console.log(`Cookie deleted: ${name}`);
+    } else {
+        console.warn("deleteCookie: document is undefined (not in browser context).");
+    }
+};
+
 
 /**
  * LoginPage component.
@@ -62,104 +81,102 @@ export default function LoginPage() {
   const [error, setError] = useState(''); // State for displaying login errors
   const [loading, setLoading] = useState(false); // State to manage loading UI during login attempt
 
-  /**
-   * Effect hook to handle redirection if a user is already authenticated and lands on the login page.
-   * It listens to Firebase's auth state. If a user is logged in (via Firebase) and
-   * has a 'userRole' cookie, they are redirected to their respective dashboard.
-   */
+  // Effect to handle redirection if a user is already authenticated when they visit the login page
   useEffect(() => {
+    console.log("LoginPage useEffect: Subscribing to onAuthStateChanged.");
     const unsubscribe = onAuthStateChanged(auth, (user) => {
+      console.log("LoginPage onAuthStateChanged: Firebase user:", user);
       if (user) {
-        // Firebase indicates a user is signed in.
-        // Check for the userRole cookie to decide on redirection.
         const userRoleCookie = getCookie('userRole');
+        console.log("LoginPage onAuthStateChanged: userRoleCookie:", userRoleCookie);
         if (userRoleCookie === 'admin') {
-          router.push('/'); // Redirect admin to admin dashboard
+          console.log("LoginPage onAuthStateChanged: Admin already logged in, redirecting to /");
+          router.push('/');
         } else if (userRoleCookie === 'store_manager') {
-          router.push('/store-dashboard'); // Redirect manager to store dashboard
+          console.log("LoginPage onAuthStateChanged: Manager already logged in, redirecting to /store-dashboard");
+          router.push('/store-dashboard');
         }
-        // If Firebase user exists but no valid role cookie, stay on login page.
-        // The handleLogin function will establish the role and cookie upon a new login attempt.
-        // Middleware handles unauthorized access to other protected pages.
+      } else {
+        console.log("LoginPage onAuthStateChanged: No Firebase user session.");
       }
     });
-    // Cleanup subscription on unmount
-    return () => unsubscribe();
-  }, [router]);
-
+    return () => {
+      console.log("LoginPage useEffect: Unsubscribing from onAuthStateChanged.");
+      unsubscribe();
+    };
+  }, [router]); // Rerun if router object changes.
 
   /**
    * Handles the login process when the form is submitted.
-   * - Authenticates with Firebase using email and password.
-   * - Determines user role based on email content (admin@ or manager@).
-   * - Sets a 'userRole' cookie for client-side role management.
-   * - Redirects to the appropriate dashboard on successful login.
-   * - Displays errors if login fails.
    */
   const handleLogin = async () => {
-    setError(''); // Clear any previous errors
-    setLoading(true); // Set loading state
+    console.log("handleLogin: Attempting login with email:", email);
+    setError('');
+    setLoading(true);
 
     try {
-      // Check if Firebase auth object is available (it should be if config is correct)
       if (!auth) {
+        console.error("handleLogin: Firebase auth service is not available.");
         setError('Firebase authentication service is not available. Please check configuration.');
         setLoading(false);
         return;
       }
 
-      // Sign in with Firebase
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
+      console.log("handleLogin: Firebase signInWithEmailAndPassword successful. User:", user);
 
       if (user && user.email) {
         let userRole = '';
-        // Determine role based on email pattern
-        if (user.email.toLowerCase().includes('admin@')) {
+        const lowerCaseEmail = user.email.toLowerCase();
+
+        if (lowerCaseEmail.includes('admin@')) {
           userRole = 'admin';
-        } else if (user.email.toLowerCase().includes('manager@')) {
+        } else if (lowerCaseEmail.includes('manager@')) {
           userRole = 'store_manager';
-        } else {
-          // If role cannot be determined, show error and sign out to prevent partial login state
-          setError('User role could not be determined. Please contact support.');
-          await signOut(auth); // Sign out the user from Firebase
-          setLoading(false);
-          return;
         }
+        console.log(`handleLogin: Determined role: '${userRole}' for email: ${user.email}`);
 
-        // Set the userRole cookie. Expires in 1 day.
-        setCookie('userRole', userRole, 1);
+        if (userRole) {
+          setCookie('userRole', userRole, 1); // Set cookie for 1 day
+          console.log(`handleLogin: Role determined: ${userRole}. Cookie 'userRole' set.`);
 
-        // Redirect based on role
-        if (userRole === 'admin') {
-          router.push('/'); // Admin dashboard
-        } else if (userRole === 'store_manager') {
-          router.push('/store-dashboard'); // Store Manager dashboard
+          if (userRole === 'admin') {
+            console.log("handleLogin: Redirecting admin to /");
+            router.push('/');
+          } else if (userRole === 'store_manager') {
+            console.log("handleLogin: Redirecting manager to /store-dashboard");
+            router.push('/store-dashboard');
+          }
+        } else {
+          console.error('handleLogin: User role could not be determined from email:', user.email);
+          setError('User role could not be determined. Please contact support.');
+          await signOut(auth);
+          deleteCookie('userRole');
         }
       } else {
-        // This case should ideally not be reached if signInWithEmailAndPassword succeeds
+        console.error('handleLogin: Firebase user object or email is missing after sign-in.');
         setError('An unexpected error occurred during login. User data not found.');
+        if (auth.currentUser) await signOut(auth); // Sign out if partially logged in
+        deleteCookie('userRole');
       }
     } catch (signInError: any) {
-      // Handle Firebase authentication errors
-      console.error("Firebase Sign-In Error:", signInError);
+      console.error("handleLogin: Firebase Sign-In Error:", signInError.code, signInError.message);
       if (signInError.code === 'auth/invalid-credential' || 
           signInError.code === 'auth/user-not-found' || 
           signInError.code === 'auth/wrong-password' ||
           signInError.code === 'auth/invalid-email') {
         setError('Invalid email or password. Please try again.');
-      } else if (signInError.code === 'auth/invalid-api-key') {
-        setError('Firebase API Key is invalid. Check your Firebase project configuration.');
       } else if (signInError.code === 'auth/network-request-failed') {
-        setError('Network error. Please check your internet connection and try again.');
+        setError('Network error. Please check your internet connection.');
       } else if (signInError.code === 'auth/too-many-requests') {
-        setError('Access to this account has been temporarily disabled due to many failed login attempts. You can immediately restore it by resetting your password or you can try again later.');
-      }
-       else {
+        setError('Access to this account has been temporarily disabled due to many failed login attempts. Try again later.');
+      } else {
         setError(signInError.message || 'Failed to login. An unknown error occurred.');
       }
     } finally {
-      setLoading(false); // Reset loading state
+      console.log("handleLogin: Setting loading to false.");
+      setLoading(false);
     }
   };
 
@@ -183,7 +200,7 @@ export default function LoginPage() {
               value={email} 
               onChange={(e) => setEmail(e.target.value)} 
               disabled={loading}
-              autoComplete="email" // Added for browser autofill
+              autoComplete="email"
             />
           </div>
           <div className="space-y-2">
@@ -195,10 +212,9 @@ export default function LoginPage() {
               value={password} 
               onChange={(e) => setPassword(e.target.value)} 
               disabled={loading}
-              autoComplete="current-password" // Added for browser autofill
+              autoComplete="current-password"
             />
           </div>
-          {/* Display login errors here */}
           {error && <p className="text-sm text-destructive text-center">{error}</p>}
         </CardContent>
         <CardFooter>
