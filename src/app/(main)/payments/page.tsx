@@ -1,190 +1,261 @@
 
-"use client"; // This page will involve client-side interactions
+"use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/page-header";
-import { CreditCard, PlusCircle, MoreHorizontal, Edit, Trash2, Eye } from "lucide-react"; // Added Edit, Trash2, Eye
+import { CreditCard, PlusCircle, MoreHorizontal, Edit, Trash2, Eye } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
-// Future: Import Firebase functions for Firestore operations
-// import { collection, getDocs, doc, updateDoc, deleteDoc, query, orderBy, serverTimestamp, addDoc } from 'firebase/firestore';
-// import { db } from '@/lib/firebase/firebaseConfig';
+import { collection, getDocs, doc, updateDoc, deleteDoc, query, orderBy, serverTimestamp, addDoc, Timestamp } from 'firebase/firestore';
+import { db } from '@/lib/firebase/firebaseConfig';
+import { format, parseISO } from 'date-fns';
 
 /**
- * @fileOverview Page for Admin to manage Payment Records.
+ * @fileOverview Page for Admin to manage Payment Records in Firestore.
  * Allows Admin to:
  *  - Track and manage payment status for both customer and supplier payments.
  *  - Manually record payments (customer incoming, supplier outgoing).
  *  - View payment history.
- * Store Managers can update customer payment status (via Customer or Billing page interactions, not directly here).
  * Supplier payments are strictly Admin-only.
  */
 
-interface PaymentRecord {
-  id: string; // Firestore document ID or unique local ID
+export interface PaymentRecord {
+  id: string; // Firestore document ID
   type: "customer" | "supplier";
-  relatedId: string; // Invoice ID for customer, Supplier ID or Purchase Order ID for supplier
-  date: string; // Formatted date string
-  isoDate: string; // ISO date string for sorting
+  relatedEntityName: string; // Customer Name or Supplier Name
+  relatedEntityId: string; // Customer ID or Supplier ID
+  relatedInvoiceId?: string; // Invoice ID for customer payments, PO ID for supplier payments
+  date: string; // Formatted date string, e.g., "Jul 15, 2024"
+  isoDate: string; // ISO date string for sorting and Firestore Timestamp storage
   amount: number;
-  displayAmount: string;
+  displayAmount: string; // Formatted currency string
   method: "Cash" | "UPI" | "Card" | "Bank Transfer" | "ACH" | "Check" | "Other";
-  transactionId?: string; // Optional reference for UPI, Card, etc.
-  status: "Completed" | "Pending" | "Failed" | "Sent"; // Added "Failed", "Sent"
+  transactionId?: string;
+  status: "Completed" | "Pending" | "Failed" | "Sent" | "Received"; // Added "Received" for customer payments
   notes?: string;
-  // For customer payments, could link to customerId. For supplier, could link to supplierName.
-  customerName?: string; // Denormalized for customer payments
-  supplierName?: string; // Denormalized for supplier payments
+  createdAt?: Timestamp; // Firestore Timestamp
 }
 
-// Initial dummy data. This will be replaced by Firestore data in Phase 2.
-const initialPayments: PaymentRecord[] = [
-  { id: "PAY-CUST-001", type: "customer", relatedId: "INV001", customerName: "Alice Wonderland", date: "2024-07-15", isoDate: "2024-07-15T00:00:00Z", amount: 20000, displayAmount: "₹20,000.00", method: "Card", transactionId: "TXN789012", status: "Completed" },
-  { id: "PAY-CUST-002", type: "customer", relatedId: "INV002", customerName: "Bob The Builder", date: "2024-07-19", isoDate: "2024-07-19T00:00:00Z", amount: 12060, displayAmount: "₹12,060.00", method: "Bank Transfer", status: "Pending" },
-  { id: "PAY-SUPP-001", type: "supplier", relatedId: "SUPP001", supplierName: "Widget Co.", date: "2024-07-10", isoDate: "2024-07-10T00:00:00Z", amount: 40000, displayAmount: "₹40,000.00", method: "ACH", status: "Completed" },
-  { id: "PAY-SUPP-002", type: "supplier", relatedId: "SUPP002", supplierName: "Gizmo Inc.", date: "2024-07-21", isoDate: "2024-07-21T00:00:00Z", amount: 25600, displayAmount: "₹25,600.00", method: "Check", status: "Sent", notes: "Check #12345" },
-];
+const PAYMENT_METHODS = ["Cash", "UPI", "Card", "Bank Transfer", "ACH", "Check", "Other"] as const;
+const PAYMENT_STATUSES = ["Completed", "Pending", "Failed", "Sent", "Received"] as const;
+const PAYMENT_TYPES = ["customer", "supplier"] as const;
+
+// Zod schema for payment record form validation
+const paymentRecordSchema = z.object({
+  type: z.enum(PAYMENT_TYPES, { required_error: "Payment type is required." }),
+  relatedEntityName: z.string().min(1, "Entity name is required."),
+  relatedEntityId: z.string().min(1, "Entity ID is required."), // Future: Could be a select dropdown from customers/sellers
+  relatedInvoiceId: z.string().optional(),
+  isoDate: z.string().refine((date) => !isNaN(parseISO(date).valueOf()), { message: "Invalid date" }),
+  amount: z.preprocess(
+    (val) => parseFloat(String(val).replace(/[^0-9.]+/g, "")),
+    z.number({invalid_type_error: "Amount must be a number."}).positive({ message: "Amount must be positive." })
+  ),
+  method: z.enum(PAYMENT_METHODS, { required_error: "Payment method is required." }),
+  transactionId: z.string().optional(),
+  status: z.enum(PAYMENT_STATUSES, { required_error: "Status is required." }),
+  notes: z.string().optional(),
+});
+
+type PaymentFormValues = z.infer<typeof paymentRecordSchema>;
+
+/**
+ * Formats a number as an Indian Rupee string.
+ * @param {number} num - The number to format.
+ * @returns {string} A string representing the currency.
+ */
+const formatCurrency = (num: number): string => `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
 
 /**
  * PaymentsPage component.
- * Provides UI for Admin to manage customer and supplier payment records.
+ * Provides UI for Admin to manage customer and supplier payment records from Firestore.
+ * @returns {JSX.Element} The rendered payments page.
  */
 export default function PaymentsPage() {
   const { toast } = useToast();
   const [allPayments, setAllPayments] = useState<PaymentRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  // Future: Add state for filtering, sorting, pagination, and dialogs for adding/editing payments.
+  const [isFormDialogOpen, setIsFormDialogOpen] = useState(false);
+  const [editingPayment, setEditingPayment] = useState<PaymentRecord | null>(null);
+  
+  const form = useForm<PaymentFormValues>({
+    resolver: zodResolver(paymentRecordSchema),
+    defaultValues: { type: "customer", isoDate: new Date().toISOString().split('T')[0], status: "Completed", method: "Cash" },
+  });
 
-  // Effect to load payments (currently from initial data, future from Firestore)
-  useEffect(() => {
-    // Future: Fetch payments from Firestore, ordered by date
-    // const fetchPayments = async () => {
-    //   setIsLoading(true);
-    //   try {
-    //     const q = query(collection(db, "payments"), orderBy("isoDate", "desc"));
-    //     const querySnapshot = await getDocs(q);
-    //     const fetchedPayments = querySnapshot.docs.map(doc => {
-    //       const data = doc.data();
-    //       return { 
-    //         id: doc.id,
-    //         ...data,
-    //         date: data.date instanceof Timestamp ? data.date.toDate().toLocaleDateString('en-CA') : data.date,
-    //         displayAmount: `₹${Number(data.amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-    //       } as PaymentRecord;
-    //     });
-    //     setAllPayments(fetchedPayments);
-    //   } catch (error) {
-    //     console.error("Error fetching payments: ", error);
-    //     toast({ title: "Error", description: "Could not load payment records.", variant: "destructive" });
-    //   } finally {
-    //     setIsLoading(false);
-    //   }
-    // };
-    // fetchPayments();
-
-    // Phase 1: Use local data, sort by isoDate descending
-    const sortedInitialPayments = [...initialPayments].sort((a,b) => new Date(b.isoDate).getTime() - new Date(a.isoDate).getTime());
-    setAllPayments(sortedInitialPayments);
-    setIsLoading(false);
+  const fetchPayments = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const q = query(collection(db, "payments"), orderBy("isoDate", "desc"));
+      const querySnapshot = await getDocs(q);
+      const fetchedPayments = querySnapshot.docs.map(docSnapshot => {
+        const data = docSnapshot.data();
+        let paymentDate = "";
+        if (data.isoDate) {
+             if (typeof data.isoDate === 'string') {
+                paymentDate = format(new Date(data.isoDate), "MMM dd, yyyy");
+            } else if (data.isoDate instanceof Timestamp) { // Firestore Timestamp
+                paymentDate = format(data.isoDate.toDate(), "MMM dd, yyyy");
+            }
+        }
+        return { 
+          id: docSnapshot.id,
+          type: data.type || 'customer',
+          relatedEntityName: data.relatedEntityName || 'N/A',
+          relatedEntityId: data.relatedEntityId || '',
+          relatedInvoiceId: data.relatedInvoiceId || '',
+          date: paymentDate,
+          isoDate: typeof data.isoDate === 'string' ? data.isoDate : (data.isoDate as Timestamp)?.toDate().toISOString() || new Date().toISOString(),
+          amount: data.amount || 0,
+          displayAmount: formatCurrency(data.amount || 0),
+          method: data.method || 'Other',
+          transactionId: data.transactionId || '',
+          status: data.status || 'Pending',
+          notes: data.notes || '',
+          createdAt: data.createdAt,
+        } as PaymentRecord;
+      });
+      setAllPayments(fetchedPayments);
+    } catch (error) {
+      console.error("Error fetching payments: ", error);
+      toast({ title: "Error", description: "Could not load payment records from database.", variant: "destructive" });
+    } finally {
+      setIsLoading(false);
+    }
   }, [toast]);
 
-  const customerPayments = allPayments.filter(p => p.type === "customer");
-  const supplierPayments = allPayments.filter(p => p.type === "supplier");
+  useEffect(() => {
+    fetchPayments();
+  }, [fetchPayments]);
 
-  const handleAddPaymentRecord = () => {
-    // Future: Open a dialog to choose payment type (customer/supplier) and fill details.
-    toast({ title: "Add Payment (Placeholder)", description: "Functionality to add new payment records to be implemented."});
+  useEffect(() => {
+    if (editingPayment && isFormDialogOpen) {
+      form.reset({
+        ...editingPayment,
+        isoDate: editingPayment.isoDate ? editingPayment.isoDate.split('T')[0] : new Date().toISOString().split('T')[0], // Ensure date is in YYYY-MM-DD for input
+      });
+    } else {
+      form.reset({ type: "customer", isoDate: new Date().toISOString().split('T')[0], status: "Completed", method: "Cash", relatedEntityName: "", relatedEntityId: "", relatedInvoiceId: "", amount: 0, transactionId: "", notes: "" });
+    }
+  }, [editingPayment, isFormDialogOpen, form]);
+
+
+  const handleFormSubmit = async (values: PaymentFormValues) => {
+    try {
+      const dataToSave = {
+        ...values,
+        displayAmount: formatCurrency(values.amount),
+        createdAt: serverTimestamp(),
+      };
+
+      if (editingPayment) {
+        const paymentRef = doc(db, "payments", editingPayment.id);
+        await updateDoc(paymentRef, dataToSave);
+        toast({ title: "Payment Updated", description: "Payment record updated successfully in Firestore." });
+      } else {
+        await addDoc(collection(db, "payments"), dataToSave);
+        toast({ title: "Payment Added", description: "New payment record added to Firestore." });
+      }
+      fetchPayments(); // Refresh list
+      setIsFormDialogOpen(false);
+      setEditingPayment(null);
+    } catch (error) {
+      console.error("Error saving payment: ", error);
+      toast({ title: "Error", description: "Could not save payment record to database.", variant: "destructive" });
+    }
   };
 
-  const handleViewPaymentDetails = (paymentId: string) => {
-    toast({ title: "View Details (Placeholder)", description: `Viewing details for payment ID: ${paymentId}. To be implemented.` });
+  const openAddDialog = () => {
+    setEditingPayment(null);
+    form.reset({ type: "customer", isoDate: new Date().toISOString().split('T')[0], status: "Completed", method: "Cash", relatedEntityName: "", relatedEntityId: "", relatedInvoiceId: "", amount: 0, transactionId: "", notes: "" });
+    setIsFormDialogOpen(true);
   };
   
-  const handleEditPayment = (paymentId: string) => {
-    toast({ title: "Edit Payment (Placeholder)", description: `Editing payment record ID: ${paymentId}. To be implemented.` });
+  const openEditDialog = (payment: PaymentRecord) => {
+    setEditingPayment(payment);
+    setIsFormDialogOpen(true);
   };
   
-  const handleDeletePayment = (paymentId: string) => {
-    // Future: Implement proper delete confirmation.
-    toast({ title: "Delete Payment (Placeholder)", description: `Deleting payment record ID: ${paymentId}. Needs confirmation.`, variant: "destructive" });
-    // Phase 1 local example:
-    // setAllPayments(prev => prev.filter(p => p.id !== paymentId));
+  const handleDeletePayment = async (paymentId: string) => {
+    // Future: Implement soft delete or archiving.
+    try {
+        await deleteDoc(doc(db, "payments", paymentId));
+        toast({ title: "Payment Deleted", description: "Payment record deleted successfully." });
+        fetchPayments();
+    } catch (error) {
+        console.error("Error deleting payment: ", error);
+        toast({ title: "Error", description: "Could not delete payment record.", variant: "destructive" });
+    }
   };
 
   const getBadgeVariant = (status: PaymentRecord['status']): "default" | "secondary" | "destructive" | "outline" => {
     switch (status) {
       case "Completed":
-        return "default"; // Will use accent color defined in Badge component
+      case "Received":
+        return "default"; // Green for success
       case "Pending":
-        return "secondary";
-      case "Failed":
-        return "destructive";
       case "Sent":
-         return "outline";
+        return "secondary"; // Neutral or slightly different
+      case "Failed":
+        return "destructive"; // Red for failure
       default:
         return "secondary";
     }
   };
 
   if (isLoading) {
-    return <PageHeader title="Payment Records" description="Loading payment data..." icon={CreditCard} />;
+    return <PageHeader title="Payment Records" description="Loading payment data from database..." icon={CreditCard} />;
   }
+
+  const customerPayments = allPayments.filter(p => p.type === "customer");
+  const supplierPayments = allPayments.filter(p => p.type === "supplier");
 
   const renderPaymentTable = (payments: PaymentRecord[], type: "customer" | "supplier") => (
     <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Payment ID</TableHead>
-          <TableHead>{type === "customer" ? "Invoice ID" : "Supplier/Ref ID"}</TableHead>
-          <TableHead>{type === "customer" ? "Customer" : "Supplier"}</TableHead>
+      <TableHeader><TableRow>
           <TableHead>Date</TableHead>
+          <TableHead>{type === "customer" ? "Customer" : "Supplier"}</TableHead>
+          <TableHead>Ref/Invoice ID</TableHead>
           <TableHead>Method</TableHead>
           <TableHead className="text-right">Amount</TableHead>
           <TableHead className="text-center">Status</TableHead>
           <TableHead className="text-right">Actions</TableHead>
-        </TableRow>
-      </TableHeader>
+      </TableRow></TableHeader>
       <TableBody>
         {payments.map((payment) => (
           <TableRow key={payment.id}>
-            <TableCell className="font-medium">{payment.id.split('-').pop()}</TableCell> {/* Shorten display ID */}
-            <TableCell>{payment.relatedId}</TableCell>
-            <TableCell>{type === "customer" ? payment.customerName : payment.supplierName}</TableCell>
             <TableCell>{payment.date}</TableCell>
+            <TableCell>{payment.relatedEntityName}</TableCell>
+            <TableCell>{payment.relatedInvoiceId || payment.relatedEntityId}</TableCell>
             <TableCell>{payment.method}</TableCell>
             <TableCell className="text-right">{payment.displayAmount}</TableCell>
             <TableCell className="text-center">
               <Badge 
                 variant={getBadgeVariant(payment.status)}
-                className={payment.status === "Completed" ? "bg-accent text-accent-foreground" : 
-                           payment.status === "Sent" ? "border-blue-500 text-blue-600" : ""}
-              >
-                {payment.status}
-              </Badge>
+                className={ (payment.status === "Completed" || payment.status === "Received") ? "bg-accent text-accent-foreground" : 
+                           (payment.status === "Pending" || payment.status === "Sent") ? "border-blue-500 text-blue-600 dark:border-blue-400 dark:text-blue-300" : ""}
+              >{payment.status}</Badge>
             </TableCell>
              <TableCell className="text-right">
               <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon">
-                    <MoreHorizontal className="h-4 w-4" />
-                    <span className="sr-only">Actions for payment {payment.id}</span>
-                  </Button>
-                </DropdownMenuTrigger>
+                <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /><span className="sr-only">Actions</span></Button></DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => handleViewPaymentDetails(payment.id)}>
-                    <Eye className="mr-2 h-4 w-4" /> View Details
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => handleEditPayment(payment.id)}>
-                    <Edit className="mr-2 h-4 w-4" /> Edit Record
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => handleDeletePayment(payment.id)} className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground">
-                    <Trash2 className="mr-2 h-4 w-4" /> Delete Record
-                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => openEditDialog(payment)}><Edit className="mr-2 h-4 w-4" /> Edit</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => handleDeletePayment(payment.id)} className="text-destructive"><Trash2 className="mr-2 h-4 w-4" /> Delete</DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             </TableCell>
@@ -194,20 +265,64 @@ export default function PaymentsPage() {
     </Table>
   );
 
-
   return (
     <>
       <PageHeader
         title="Payment Records"
         description="Track and manage customer and supplier payments. (Admin Access)"
         icon={CreditCard}
-        actions={
-          <Button onClick={handleAddPaymentRecord}>
-            <PlusCircle className="mr-2 h-4 w-4" />
-            Add Payment Record
-          </Button>
-        }
+        actions={<Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add Payment</Button>}
       />
+
+      <Dialog open={isFormDialogOpen} onOpenChange={(isOpen) => { if(!isOpen) { setIsFormDialogOpen(false); setEditingPayment(null); form.reset(); } else {setIsFormDialogOpen(isOpen); }}}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{editingPayment ? "Edit Payment Record" : "Add New Payment Record"}</DialogTitle>
+            <DialogDescription>Fill in the details for the payment.</DialogDescription>
+          </DialogHeader>
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-4 py-2 max-h-[70vh] overflow-y-auto pr-2">
+              <FormField control={form.control} name="type" render={({ field }) => (
+                <FormItem><FormLabel>Payment Type</FormLabel>
+                  <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <FormControl><SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger></FormControl>
+                    <SelectContent>{PAYMENT_TYPES.map(type => <SelectItem key={type} value={type}>{type.charAt(0).toUpperCase() + type.slice(1)}</SelectItem>)}</SelectContent>
+                  </Select><FormMessage />
+                </FormItem>)}
+              />
+              <FormField control={form.control} name="relatedEntityName" render={({ field }) => (<FormItem><FormLabel>{form.watch("type") === "customer" ? "Customer Name" : "Supplier Name"}</FormLabel><FormControl><Input placeholder="Enter name" {...field} /></FormControl><FormMessage /></FormItem>)} />
+              <FormField control={form.control} name="relatedEntityId" render={({ field }) => (<FormItem><FormLabel>{form.watch("type") === "customer" ? "Customer ID" : "Supplier ID"}</FormLabel><FormControl><Input placeholder="Enter ID (e.g., CUST001)" {...field} /></FormControl><FormMessage /></FormItem>)} />
+              <FormField control={form.control} name="relatedInvoiceId" render={({ field }) => (<FormItem><FormLabel>Related Invoice/PO ID (Optional)</FormLabel><FormControl><Input placeholder="e.g., INV001 or PO123" {...field} /></FormControl><FormMessage /></FormItem>)} />
+              <FormField control={form.control} name="isoDate" render={({ field }) => (<FormItem><FormLabel>Date</FormLabel><FormControl><Input type="date" {...field} /></FormControl><FormMessage /></FormItem>)} />
+              <FormField control={form.control} name="amount" render={({ field }) => (<FormItem><FormLabel>Amount (₹)</FormLabel><FormControl><Input type="number" step="0.01" placeholder="e.g., 1000.00" {...field} /></FormControl><FormMessage /></FormItem>)} />
+              <FormField control={form.control} name="method" render={({ field }) => (
+                <FormItem><FormLabel>Payment Method</FormLabel>
+                  <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <FormControl><SelectTrigger><SelectValue placeholder="Select method" /></SelectTrigger></FormControl>
+                    <SelectContent>{PAYMENT_METHODS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
+                  </Select><FormMessage />
+                </FormItem>)}
+              />
+              <FormField control={form.control} name="transactionId" render={({ field }) => (<FormItem><FormLabel>Transaction ID (Optional)</FormLabel><FormControl><Input placeholder="e.g., Bank transaction ref" {...field} /></FormControl><FormMessage /></FormItem>)} />
+              <FormField control={form.control} name="status" render={({ field }) => (
+                <FormItem><FormLabel>Status</FormLabel>
+                  <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <FormControl><SelectTrigger><SelectValue placeholder="Select status" /></SelectTrigger></FormControl>
+                    <SelectContent>{PAYMENT_STATUSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                  </Select><FormMessage />
+                </FormItem>)}
+              />
+              <FormField control={form.control} name="notes" render={({ field }) => (<FormItem><FormLabel>Notes (Optional)</FormLabel><FormControl><Textarea placeholder="Any additional notes..." {...field} /></FormControl><FormMessage /></FormItem>)} />
+              <DialogFooter className="pt-4 sticky bottom-0 bg-background pb-2">
+                <DialogClose asChild><Button type="button" variant="outline" onClick={() => { setIsFormDialogOpen(false); setEditingPayment(null);}}>Cancel</Button></DialogClose>
+                <Button type="submit">{editingPayment ? "Save Changes" : "Add Payment"}</Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
+
+
       <Tabs defaultValue="customer_payments" className="w-full">
         <TabsList className="grid w-full grid-cols-2 sm:w-[400px] mb-4">
           <TabsTrigger value="customer_payments">Customer Payments</TabsTrigger>
@@ -215,40 +330,17 @@ export default function PaymentsPage() {
         </TabsList>
         <TabsContent value="customer_payments">
           <Card className="shadow-lg rounded-xl">
-            <CardHeader>
-              <CardTitle className="font-headline text-foreground">Customer Payment History</CardTitle>
-              <CardDescription>Records of payments received from customers.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {customerPayments.length > 0 ? renderPaymentTable(customerPayments, "customer") : (
-                <div className="text-center py-8 text-muted-foreground">No customer payments found.</div>
-              )}
-            </CardContent>
+            <CardHeader><CardTitle className="font-headline text-foreground">Customer Payment History</CardTitle><CardDescription>Records of payments received from customers.</CardDescription></CardHeader>
+            <CardContent>{customerPayments.length > 0 ? renderPaymentTable(customerPayments, "customer") : (<div className="text-center py-8 text-muted-foreground">No customer payments recorded.</div>)}</CardContent>
           </Card>
         </TabsContent>
         <TabsContent value="supplier_payments">
           <Card className="shadow-lg rounded-xl">
-            <CardHeader>
-              <CardTitle className="font-headline text-foreground">Supplier Payment History</CardTitle>
-              <CardDescription>Records of payments made to suppliers.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {supplierPayments.length > 0 ? renderPaymentTable(supplierPayments, "supplier") : (
-                <div className="text-center py-8 text-muted-foreground">No supplier payments found.</div>
-              )}
-            </CardContent>
+            <CardHeader><CardTitle className="font-headline text-foreground">Supplier Payment History</CardTitle><CardDescription>Records of payments made to suppliers.</CardDescription></CardHeader>
+            <CardContent>{supplierPayments.length > 0 ? renderPaymentTable(supplierPayments, "supplier") : (<div className="text-center py-8 text-muted-foreground">No supplier payments recorded.</div>)}</CardContent>
           </Card>
         </TabsContent>
       </Tabs>
-      {/* 
-        Phase 1 Data Storage: Payment data is stored in local component state.
-        Phase 2 (Future-Ready):
-        - Payments will be stored in a 'payments' collection in Firebase Firestore.
-        - Fields would include: type ('customer' or 'supplier'), relatedId (invoiceId or supplierId/POId), date (Timestamp), isoDate (string),
-          amount, method, transactionId, status, notes, createdBy, createdAt.
-        - For customer payments, this could also update the status of the linked invoice in the 'invoices' collection.
-        - Firestore Security Rules would ensure only Admins can create/edit supplier payments, while Admins and potentially Managers (for customer payments) can manage customer payment records.
-      */}
     </>
   );
 }

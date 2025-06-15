@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -16,6 +16,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
+import { collection, addDoc, getDocs, doc, updateDoc, deleteDoc, serverTimestamp, query, orderBy, Timestamp } from 'firebase/firestore';
+import { db } from '@/lib/firebase/firebaseConfig';
 
 /**
  * @fileOverview Page for managing customer profiles.
@@ -23,43 +25,38 @@ import { useToast } from "@/hooks/use-toast";
  * Allows Store Manager to:
  *  - Create new customers.
  *  - View customer list.
- *  - View customer details, past transactions, and payment history (placeholders).
+ *  - View customer details, past transactions (placeholder).
  *  - Update payment status of customer bills (placeholder).
- * Store Managers cannot delete customers.
+ * Store Managers cannot delete customers. Data is managed in Firestore.
  */
 
-interface Customer {
-  id: string; // Firestore document ID or unique local ID
+export interface Customer {
+  id: string; // Firestore document ID
   name: string;
-  email: string;
+  email: string; // Should be optional
   phone: string;
   gstin?: string; // Optional GSTIN
-  totalSpent: string; // Display string, e.g., "₹10,000.00"
-  // Future: Add address, notes, creationDate, lastTransactionDate etc.
+  totalSpent: string; // Display string, e.g., "₹10,000.00" - Placeholder for now, complex to calculate dynamically
+  // address?: string; // Consider adding address field
+  // stateCode?: string; // For IGST calculation if address is detailed
+  createdAt?: Timestamp; // Firestore Timestamp
 }
-
-// Initial dummy data. This will be replaced by Firestore data in Phase 2.
-const initialCustomers: Customer[] = [
-  { id: "CUST-LOCAL-001", name: "Alice Wonderland", email: "alice@example.com", phone: "555-0101", gstin: "29AABCU9517R1Z5", totalSpent: "₹100,000.00" },
-  { id: "CUST-LOCAL-002", name: "Bob The Builder", email: "bob@example.com", phone: "555-0102", totalSpent: "₹70,040.00" },
-  { id: "CUST-LOCAL-003", name: "Charlie Chaplin", email: "charlie@example.com", phone: "555-0103", gstin: "07AABCS1234D1Z2", totalSpent: "₹184,060.00" },
-  { id: "CUST-LOCAL-004", name: "Diana Prince", email: "diana@example.com", phone: "555-0104", totalSpent: "₹36,000.00" },
-];
 
 // Zod schema for customer form validation
 const customerSchema = z.object({
   name: z.string().min(2, { message: "Name must be at least 2 characters." }),
   email: z.string().email({ message: "Invalid email address." }).optional().or(z.literal('')),
-  phone: z.string().min(10, { message: "Phone number must be at least 10 digits." }).regex(/^\d+$/, { message: "Phone number must contain only digits."}),
-  gstin: z.string().optional().or(z.literal('')), // Future: Add more specific GSTIN validation if available (e.g., regex)
+  phone: z.string().min(10, { message: "Phone number must be at least 10 digits." }).regex(/^\d+[\d\s-]*$/, { message: "Phone number must contain valid characters (digits, spaces, hyphens)."}),
+  gstin: z.string().optional().or(z.literal('')),
+  // address: z.string().optional(),
 });
 
 type CustomerFormValues = z.infer<typeof customerSchema>;
 
 /**
  * Retrieves a cookie value by name.
- * @param name - The name of the cookie.
- * @returns The cookie value or undefined if not found.
+ * @param {string} name - The name of the cookie.
+ * @returns {string | undefined} The cookie value or undefined if not found.
  */
 const getCookie = (name: string): string | undefined => {
   if (typeof window === 'undefined') return undefined;
@@ -71,7 +68,8 @@ const getCookie = (name: string): string | undefined => {
 
 /**
  * CustomersPage component.
- * Provides UI and logic for managing customer data.
+ * Provides UI and logic for managing customer data in Firestore.
+ * @returns {JSX.Element} The rendered customers page.
  */
 export default function CustomersPage() {
   const [customerList, setCustomerList] = useState<Customer[]>([]);
@@ -87,40 +85,42 @@ export default function CustomersPage() {
 
   const form = useForm<CustomerFormValues>({
     resolver: zodResolver(customerSchema),
-    defaultValues: {
-      name: "",
-      email: "",
-      phone: "",
-      gstin: "",
-    },
+    defaultValues: { name: "", email: "", phone: "", gstin: "" },
   });
 
-  // Effect to load user role and customers
-  useEffect(() => {
-    setCurrentUserRole(getCookie('userRole'));
-
-    // Future: Fetch customers from Firestore
-    // const fetchCustomers = async () => {
-    //   setIsLoading(true);
-    //   try {
-    //     const querySnapshot = await getDocs(collection(db, "customers"));
-    //     const fetchedCustomers = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Customer));
-    //     setCustomerList(fetchedCustomers);
-    //   } catch (error) {
-    //     console.error("Error fetching customers: ", error);
-    //     toast({ title: "Error", description: "Could not load customers.", variant: "destructive" });
-    //   } finally {
-    //     setIsLoading(false);
-    //   }
-    // };
-    // fetchCustomers();
-
-    // Phase 1: Use local data
-    setCustomerList(initialCustomers);
-    setIsLoading(false);
+  /**
+   * Fetches customer list from Firestore.
+   */
+  const fetchCustomers = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const q = query(collection(db, "customers"), orderBy("name", "asc")); // Sort by name
+      const querySnapshot = await getDocs(q);
+      const fetchedCustomers = querySnapshot.docs.map(docSnapshot => {
+          const data = docSnapshot.data();
+          return { 
+              id: docSnapshot.id,
+              name: data.name,
+              email: data.email || "", // Ensure email is not undefined
+              phone: data.phone,
+              gstin: data.gstin || "",
+              totalSpent: data.totalSpent || "₹0.00", // Placeholder until calculated
+          } as Customer;
+      });
+      setCustomerList(fetchedCustomers);
+    } catch (error) {
+      console.error("Error fetching customers: ", error);
+      toast({ title: "Error", description: "Could not load customers from database.", variant: "destructive" });
+    } finally {
+      setIsLoading(false);
+    }
   }, [toast]);
 
-  // Effect to reset form when edit dialog opens/closes or editingCustomer changes
+  useEffect(() => {
+    setCurrentUserRole(getCookie('userRole'));
+    fetchCustomers();
+  }, [fetchCustomers]);
+
   useEffect(() => {
     if (editingCustomer && isEditCustomerDialogOpen) {
       form.reset({
@@ -130,96 +130,53 @@ export default function CustomersPage() {
         gstin: editingCustomer.gstin || "",
       });
     } else {
-      form.reset({ name: "", email: "", phone: "", gstin: "" }); // Reset for add dialog or on close
+      form.reset({ name: "", email: "", phone: "", gstin: "" });
     }
   }, [editingCustomer, isEditCustomerDialogOpen, form]);
 
-
-  /**
-   * Handles submission of the "Add New Customer" form.
-   * Phase 1: Adds to local state.
-   * Future: Adds customer to Firestore.
-   */
-  const handleAddSubmit = (values: CustomerFormValues) => {
-    // Future: Firebase integration
-    // try {
-    //   const newCustomerData = { ...values, totalSpent: "₹0.00", createdAt: serverTimestamp() };
-    //   const docRef = await addDoc(collection(db, "customers"), newCustomerData);
-    //   setCustomerList((prev) => [{ id: docRef.id, ...newCustomerData }, ...prev]);
-    // } catch (error) {
-    //   console.error("Error adding customer: ", error);
-    //   toast({ title: "Error", description: "Failed to add customer.", variant: "destructive" });
-    //   return;
-    // }
-
-    // Phase 1: Local state update
-    const newId = `CUST-LOCAL-${Date.now()}`;
-    const newCustomer: Customer = {
-      id: newId,
-      ...values,
-      email: values.email || "", // Ensure email is not undefined
-      totalSpent: "₹0.00",
-    };
-    setCustomerList((prevCustomers) => [newCustomer, ...prevCustomers]);
-    toast({
-      title: "Customer Added (Locally)",
-      description: `${values.name} has been successfully added.`,
-    });
-    form.reset();
-    setIsAddCustomerDialogOpen(false);
+  const handleAddSubmit = async (values: CustomerFormValues) => {
+    try {
+      const newCustomerData = { 
+        ...values, 
+        email: values.email || "", // Ensure email is not undefined if empty
+        totalSpent: "₹0.00", // Initial value
+        createdAt: serverTimestamp() 
+      };
+      const docRef = await addDoc(collection(db, "customers"), newCustomerData);
+      // setCustomerList((prev) => [{ id: docRef.id, ...newCustomerData, createdAt: new Timestamp(Date.now()/1000,0) }, ...prev]);
+      toast({ title: "Customer Added", description: `${values.name} has been successfully added to Firestore.` });
+      fetchCustomers(); // Re-fetch to get the latest list including the new one
+      form.reset();
+      setIsAddCustomerDialogOpen(false);
+    } catch (error) {
+      console.error("Error adding customer: ", error);
+      toast({ title: "Error", description: "Failed to add customer to database.", variant: "destructive" });
+    }
   };
 
-  /**
-   * Handles submission of the "Edit Customer" form.
-   * Phase 1: Updates local state.
-   * Future: Updates customer in Firestore.
-   */
-  const handleEditSubmit = (values: CustomerFormValues) => {
+  const handleEditSubmit = async (values: CustomerFormValues) => {
     if (!editingCustomer) return;
-
-    // Future: Firebase integration
-    // try {
-    //   const customerRef = doc(db, "customers", editingCustomer.id);
-    //   const updatedData = { ...values, email: values.email || "" }; // Ensure email is not undefined
-    //   await updateDoc(customerRef, updatedData);
-    //   setCustomerList((prev) =>
-    //     prev.map((c) => (c.id === editingCustomer.id ? { ...c, ...updatedData } : c))
-    //   );
-    // } catch (error) {
-    //   console.error("Error updating customer: ", error);
-    //   toast({ title: "Error", description: "Failed to update customer.", variant: "destructive" });
-    //   return;
-    // }
-
-    // Phase 1: Local state update
-    const updatedCustomer: Customer = {
-      ...editingCustomer,
-      ...values,
-      email: values.email || "", // Ensure email is not undefined
-    };
-    setCustomerList((prevCustomers) =>
-      prevCustomers.map((c) => (c.id === editingCustomer.id ? updatedCustomer : c))
-    );
-    toast({
-      title: "Customer Updated (Locally)",
-      description: `${values.name} has been successfully updated.`,
-    });
-    setEditingCustomer(null);
-    setIsEditCustomerDialogOpen(false);
-    form.reset();
+    try {
+      const customerRef = doc(db, "customers", editingCustomer.id);
+      const updatedData = { ...values, email: values.email || "" };
+      await updateDoc(customerRef, updatedData);
+      // setCustomerList((prev) => prev.map((c) => (c.id === editingCustomer.id ? { ...c, ...updatedData } : c)));
+      toast({ title: "Customer Updated", description: `${values.name} has been successfully updated in Firestore.` });
+      fetchCustomers(); // Re-fetch
+      setEditingCustomer(null);
+      setIsEditCustomerDialogOpen(false);
+      form.reset();
+    } catch (error) {
+      console.error("Error updating customer: ", error);
+      toast({ title: "Error", description: "Failed to update customer in database.", variant: "destructive" });
+    }
   };
   
-  /**
-   * Opens the edit dialog and populates form with customer data.
-   */
   const openEditDialog = (customer: Customer) => {
     setEditingCustomer(customer);
     setIsEditCustomerDialogOpen(true);
   };
 
-  /**
-   * Opens the delete confirmation dialog (Admin only).
-   */
   const openDeleteDialog = (customer: Customer) => {
     if (currentUserRole !== 'admin') {
       toast({ title: "Permission Denied", description: "Only Admins can delete customers.", variant: "destructive"});
@@ -229,60 +186,33 @@ export default function CustomersPage() {
     setIsDeleteConfirmOpen(true);
   };
 
-  /**
-   * Confirms and performs customer deletion (Admin only).
-   * Phase 1: Removes from local state.
-   * Future: Deletes customer from Firestore.
-   */
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (!customerToDelete || currentUserRole !== 'admin') return;
-
-    // Future: Firebase integration
-    // try {
-    //   await deleteDoc(doc(db, "customers", customerToDelete.id));
-    //   setCustomerList((prev) => prev.filter((c) => c.id !== customerToDelete.id));
-    // } catch (error) {
-    //   console.error("Error deleting customer: ", error);
-    //   toast({ title: "Error", description: "Failed to delete customer.", variant: "destructive" });
-    //   return;
-    // }
-
-    // Phase 1: Local state update
-    setCustomerList((prevCustomers) => prevCustomers.filter((c) => c.id !== customerToDelete.id));
-    toast({
-      title: "Customer Deleted (Locally)",
-      description: `${customerToDelete.name} has been successfully deleted.`,
-      variant: "destructive"
-    });
-    setCustomerToDelete(null);
-    setIsDeleteConfirmOpen(false);
+    try {
+      await deleteDoc(doc(db, "customers", customerToDelete.id));
+      // setCustomerList((prev) => prev.filter((c) => c.id !== customerToDelete.id));
+      toast({ title: "Customer Deleted", description: `${customerToDelete.name} has been successfully deleted from Firestore.`, variant: "default" });
+      fetchCustomers(); // Re-fetch
+      setCustomerToDelete(null);
+      setIsDeleteConfirmOpen(false);
+    } catch (error) {
+      console.error("Error deleting customer: ", error);
+      toast({ title: "Error", description: "Failed to delete customer from database.", variant: "destructive" });
+    }
   };
 
-  /**
-   * Placeholder for viewing customer details and history.
-   */
   const handleViewDetails = (customer: Customer) => {
-    // Future: Navigate to a dedicated customer detail page, e.g., router.push(`/customers/${customer.id}`);
-    toast({
-        title: "View Details (Placeholder)",
-        description: `Viewing details for ${customer.name}. Purchase/payment history page to be implemented.`,
-    });
-  }
+    toast({ title: "View Details (Placeholder)", description: `Viewing details for ${customer.name}. Purchase/payment history page to be implemented.`});
+    // Future: router.push(`/customers/${customer.id}`);
+  };
 
-  /**
-   * Placeholder for updating payment status of a customer's bill.
-   */
   const handleUpdatePaymentStatus = (customer: Customer) => {
-     // Future: This would likely involve selecting a specific bill and then updating its status.
-     // Could open a dialog listing unpaid bills for this customer.
-    toast({
-        title: "Update Payment Status (Placeholder)",
-        description: `Functionality to update payment status for ${customer.name}'s bills to be implemented.`,
-    });
-  }
+    toast({ title: "Update Payment Status (Placeholder)", description: `Functionality to update payment status for ${customer.name}'s bills to be implemented.`});
+    // Future: This would likely involve selecting a specific bill and then updating its status in Firestore.
+  };
 
   if (isLoading) {
-    return <PageHeader title="Manage Customers" description="Loading customer data..." icon={Users} />;
+    return <PageHeader title="Manage Customers" description="Loading customer data from database..." icon={Users} />;
   }
 
   return (
@@ -299,20 +229,27 @@ export default function CustomersPage() {
         }
       />
 
-      {/* Add Customer Dialog */}
-      <Dialog open={isAddCustomerDialogOpen} onOpenChange={(isOpen) => {
-          setIsAddCustomerDialogOpen(isOpen);
-          if (!isOpen) form.reset(); // Reset form if dialog is closed without submitting
-        }}>
+      {/* Add/Edit Customer Dialog (shared form) */}
+      <Dialog 
+        open={isAddCustomerDialogOpen || isEditCustomerDialogOpen} 
+        onOpenChange={(isOpen) => {
+          if (!isOpen) {
+            setIsAddCustomerDialogOpen(false);
+            setIsEditCustomerDialogOpen(false);
+            setEditingCustomer(null);
+            form.reset();
+          }
+        }}
+      >
         <DialogContent className="sm:max-w-[480px]">
           <DialogHeader>
-            <DialogTitle>Add New Customer</DialogTitle>
+            <DialogTitle>{editingCustomer ? "Edit Customer" : "Add New Customer"}</DialogTitle>
             <DialogDescription>
-              Fill in the details to add a new customer.
+              {editingCustomer ? `Update details for "${editingCustomer.name}".` : "Fill in the details to add a new customer."}
             </DialogDescription>
           </DialogHeader>
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(handleAddSubmit)} className="space-y-4 py-2">
+            <form onSubmit={form.handleSubmit(editingCustomer ? handleEditSubmit : handleAddSubmit)} className="space-y-4 py-2">
               <FormField control={form.control} name="name" render={({ field }) => (
                   <FormItem>
                     <FormLabel>Full Name</FormLabel>
@@ -345,68 +282,10 @@ export default function CustomersPage() {
                   </FormItem>
                 )}
               />
+              {/* Future: Add <FormField control={form.control} name="address" ... /> */}
               <DialogFooter className="pt-4">
-                <DialogClose asChild><Button type="button" variant="outline">Cancel</Button></DialogClose>
-                <Button type="submit">Add Customer</Button>
-              </DialogFooter>
-            </form>
-          </Form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Edit Customer Dialog */}
-       <Dialog open={isEditCustomerDialogOpen} onOpenChange={(isOpen) => {
-          setIsEditCustomerDialogOpen(isOpen);
-          if (!isOpen) setEditingCustomer(null); // Clear editing customer if dialog is closed
-        }}>
-        <DialogContent className="sm:max-w-[480px]">
-          <DialogHeader>
-            <DialogTitle>Edit Customer</DialogTitle>
-            <DialogDescription>
-              Update the details for &quot;{editingCustomer?.name}&quot;.
-            </DialogDescription>
-          </DialogHeader>
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(handleEditSubmit)} className="space-y-4 py-2">
-            <FormField control={form.control} name="name" render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Full Name</FormLabel>
-                    <FormControl><Input placeholder="e.g., Priya Sharma" {...field} /></FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField control={form.control} name="email" render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Email (Optional)</FormLabel>
-                    <FormControl><Input type="email" placeholder="e.g., priya@example.com" {...field} /></FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField control={form.control} name="phone" render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Phone Number</FormLabel>
-                    <FormControl><Input placeholder="e.g., 9876543210" {...field} /></FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField control={form.control} name="gstin" render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>GSTIN (Optional)</FormLabel>
-                    <FormControl><Input placeholder="e.g., 29AABCU9517R1Z5" {...field} /></FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <DialogFooter className="pt-4">
-                 <DialogClose asChild>
-                    <Button type="button" variant="outline" onClick={() => { setIsEditCustomerDialogOpen(false); setEditingCustomer(null); }}>
-                      Cancel
-                    </Button>
-                  </DialogClose>
-                <Button type="submit">Save Changes</Button>
+                <DialogClose asChild><Button type="button" variant="outline" onClick={() => { setIsAddCustomerDialogOpen(false); setIsEditCustomerDialogOpen(false); setEditingCustomer(null); }}>Cancel</Button></DialogClose>
+                <Button type="submit">{editingCustomer ? "Save Changes" : "Add Customer"}</Button>
               </DialogFooter>
             </form>
           </Form>
@@ -434,13 +313,12 @@ export default function CustomersPage() {
       <Card className="shadow-lg rounded-xl">
         <CardHeader>
           <CardTitle className="font-headline text-foreground">Customer List</CardTitle>
-          <CardDescription>A list of all registered customers.</CardDescription>
+          <CardDescription>A list of all registered customers from Firestore.</CardDescription>
         </CardHeader>
         <CardContent>
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Customer ID</TableHead>
                 <TableHead>Name</TableHead>
                 <TableHead>Email</TableHead>
                 <TableHead>Phone</TableHead>
@@ -452,8 +330,7 @@ export default function CustomersPage() {
             <TableBody>
               {customerList.map((customer) => (
                 <TableRow key={customer.id}>
-                  <TableCell className="font-medium">{customer.id}</TableCell>
-                  <TableCell>{customer.name}</TableCell>
+                  <TableCell className="font-medium">{customer.name}</TableCell>
                   <TableCell>{customer.email || "-"}</TableCell>
                   <TableCell>{customer.phone}</TableCell>
                   <TableCell>{customer.gstin || "-"}</TableCell>
@@ -473,7 +350,7 @@ export default function CustomersPage() {
                         <DropdownMenuItem onClick={() => openEditDialog(customer)}>
                             <Edit className="mr-2 h-4 w-4" /> Edit Customer
                         </DropdownMenuItem>
-                        {currentUserRole === 'store_manager' && (
+                        {(currentUserRole === 'store_manager' || currentUserRole === 'admin') && (
                             <DropdownMenuItem onClick={() => handleUpdatePaymentStatus(customer)}>
                                 <CreditCard className="mr-2 h-4 w-4" /> Update Payment Status
                             </DropdownMenuItem>
@@ -492,22 +369,11 @@ export default function CustomersPage() {
           </Table>
            {customerList.length === 0 && !isLoading && (
              <div className="text-center py-8 text-muted-foreground">
-                No customers found. Click "Add New Customer" to get started.
+                No customers found in the database. Click "Add New Customer" to get started.
              </div>
            )}
         </CardContent>
       </Card>
-      {/* 
-        Phase 1 Data Storage: Customer data is stored in local component state.
-        Phase 2 (Future-Ready):
-        - Customer data will be stored in a 'customers' collection in Firebase Firestore.
-        - Each document would represent a customer with fields like name, email, phone, gstin, address, totalSpent (potentially calculated or updated via transactions), createdAt, etc.
-        - Adding a customer would create a new document in this collection.
-        - Editing would update the corresponding document.
-        - Deleting (Admin only) would remove the document.
-        - Total spent could be a denormalized field updated by a Firebase Function observing new bills/payments, or calculated on read (less performant for lists).
-        - Customer history would involve querying a 'bills' or 'transactions' collection filtered by customer ID.
-      */}
     </>
   );
 }

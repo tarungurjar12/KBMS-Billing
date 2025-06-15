@@ -1,156 +1,210 @@
 
-"use client"; // This page will involve client-side interactions for creating/managing bills
+"use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/page-header";
-import { FileText, PlusCircle, MoreHorizontal, Download, Printer, Edit } from "lucide-react"; // Added Download, Printer, Edit
+import { FileText, PlusCircle, MoreHorizontal, Download, Printer, Edit, Eye, Trash2 } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
-// Future: Import Firebase functions for Firestore operations
-// import { collection, getDocs, doc, updateDoc, deleteDoc, query, orderBy } from 'firebase/firestore';
-// import { db } from '@/lib/firebase/firebaseConfig';
+import { collection, getDocs, doc, updateDoc, deleteDoc, query, orderBy, Timestamp } from 'firebase/firestore';
+import { db } from '@/lib/firebase/firebaseConfig';
+import { format } from 'date-fns';
 
 /**
  * @fileOverview Page for Admin to manage Billing and Invoicing.
  * Allows Admin to:
- *  - View a list of all generated invoices.
- *  - Create new invoices (navigates to a dedicated create bill page).
- *  - View, download, print, edit, and delete individual invoices.
- *  - Update payment status of invoices.
+ *  - View a list of all generated invoices from Firestore.
+ *  - Navigate to create new invoices.
+ *  - Perform actions like view, download (placeholder), print (placeholder), edit (placeholder), 
+ *    update status, and delete individual invoices.
  */
 
-interface Invoice {
-  id: string; // Firestore document ID or unique local ID
-  invoiceNumber: string; // Displayed invoice number, e.g., INV001
-  customerName: string; // Denormalized for display
-  customerId: string; // Link to customer document
-  date: string; // Formatted date string, e.g., "2024-07-15"
-  isoDate: string; // ISO date string for sorting
-  totalAmount: number; // Numeric total for calculations
+export interface InvoiceItem {
+  productId: string;
+  name: string;
+  quantity: number;
+  unitPrice: number;
+  total: number;
+  unitOfMeasure: string;
+}
+export interface Invoice {
+  id: string; // Firestore document ID
+  invoiceNumber: string;
+  customerName: string;
+  customerId: string;
+  date: string; // Formatted date string, e.g., "Jul 15, 2024"
+  isoDate: string; // ISO date string for sorting and Firestore Timestamp storage
+  totalAmount: number;
   displayTotal: string; // Formatted currency string, e.g., "₹20,000.00"
-  status: "Paid" | "Pending" | "Overdue" | "Partially Paid"; // Added "Partially Paid"
-  // Future: items (array of bill items), taxDetails, notes, createdBy (managerId), dueDate
+  status: "Paid" | "Pending" | "Overdue" | "Partially Paid" | "Cancelled";
+  items: InvoiceItem[];
+  cgst: number;
+  sgst: number;
+  igst: number;
+  subTotal: number;
+  // createdBy: string; // managerId or adminId
+  // createdAt: Timestamp; // Firestore Timestamp
+  // dueDate?: string; // ISO date string
 }
 
-// Initial dummy data. This will be replaced by Firestore data in Phase 2.
-const initialInvoices: Invoice[] = [
-  { id: "BILL-LOCAL-001", invoiceNumber: "INV001", customerName: "Alice Wonderland", customerId: "CUST-LOCAL-001", date: "2024-07-15", isoDate: "2024-07-15T00:00:00Z", totalAmount: 20000, displayTotal: "₹20,000.00", status: "Paid" },
-  { id: "BILL-LOCAL-002", invoiceNumber: "INV002", customerName: "Bob The Builder", customerId: "CUST-LOCAL-002", date: "2024-07-18", isoDate: "2024-07-18T00:00:00Z", totalAmount: 12060, displayTotal: "₹12,060.00", status: "Pending" },
-  { id: "BILL-LOCAL-003", invoiceNumber: "INV003", customerName: "Charlie Chaplin", customerId: "CUST-LOCAL-003", date: "2024-07-20", isoDate: "2024-07-20T00:00:00Z", totalAmount: 40040, displayTotal: "₹40,040.00", status: "Overdue" },
-  { id: "BILL-LOCAL-004", invoiceNumber: "INV004", customerName: "Diana Prince", customerId: "CUST-LOCAL-004", date: "2024-07-22", isoDate: "2024-07-22T00:00:00Z", totalAmount: 6000, displayTotal: "₹6,000.00", status: "Paid" },
-  { id: "BILL-LOCAL-005", invoiceNumber: "INV005", customerName: "Alice Wonderland", customerId: "CUST-LOCAL-001", date: "2024-07-25", isoDate: "2024-07-25T00:00:00Z", totalAmount: 15000, displayTotal: "₹15,000.00", status: "Partially Paid" },
-];
+/**
+ * Formats a number as an Indian Rupee string.
+ * @param {number} num - The number to format.
+ * @returns {string} A string representing the currency.
+ */
+const formatCurrency = (num: number): string => `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 
 /**
  * BillingPage component.
- * Provides UI and logic for Admin to manage bills and invoices.
+ * Provides UI and logic for Admin to manage bills and invoices using Firestore.
+ * @returns {JSX.Element} The rendered billing page.
  */
 export default function BillingPage() {
   const router = useRouter();
   const { toast } = useToast();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  // Future: Add state for filtering, sorting, pagination
 
-  // Effect to load invoices (currently from initial data, future from Firestore)
-  useEffect(() => {
-    // Future: Fetch invoices from Firestore, ordered by date
-    // const fetchInvoices = async () => {
-    //   setIsLoading(true);
-    //   try {
-    //     const q = query(collection(db, "invoices"), orderBy("isoDate", "desc")); // or 'date' if stored as Timestamp
-    //     const querySnapshot = await getDocs(q);
-    //     const fetchedInvoices = querySnapshot.docs.map(doc => {
-    //       const data = doc.data();
-    //       return { 
-    //         id: doc.id,
-    //         ...data,
-    //         // Ensure date is formatted if stored as Timestamp, and displayTotal is correct
-    //         date: data.date instanceof Timestamp ? data.date.toDate().toLocaleDateString('en-CA') : data.date,
-    //         displayTotal: `₹${Number(data.totalAmount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-    //       } as Invoice;
-    //     });
-    //     setInvoices(fetchedInvoices);
-    //   } catch (error) {
-    //     console.error("Error fetching invoices: ", error);
-    //     toast({ title: "Error", description: "Could not load invoices.", variant: "destructive" });
-    //   } finally {
-    //     setIsLoading(false);
-    //   }
-    // };
-    // fetchInvoices();
+  /**
+   * Fetches invoices from Firestore, ordered by date.
+   */
+  const fetchInvoices = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const q = query(collection(db, "invoices"), orderBy("isoDate", "desc"));
+      const querySnapshot = await getDocs(q);
+      const fetchedInvoices = querySnapshot.docs.map(docSnapshot => {
+        const data = docSnapshot.data();
+        let invoiceDate = "";
+        if (data.isoDate) {
+            if (typeof data.isoDate === 'string') {
+                invoiceDate = format(new Date(data.isoDate), "MMM dd, yyyy");
+            } else if (data.isoDate instanceof Timestamp) {
+                invoiceDate = format(data.isoDate.toDate(), "MMM dd, yyyy");
+            }
+        }
 
-    // Phase 1: Use local data, sort by isoDate descending
-    const sortedInitialInvoices = [...initialInvoices].sort((a, b) => new Date(b.isoDate).getTime() - new Date(a.isoDate).getTime());
-    setInvoices(sortedInitialInvoices);
-    setIsLoading(false);
+        return {
+          id: docSnapshot.id,
+          invoiceNumber: data.invoiceNumber || 'N/A',
+          customerName: data.customerName || 'N/A',
+          customerId: data.customerId || '',
+          date: invoiceDate,
+          isoDate: typeof data.isoDate === 'string' ? data.isoDate : (data.isoDate as Timestamp)?.toDate().toISOString() || new Date().toISOString(),
+          totalAmount: data.grandTotal || 0,
+          displayTotal: formatCurrency(data.grandTotal || 0),
+          status: data.status || 'Pending',
+          items: data.items || [],
+          cgst: data.cgst || 0,
+          sgst: data.sgst || 0,
+          igst: data.igst || 0,
+          subTotal: data.subTotal || 0,
+        } as Invoice;
+      });
+      setInvoices(fetchedInvoices);
+    } catch (error) {
+      console.error("Error fetching invoices: ", error);
+      toast({ title: "Error", description: "Could not load invoices from database.", variant: "destructive" });
+    } finally {
+      setIsLoading(false);
+    }
   }, [toast]);
 
+  useEffect(() => {
+    fetchInvoices();
+  }, [fetchInvoices]);
+
+  /**
+   * Navigates to the page for creating new bills/invoices.
+   */
   const handleCreateNewInvoice = () => {
-    // Navigate to the dedicated page for creating bills/invoices
-    // This page is also accessible by Store Managers
     router.push("/create-bill");
   };
 
-  /** Placeholder functions for invoice actions */
   const handleViewInvoice = (invoiceId: string) => {
-    toast({ title: "View Invoice (Placeholder)", description: `Viewing details for invoice ID: ${invoiceId}. To be implemented.` });
-    // Future: router.push(`/billing/${invoiceId}`);
+    // Future: Implement a detailed view page or modal for the invoice
+    // router.push(`/billing/${invoiceId}`);
+    const invoice = invoices.find(inv => inv.id === invoiceId);
+    toast({ 
+        title: `View Invoice: ${invoice?.invoiceNumber || invoiceId}`, 
+        description: `Customer: ${invoice?.customerName}, Total: ${invoice?.displayTotal}. Detailed view to be implemented.` 
+    });
   };
 
   const handleDownloadPDF = (invoiceId: string) => {
-    toast({ title: "Download PDF (Placeholder)", description: `Downloading PDF for invoice ID: ${invoiceId}. To be implemented.` });
-    // Future: Implement PDF generation and download logic.
+    toast({ title: "Download PDF (Placeholder)", description: `Downloading PDF for invoice ID: ${invoiceId}. PDF generation to be implemented.` });
+    // Future: Implement PDF generation (e.g., using jsPDF or a backend service) and download.
   };
   
   const handlePrintInvoice = (invoiceId: string) => {
-    toast({ title: "Print Invoice (Placeholder)", description: `Printing invoice ID: ${invoiceId}. To be implemented.` });
-    // Future: Implement print functionality, possibly opening a print-friendly view.
+    toast({ title: "Print Invoice (Placeholder)", description: `Printing invoice ID: ${invoiceId}. Print-friendly view/logic to be implemented.` });
+    // Future: Implement print functionality, possibly opening window.print() on a formatted page.
   };
 
   const handleEditInvoice = (invoiceId: string) => {
-    toast({ title: "Edit Invoice (Placeholder)", description: `Editing invoice ID: ${invoiceId}. This is complex and needs careful consideration (e.g., impact on stock, accounting).` });
-    // Future: Navigate to an edit page or open a modal. Consider restrictions on what can be edited after an invoice is finalized.
+    // Editing invoices can be complex due to accounting and stock implications.
+    // For now, it might redirect to create-bill page with pre-filled data, or a dedicated edit page.
+    // Caution: Ensure rules for what can be edited (e.g., only before payment, or only by admin).
+    router.push(`/create-bill?editInvoiceId=${invoiceId}`); // Pass invoice ID as query param
+    toast({ title: "Edit Invoice", description: `Loading invoice ${invoiceId} for editing. Be cautious with changes.` });
   };
   
-  const handleUpdateStatus = (invoiceId: string, currentStatus: Invoice['status']) => {
-    // This would typically open a dialog to select the new status and add payment details if applicable.
-    // For simplicity, this placeholder just shows a toast.
-    toast({ title: "Update Status (Placeholder)", description: `Functionality to update status for invoice ID: ${invoiceId} (current: ${currentStatus}) to be implemented. See Payment Management module.` });
-    // Future: Update status in Firestore and potentially link to a payment record.
+  const handleUpdateStatus = async (invoiceId: string, newStatus: Invoice['status']) => {
+    try {
+      const invoiceRef = doc(db, "invoices", invoiceId);
+      await updateDoc(invoiceRef, { status: newStatus });
+      toast({ title: "Status Updated", description: `Invoice status changed to ${newStatus}.` });
+      fetchInvoices(); // Refresh the list
+    } catch (error) {
+      console.error("Error updating invoice status: ", error);
+      toast({ title: "Error", description: "Could not update invoice status.", variant: "destructive" });
+    }
+    // Future: Could open a dialog for more complex status updates (e.g., adding payment details for "Partially Paid").
+    // For now, directly updating status. This is a simplified action.
   };
 
-  const handleDeleteInvoice = (invoiceId: string, invoiceNumber: string) => {
-     // Future: Implement proper delete confirmation and logic.
-     // Consider if invoices should be soft-deleted or archived instead of hard delete for auditing.
-    toast({ title: "Delete Invoice (Placeholder)", description: `Deleting invoice ${invoiceNumber} (ID: ${invoiceId}). Needs confirmation and careful implementation.`, variant: "destructive" });
-    // Phase 1: Local delete example
-    // setInvoices(prev => prev.filter(inv => inv.id !== invoiceId));
+  const handleDeleteInvoice = async (invoiceId: string, invoiceNumber: string) => {
+     // Future: Implement soft delete (archiving) instead of hard delete for auditing.
+    try {
+      await deleteDoc(doc(db, "invoices", invoiceId));
+      toast({ title: "Invoice Deleted", description: `Invoice ${invoiceNumber} has been deleted.`, variant: "default" });
+      fetchInvoices(); // Refresh the list
+    } catch (error) {
+      console.error("Error deleting invoice: ", error);
+      toast({ title: "Error", description: "Could not delete invoice.", variant: "destructive" });
+    }
   };
   
+  /**
+   * Determines the badge variant based on invoice status.
+   * @param {Invoice['status']} status - The status of the invoice.
+   * @returns {"default" | "secondary" | "destructive" | "outline"} The badge variant.
+   */
   const getBadgeVariant = (status: Invoice['status']): "default" | "secondary" | "destructive" | "outline" => {
     switch (status) {
       case "Paid":
-        return "default"; // Will use accent color defined in Badge component
+        return "default"; // Uses accent color for 'Paid'
       case "Pending":
         return "secondary";
       case "Overdue":
         return "destructive";
       case "Partially Paid":
-        return "outline"; // Or another distinct style
+        return "outline"; // Yellowish for partially paid
+      case "Cancelled":
+        return "destructive"; // Similar to overdue or a distinct gray
       default:
         return "secondary";
     }
   };
 
   if (isLoading) {
-    return <PageHeader title="Billing & Invoicing" description="Loading invoice data..." icon={FileText} />;
+    return <PageHeader title="Billing & Invoicing" description="Loading invoices from database..." icon={FileText} />;
   }
 
   return (
@@ -169,13 +223,13 @@ export default function BillingPage() {
       <Card className="shadow-lg rounded-xl">
         <CardHeader>
           <CardTitle className="font-headline text-foreground">Invoice List</CardTitle>
-          <CardDescription>A list of all generated invoices. Most recent first.</CardDescription>
+          <CardDescription>A list of all generated invoices, fetched from Firestore. Most recent first.</CardDescription>
         </CardHeader>
         <CardContent>
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Invoice ID</TableHead>
+                <TableHead>Invoice #</TableHead>
                 <TableHead>Customer</TableHead>
                 <TableHead>Date</TableHead>
                 <TableHead className="text-right">Total</TableHead>
@@ -193,8 +247,11 @@ export default function BillingPage() {
                   <TableCell className="text-center">
                     <Badge 
                         variant={getBadgeVariant(invoice.status)}
-                        className={invoice.status === "Paid" ? "bg-accent text-accent-foreground" : 
-                                   invoice.status === "Partially Paid" ? "border-yellow-500 text-yellow-600" : ""}
+                        className={
+                            invoice.status === "Paid" ? "bg-accent text-accent-foreground" : 
+                            invoice.status === "Partially Paid" ? "border-yellow-500 text-yellow-600 dark:border-yellow-400 dark:text-yellow-300" :
+                            invoice.status === "Cancelled" ? "bg-muted text-muted-foreground border-muted-foreground/30" : ""
+                        }
                     >
                       {invoice.status}
                     </Badge>
@@ -217,13 +274,16 @@ export default function BillingPage() {
                          <DropdownMenuItem onClick={() => handlePrintInvoice(invoice.id)}>
                             <Printer className="mr-2 h-4 w-4" /> Print Invoice
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleUpdateStatus(invoice.id, invoice.status)}>
-                            <Edit className="mr-2 h-4 w-4" /> Update Status
-                        </DropdownMenuItem>
                         <DropdownMenuSeparator />
-                         <DropdownMenuItem onClick={() => handleEditInvoice(invoice.id)}>
-                            <Edit className="mr-2 h-4 w-4" /> Edit Invoice (Caution)
+                        <DropdownMenuItem onClick={() => handleEditInvoice(invoice.id)}>
+                            <Edit className="mr-2 h-4 w-4" /> Edit Invoice
                         </DropdownMenuItem>
+                        {/* Simplified status updates directly in menu for demo */}
+                        {invoice.status !== "Paid" && <DropdownMenuItem onClick={() => handleUpdateStatus(invoice.id, "Paid")}>Mark as Paid</DropdownMenuItem>}
+                        {invoice.status !== "Pending" && <DropdownMenuItem onClick={() => handleUpdateStatus(invoice.id, "Pending")}>Mark as Pending</DropdownMenuItem>}
+                        {invoice.status !== "Overdue" && <DropdownMenuItem onClick={() => handleUpdateStatus(invoice.id, "Overdue")}>Mark as Overdue</DropdownMenuItem>}
+                        {invoice.status !== "Cancelled" && <DropdownMenuItem onClick={() => handleUpdateStatus(invoice.id, "Cancelled")}>Mark as Cancelled</DropdownMenuItem>}
+                        <DropdownMenuSeparator />
                         <DropdownMenuItem onClick={() => handleDeleteInvoice(invoice.id, invoice.invoiceNumber)} className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground">
                             <Trash2 className="mr-2 h-4 w-4" /> Delete Invoice
                         </DropdownMenuItem>
@@ -236,22 +296,11 @@ export default function BillingPage() {
           </Table>
           {invoices.length === 0 && !isLoading && (
             <div className="text-center py-8 text-muted-foreground">
-                No invoices found.
+                No invoices found in the database.
             </div>
           )}
         </CardContent>
       </Card>
-      {/* 
-        Phase 1 Data Storage: Invoice data is stored in local component state.
-        Phase 2 (Future-Ready):
-        - Invoices will be stored in an 'invoices' collection in Firebase Firestore.
-        - Fields would include: invoiceNumber (can be auto-generated), customerId, customerName (denormalized), date (Timestamp), isoDate (string for querying), 
-          items (array of objects: {productId, productName, quantity, unitPrice, totalPrice}), 
-          subTotal, cgst, sgst, igst, grandTotal, status, createdBy (managerAuthUid), createdAt, dueDate, paymentRecords (array of payment details or link to separate payments collection).
-        - Creating an invoice would add a new document to this collection.
-        - Stock levels in the 'products' collection would be updated (ideally in a transaction) upon invoice creation.
-        - Payment status updates would modify the 'status' field and potentially add to 'paymentRecords'.
-      */}
     </>
   );
 }

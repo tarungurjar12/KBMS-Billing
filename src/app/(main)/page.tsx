@@ -1,34 +1,57 @@
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { PageHeader } from "@/components/page-header";
-import { DollarSign, Users, FileText, PackageMinus, LayoutDashboard, ClipboardPlus, Package } from "lucide-react";
+import { DollarSign, Users, FileText, PackageMinus, LayoutDashboard, Package, BarChart3, TrendingUp } from "lucide-react"; // Added BarChart3, TrendingUp
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+// Future: import { collection, getDocs, query, where, limit, orderBy } from 'firebase/firestore';
+// Future: import { db } from '@/lib/firebase/firebaseConfig';
+// Future: import { useEffect, useState } from 'react';
 
 /**
- * @fileOverview Admin Dashboard page.
- * Displays key metrics and quick actions for the Admin user.
+ * @fileOverview Admin Dashboard page for the KBMS Billing application.
+ * Displays key business metrics, recent activity summaries, and provides quick actions
+ * for administrative tasks. Data is currently static and will be fetched from Firestore
+ * in a future implementation phase.
  */
 
+// Static data for dashboard metrics. Will be replaced by dynamic data from Firestore.
 const dashboardMetrics = [
-  { title: "Total Revenue", value: "₹3,618,550", change: "+20.1% from last month", icon: DollarSign, dataAiHint: "finance money" },
-  { title: "Active Customers", value: "+2350", change: "+180.1% from last month", icon: Users, dataAiHint: "people team" }, // Changed from "Active Users" for clarity
-  { title: "Pending Invoices", value: "12", change: "+5 from last week", icon: FileText, dataAiHint: "document paper" },
-  { title: "Low Stock Items", value: "7", change: "Needs attention", icon: PackageMinus, dataAiHint: "box inventory" },
+  { title: "Total Revenue", value: "₹0.00", change: "Loading...", icon: DollarSign, dataAiHint: "finance money" },
+  { title: "Active Customers", value: "0", change: "Loading...", icon: Users, dataAiHint: "people team" },
+  { title: "Pending Invoices", value: "0", change: "Loading...", icon: FileText, dataAiHint: "document paper" },
+  { title: "Low Stock Items", value: "0", change: "Loading...", icon: PackageMinus, dataAiHint: "box inventory" },
 ];
 
+// Static data for quick actions.
 const quickActions = [
-    { label: "Create New Invoice", href: "/billing", icon: FileText }, // Direct to billing page, create can be a button there
-    { label: "Add New Customer", href: "/customers", icon: Users }, // Direct to customers, add button there
-    { label: "Manage Products", href: "/products", icon: Package },
-    { label: "Manage Managers", href: "/managers", icon: Users } // Placeholder until UserCog is fixed or replaced
+    { label: "Create New Invoice", href: "/create-bill", icon: FileText, description: "Generate a new GST-compliant invoice." },
+    { label: "Add New Customer", href: "/customers", icon: Users, description: "Register a new customer profile." },
+    { label: "Manage Products", href: "/products", icon: Package, description: "Update product database and inventory." },
+    { label: "Daily Ledger", href: "/ledger", icon: BarChart3, description: "View and manage daily transactions." },
 ];
 
 /**
  * AdminDashboardPage component.
  * Renders the main dashboard for administrative users.
+ * 
+ * @returns {JSX.Element} The rendered admin dashboard page.
  */
 export default function AdminDashboardPage() {
+  // Future: useState for dynamic metrics, useEffect to fetch data from Firestore.
+  // const [metrics, setMetrics] = useState(dashboardMetrics);
+  // const [recentSales, setRecentSales] = useState([]); // For chart
+
+  // useEffect(() => {
+  //   const fetchDashboardData = async () => {
+  //     // Fetch total revenue, active customers, pending invoices, low stock items from Firestore
+  //     // Example: const invoicesSnapshot = await getDocs(query(collection(db, "invoices"), where("status", "==", "Pending")));
+  //     // setMetrics(prev => prev.map(m => m.title === "Pending Invoices" ? {...m, value: invoicesSnapshot.size.toString()} : m));
+  //     // Fetch recent sales for the chart
+  //   };
+  //   fetchDashboardData();
+  // }, []);
+
   return (
     <>
       <PageHeader
@@ -38,7 +61,7 @@ export default function AdminDashboardPage() {
       />
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
         {dashboardMetrics.map((metric) => (
-          <Card key={metric.title} className="shadow-lg rounded-xl">
+          <Card key={metric.title} className="shadow-lg rounded-xl hover:shadow-primary/20 transition-shadow">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">
                 {metric.title}
@@ -57,32 +80,49 @@ export default function AdminDashboardPage() {
       <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2 shadow-lg rounded-xl">
           <CardHeader>
-            <CardTitle className="font-headline text-foreground">Recent Sales</CardTitle>
-            <CardDescription>A summary of recent sales activity.</CardDescription>
+            <CardTitle className="font-headline text-foreground flex items-center"><TrendingUp className="mr-2 h-6 w-6 text-primary"/>Recent Sales Activity</CardTitle>
+            <CardDescription>A summary of sales trends over the past month. (Placeholder)</CardDescription>
           </CardHeader>
           <CardContent>
-            {/* Future: Replace with actual chart component */}
-            <div className="h-64 flex items-center justify-center bg-muted/50 rounded-md">
+            {/* Future: Replace with actual chart component using ShadCN Charts and data from Firestore */}
+            <div className="h-64 flex items-center justify-center bg-muted/30 rounded-md border border-dashed">
               <p className="text-muted-foreground">Sales chart will be displayed here.</p>
             </div>
-            {/* Example of placeholder for future Firebase integration: */}
-            {/* // Future: Fetch recent sales data from Firestore and render chart. */}
+            {/* 
+              Phase 2 (Future-Ready):
+              - Fetch recent sales data from 'invoices' or 'ledgerEntries' collection in Firestore.
+              - Aggregate data (e.g., daily or weekly sales totals).
+              - Use a charting library (like Recharts, integrated via ShadCN Charts) to visualize this data.
+              - Example data points: date, totalSalesAmount.
+            */}
           </CardContent>
         </Card>
         <Card className="shadow-lg rounded-xl">
           <CardHeader>
             <CardTitle className="font-headline text-foreground">Quick Actions</CardTitle>
-             <CardDescription>Commonly used actions.</CardDescription>
+             <CardDescription>Access common tasks quickly.</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col space-y-3">
              {quickActions.map((action) => (
                 <Link href={action.href} key={action.label} passHref legacyBehavior>
-                    <Button variant="outline" className="w-full justify-start p-3 text-left flex items-center gap-2 hover:bg-accent/50 transition-colors">
-                        <action.icon className="h-5 w-5 text-primary mr-2" />
-                        <span>{action.label}</span>
+                    <Button variant="outline" className="w-full h-auto justify-start p-3 text-left flex items-start gap-3 hover:bg-accent/10 transition-colors group">
+                        <action.icon className="h-6 w-6 text-primary mt-1 transition-transform group-hover:scale-110" />
+                        <div className="flex-1">
+                            <span className="font-medium text-foreground">{action.label}</span>
+                            <p className="text-xs text-muted-foreground">{action.description}</p>
+                        </div>
                     </Button>
                 </Link>
             ))}
+             <Link href="/managers" passHref legacyBehavior>
+                <Button variant="outline" className="w-full h-auto justify-start p-3 text-left flex items-start gap-3 hover:bg-accent/10 transition-colors group">
+                    <Users className="h-6 w-6 text-primary mt-1 transition-transform group-hover:scale-110" />
+                    <div className="flex-1">
+                        <span className="font-medium text-foreground">Manage Staff</span>
+                        <p className="text-xs text-muted-foreground">Administer Store Manager accounts.</p>
+                    </div>
+                </Button>
+            </Link>
           </CardContent>
         </Card>
       </div>

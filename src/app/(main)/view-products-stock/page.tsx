@@ -1,12 +1,12 @@
 
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { PackageSearch, AlertTriangle, Info } from "lucide-react"; // Added Info icon
+import { PackageSearch, AlertTriangle } from "lucide-react";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -17,37 +17,19 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
-// Future: Import Firebase functions for Firestore operations
-// import { collection, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
-// import { db, auth } from '@/lib/firebase/firebaseConfig';
+import { collection, getDocs, addDoc, serverTimestamp, query, orderBy, Timestamp } from 'firebase/firestore';
+import { db, auth } from '@/lib/firebase/firebaseConfig';
+import type { Product } from './../products/page'; // Re-using Product interface
 
 /**
- * @fileOverview Page for Store Managers to view product prices and stock levels.
+ * @fileOverview Page for Store Managers to view product prices and stock levels from Firestore.
  * This page provides read-only access to product information.
  * Managers can report issues with product details, price, or stock to the Admin.
  */
 
-interface ProductInfo {
-  id: string; // Product ID
-  name: string;
-  sku: string;
-  price: string; // Formatted display price
-  stock: number;
-  category: string;
-  imageUrl: string;
-  dataAiHint: string;
+export interface ProductInfo extends Product { // Extends Product, adding status
   status: "In Stock" | "Low Stock" | "Out of Stock";
-  unitOfMeasure: string;
-  // Future: description, hsnCode
 }
-
-// Initial dummy data. This will be replaced by Firestore data in Phase 2.
-const initialProducts: ProductInfo[] = [
-  { id: "PROD-LOCAL-001", name: "Premium Widget", sku: "PW-001", price: "₹2,080.00", stock: 150, category: "Widgets", imageUrl: "https://placehold.co/40x40.png", dataAiHint: "gadget tool", status: "In Stock", unitOfMeasure: "pcs" },
-  { id: "PROD-LOCAL-002", name: "Standard Gizmo", sku: "SG-002", price: "₹1,240.00", stock: 25, category: "Gizmos", imageUrl: "https://placehold.co/40x40.png", dataAiHint: "device item", status: "Low Stock", unitOfMeasure: "pcs" },
-  { id: "PROD-LOCAL-003", name: "Luxury Doodad", sku: "LD-003", price: "₹3,995.00", stock: 0, category: "Doodads", imageUrl: "https://placehold.co/40x40.png", dataAiHint: "object thing", status: "Out of Stock", unitOfMeasure: "box" },
-  { id: "PROD-LOCAL-004", name: "Basic Thingamajig", sku: "BT-004", price: "₹800.00", stock: 500, category: "Thingamajigs", imageUrl: "https://placehold.co/40x40.png", dataAiHint: "item gadget", status: "In Stock", unitOfMeasure: "pcs" },
-];
 
 // Zod schema for the issue report form
 const issueReportSchema = z.object({
@@ -58,11 +40,19 @@ const issueReportSchema = z.object({
 
 type IssueReportFormValues = z.infer<typeof issueReportSchema>;
 
-const LOW_STOCK_THRESHOLD = 50; // Example, could be per-product in future
+const LOW_STOCK_THRESHOLD = 50; // Example, could be per-product in future or from app settings
+
+/**
+ * Formats a number as an Indian Rupee string.
+ * @param {number} num - The number to format.
+ * @returns {string} A string representing the currency.
+ */
+const formatCurrency = (num: number): string => `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 /**
  * ViewProductsStockPage component.
- * Allows Store Managers to view product and stock information and report issues.
+ * Allows Store Managers to view product and stock information from Firestore and report issues.
+ * @returns {JSX.Element} The rendered view products/stock page.
  */
 export default function ViewProductsStockPage() {
   const [products, setProducts] = useState<ProductInfo[]>([]);
@@ -73,120 +63,81 @@ export default function ViewProductsStockPage() {
 
   const form = useForm<IssueReportFormValues>({
     resolver: zodResolver(issueReportSchema),
-    defaultValues: {
-      productId: "",
-      productName: "",
-      issueDescription: "",
-    },
+    defaultValues: { productId: "", productName: "", issueDescription: "" },
   });
 
-  /**
-   * Formats a number as an Indian Rupee string.
-   */
-  const formatCurrency = (num: number) => `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
-  /**
-   * Determines stock status based on quantity.
-   */
-  const getStatus = (stock: number): ProductInfo['status'] => {
+  const getStatus = useCallback((stock: number): ProductInfo['status'] => {
     if (stock <= 0) return "Out of Stock";
-    if (stock < LOW_STOCK_THRESHOLD) return "Low Stock"; // Use a defined threshold
+    if (stock < LOW_STOCK_THRESHOLD) return "Low Stock";
     return "In Stock";
-  };
+  }, [LOW_STOCK_THRESHOLD]); // Add dependency if threshold becomes dynamic
 
-  // Effect to load products (currently from initial data, future from Firestore)
+  const fetchProducts = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const q = query(collection(db, "products"), orderBy("name", "asc"));
+      const querySnapshot = await getDocs(q);
+      const fetchedProducts = querySnapshot.docs.map(docSnapshot => {
+        const data = docSnapshot.data();
+        return {
+          id: docSnapshot.id,
+          name: data.name,
+          sku: data.sku,
+          price: formatCurrency(data.numericPrice || 0),
+          numericPrice: data.numericPrice || 0,
+          stock: data.stock || 0,
+          category: data.category || "Other",
+          imageUrl: data.imageUrl || `https://placehold.co/40x40.png?text=${data.name.substring(0,2)}`,
+          dataAiHint: data.dataAiHint || "product item",
+          status: getStatus(data.stock || 0),
+          unitOfMeasure: data.unitOfMeasure || "pcs",
+        } as ProductInfo;
+      });
+      setProducts(fetchedProducts);
+    } catch (error) {
+      console.error("Error fetching products: ", error);
+      toast({ title: "Error", description: "Could not load product data from database.", variant: "destructive" });
+    } finally {
+      setIsLoading(false);
+    }
+  }, [toast, getStatus]);
+
   useEffect(() => {
-    // Future: Fetch products from Firestore
-    // const fetchProducts = async () => {
-    //   setIsLoading(true);
-    //   try {
-    //     const querySnapshot = await getDocs(collection(db, "products"));
-    //     const fetchedProducts = querySnapshot.docs.map(doc => {
-    //       const data = doc.data();
-    //       return {
-    //         id: doc.id,
-    //         name: data.name,
-    //         sku: data.sku,
-    //         price: formatCurrency(data.numericPrice), // Format price for display
-    //         stock: data.stock,
-    //         category: data.category,
-    //         imageUrl: data.imageUrl || "https://placehold.co/40x40.png",
-    //         dataAiHint: data.dataAiHint || "product",
-    //         status: getStatus(data.stock),
-    //         unitOfMeasure: data.unitOfMeasure,
-    //       } as ProductInfo;
-    //     });
-    //     setProducts(fetchedProducts);
-    //   } catch (error) {
-    //     console.error("Error fetching products: ", error);
-    //     toast({ title: "Error", description: "Could not load product data.", variant: "destructive" });
-    //   } finally {
-    //     setIsLoading(false);
-    //   }
-    // };
-    // fetchProducts();
+    fetchProducts();
+  }, [fetchProducts]);
 
-    // Phase 1: Use local data
-    setProducts(initialProducts.map(p => ({...p, status: getStatus(p.stock)})));
-    setIsLoading(false);
-  }, [toast]);
-
-  /**
-   * Opens the "Report Issue" dialog and pre-fills product information.
-   */
   const openReportIssueDialog = (product: ProductInfo) => {
     setProductToReport(product);
-    form.reset({
-        productId: product.id,
-        productName: product.name,
-        issueDescription: ""
-    });
+    form.reset({ productId: product.id, productName: product.name, issueDescription: "" });
     setIsReportIssueDialogOpen(true);
   };
 
-  /**
-   * Handles submission of the product issue report.
-   * Phase 1: Simulates report submission.
-   * Future: Saves the report to a 'issueReports' collection in Firestore.
-   */
-  const handleReportIssueSubmit = (values: IssueReportFormValues) => {
-    // const currentUser = auth.currentUser;
-    // if (!currentUser) {
-    //   toast({ title: "Authentication Error", description: "You must be logged in to report an issue.", variant: "destructive" });
-    //   return;
-    // }
-
-    // Future: Firebase integration
-    // try {
-    //   await addDoc(collection(db, "issueReports"), {
-    //     ...values,
-    //     reportedBy: currentUser.uid, // Store manager's auth UID
-    //     reportedAt: serverTimestamp(),
-    //     status: "New", // Initial status of the report
-    //   });
-    //   toast({
-    //     title: "Issue Reported",
-    //     description: `Thank you! Your report for ${values.productName} has been sent to the Admin.`,
-    //   });
-    // } catch (error) {
-    //   console.error("Error submitting issue report: ", error);
-    //   toast({ title: "Error", description: "Failed to submit issue report.", variant: "destructive" });
-    //   return;
-    // }
-    
-    // Phase 1: Simulate report submission
-    console.log("Issue Reported (Simulated):", values);
-    toast({
-      title: "Issue Reported to Admin (Simulated)",
-      description: `Report for "${values.productName}": ${values.issueDescription}`,
-    });
-    setIsReportIssueDialogOpen(false);
-    setProductToReport(null);
-    form.reset();
+  const handleReportIssueSubmit = async (values: IssueReportFormValues) => {
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      toast({ title: "Authentication Error", description: "You must be logged in to report an issue.", variant: "destructive" });
+      return;
+    }
+    try {
+      await addDoc(collection(db, "issueReports"), {
+        ...values,
+        reportedByUid: currentUser.uid,
+        reportedByEmail: currentUser.email,
+        reportedAt: serverTimestamp(),
+        status: "New", // Initial status of the report (e.g., New, Investigating, Resolved)
+      });
+      toast({ title: "Issue Reported", description: `Thank you! Your report for ${values.productName} has been sent to the Admin.` });
+      setIsReportIssueDialogOpen(false);
+      setProductToReport(null);
+      form.reset();
+    } catch (error) {
+      console.error("Error submitting issue report: ", error);
+      toast({ title: "Error", description: "Failed to submit issue report to database.", variant: "destructive" });
+    }
   };
 
   if (isLoading) {
-    return <PageHeader title="View Products & Stock" description="Loading product data..." icon={PackageSearch} />;
+    return <PageHeader title="View Products & Stock" description="Loading product data from database..." icon={PackageSearch} />;
   }
 
   return (
@@ -197,42 +148,27 @@ export default function ViewProductsStockPage() {
         icon={PackageSearch}
       />
 
-      {/* Report Issue Dialog */}
-      <Dialog open={isReportIssueDialogOpen} onOpenChange={(isOpen) => {
-          setIsReportIssueDialogOpen(isOpen);
-          if (!isOpen) { setProductToReport(null); form.reset(); }
-        }}>
+      <Dialog open={isReportIssueDialogOpen} onOpenChange={(isOpen) => { if(!isOpen) { setProductToReport(null); form.reset(); } setIsReportIssueDialogOpen(isOpen);}}>
         <DialogContent className="sm:max-w-[480px]">
           <DialogHeader>
             <DialogTitle>Report Issue for &quot;{productToReport?.name}&quot;</DialogTitle>
-            <DialogDescription>
-              Spotted an error in product details, price, or stock for SKU: {productToReport?.sku}? Let the Admin know.
-            </DialogDescription>
+            <DialogDescription>Spotted an error in product details, price, or stock for SKU: {productToReport?.sku}? Let the Admin know.</DialogDescription>
           </DialogHeader>
           <Form {...form}>
             <form onSubmit={form.handleSubmit(handleReportIssueSubmit)} className="space-y-4 py-2">
-              <FormField
-                control={form.control}
-                name="issueDescription"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Describe the Issue</FormLabel>
-                    <FormControl>
-                      <Textarea placeholder="e.g., The price shown is incorrect, or stock level seems wrong compared to physical count." {...field} rows={4} />
-                    </FormControl>
+              <FormField control={form.control} name="issueDescription" render={({ field }) => (
+                  <FormItem><FormLabel>Describe the Issue</FormLabel>
+                    <FormControl><Textarea placeholder="e.g., The price shown is incorrect, or stock level seems wrong..." {...field} rows={4} /></FormControl>
                     <FormMessage />
-                  </FormItem>
-                )}
-              />
+                  </FormItem>)} />
               <DialogFooter className="pt-4">
-                 <DialogClose asChild><Button type="button" variant="outline" onClick={() => { setIsReportIssueDialogOpen(false); setProductToReport(null); form.reset();}}>Cancel</Button></DialogClose>
+                 <DialogClose asChild><Button type="button" variant="outline">Cancel</Button></DialogClose>
                 <Button type="submit">Submit Report</Button>
               </DialogFooter>
             </form>
           </Form>
         </DialogContent>
       </Dialog>
-
 
       <Tabs defaultValue="price_list" className="w-full">
         <TabsList className="grid w-full grid-cols-2 sm:w-[400px] mb-4">
@@ -241,33 +177,20 @@ export default function ViewProductsStockPage() {
         </TabsList>
         <TabsContent value="price_list">
           <Card className="shadow-lg rounded-xl">
-            <CardHeader>
-              <CardTitle className="font-headline text-foreground">Product Price List</CardTitle>
-              <CardDescription>Complete list of products and their current selling prices.</CardDescription>
-            </CardHeader>
+            <CardHeader><CardTitle className="font-headline text-foreground">Product Price List</CardTitle><CardDescription>Complete list of products and their current selling prices.</CardDescription></CardHeader>
             <CardContent>
               <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[80px]">Image</TableHead>
-                    <TableHead>Product Name</TableHead>
-                    <TableHead>SKU</TableHead>
-                    <TableHead>Category</TableHead>
-                    <TableHead>Unit</TableHead>
-                    <TableHead className="text-right">Price</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
+                <TableHeader><TableRow>
+                    <TableHead className="w-[80px]">Image</TableHead><TableHead>Product Name</TableHead>
+                    <TableHead>SKU</TableHead><TableHead>Category</TableHead><TableHead>Unit</TableHead>
+                    <TableHead className="text-right">Price</TableHead><TableHead className="text-right">Actions</TableHead>
+                </TableRow></TableHeader>
                 <TableBody>
                   {products.map((product) => (
                     <TableRow key={product.id + "-price"}>
-                      <TableCell>
-                        <Image src={product.imageUrl} alt={product.name} width={40} height={40} className="rounded-md object-cover" data-ai-hint={product.dataAiHint} />
-                      </TableCell>
-                      <TableCell className="font-medium">{product.name}</TableCell>
-                      <TableCell>{product.sku}</TableCell>
-                      <TableCell>{product.category}</TableCell>
-                      <TableCell>{product.unitOfMeasure}</TableCell>
+                      <TableCell><Image src={product.imageUrl} alt={product.name} width={40} height={40} className="rounded-md object-cover" data-ai-hint={product.dataAiHint} /></TableCell>
+                      <TableCell className="font-medium">{product.name}</TableCell><TableCell>{product.sku}</TableCell>
+                      <TableCell>{product.category}</TableCell><TableCell>{product.unitOfMeasure}</TableCell>
                       <TableCell className="text-right font-semibold">{product.price}</TableCell>
                       <TableCell className="text-right">
                         <Button variant="outline" size="sm" onClick={() => openReportIssueDialog(product)} title={`Report issue with ${product.name}`}>
@@ -278,50 +201,30 @@ export default function ViewProductsStockPage() {
                   ))}
                 </TableBody>
               </Table>
-               {products.length === 0 && !isLoading && (
-                <div className="text-center py-8 text-muted-foreground">No products found.</div>
-               )}
+               {products.length === 0 && !isLoading && (<div className="text-center py-8 text-muted-foreground">No products found.</div>)}
             </CardContent>
           </Card>
         </TabsContent>
         <TabsContent value="stock_list">
           <Card className="shadow-lg rounded-xl">
-            <CardHeader>
-              <CardTitle className="font-headline text-foreground">Current Stock Levels</CardTitle>
-              <CardDescription>View current inventory status for all products.</CardDescription>
-            </CardHeader>
+            <CardHeader><CardTitle className="font-headline text-foreground">Current Stock Levels</CardTitle><CardDescription>View current inventory status for all products.</CardDescription></CardHeader>
             <CardContent>
               <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[80px]">Image</TableHead>
-                    <TableHead>Product Name</TableHead>
-                    <TableHead>SKU</TableHead>
-                    <TableHead>Unit</TableHead>
-                    <TableHead className="text-right">Current Stock</TableHead>
-                    <TableHead className="text-center">Status</TableHead>
-                     <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
+                <TableHeader><TableRow>
+                    <TableHead className="w-[80px]">Image</TableHead><TableHead>Product Name</TableHead>
+                    <TableHead>SKU</TableHead><TableHead>Unit</TableHead>
+                    <TableHead className="text-right">Current Stock</TableHead><TableHead className="text-center">Status</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                </TableRow></TableHeader>
                 <TableBody>
                   {products.map((item) => (
                     <TableRow key={item.id + "-stock"}>
-                      <TableCell>
-                        <Image src={item.imageUrl} alt={item.name} width={40} height={40} className="rounded-md object-cover" data-ai-hint={item.dataAiHint} />
-                      </TableCell>
-                      <TableCell className="font-medium">{item.name}</TableCell>
-                      <TableCell>{item.sku}</TableCell>
-                      <TableCell>{item.unitOfMeasure}</TableCell>
-                      <TableCell className="text-right font-semibold">{item.stock}</TableCell>
+                      <TableCell><Image src={item.imageUrl} alt={item.name} width={40} height={40} className="rounded-md object-cover" data-ai-hint={item.dataAiHint} /></TableCell>
+                      <TableCell className="font-medium">{item.name}</TableCell><TableCell>{item.sku}</TableCell>
+                      <TableCell>{item.unitOfMeasure}</TableCell><TableCell className="text-right font-semibold">{item.stock}</TableCell>
                       <TableCell className="text-center">
-                        <Badge 
-                          variant={item.status === "In Stock" ? "default" : item.status === "Low Stock" ? "secondary" : "destructive"}
-                           className={
-                            item.status === "In Stock" ? "bg-accent text-accent-foreground" : 
-                            item.status === "Low Stock" ? "bg-yellow-400 text-yellow-900 dark:bg-yellow-600 dark:text-yellow-100" : 
-                            "" // destructive variant handles out of stock
-                          }
-                        >
+                        <Badge variant={item.status === "In Stock" ? "default" : item.status === "Low Stock" ? "secondary" : "destructive"}
+                           className={item.status === "In Stock" ? "bg-accent text-accent-foreground" : item.status === "Low Stock" ? "bg-yellow-400 text-yellow-900 dark:bg-yellow-600 dark:text-yellow-100" : ""}>
                           {item.status}
                         </Badge>
                       </TableCell>
@@ -334,23 +237,11 @@ export default function ViewProductsStockPage() {
                   ))}
                 </TableBody>
               </Table>
-              {products.length === 0 && !isLoading && (
-                <div className="text-center py-8 text-muted-foreground">No products found.</div>
-               )}
+              {products.length === 0 && !isLoading && (<div className="text-center py-8 text-muted-foreground">No products found.</div>)}
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
-      {/* 
-        Phase 1 Data Storage: Product data is local. Issue reports are simulated.
-        Phase 2 (Future-Ready):
-        - Product and stock data will be fetched from the 'products' collection in Firebase Firestore.
-        - This page provides a read-only view. Edits are done by Admins on the '/products' or '/stock' pages.
-        - "Report Issue" action would:
-          1. Create a new document in an 'issueReports' collection in Firestore.
-          2. Store productId, productName, issueDescription, reportedBy (manager UID), reportedAt (serverTimestamp), status ('New').
-          3. Admins would have a separate interface (or notifications) to review and address these reports.
-      */}
     </>
   );
 }
