@@ -32,7 +32,8 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Button } from "../ui/button";
-import { createClient } from '@/lib/supabase/client'; // Import Supabase client
+import { auth } from '@/lib/firebase/firebaseConfig'; // Import Firebase auth
+import { signOut, onAuthStateChanged } from 'firebase/auth';
 
 interface NavItem {
   href: string;
@@ -73,66 +74,78 @@ const deleteCookie = (name: string) => {
   }
 };
 
+const setCookie = (name: string, value: string, days: number) => {
+    let expires = "";
+    if (days) {
+        const date = new Date();
+        date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
+        expires = "; expires=" + date.toUTCString();
+    }
+    if (typeof document !== 'undefined') {
+        document.cookie = name + "=" + (value || "") + expires + "; path=/";
+    }
+};
+
+
 export function SidebarNav() {
   const pathname = usePathname();
   const router = useRouter();
   const { open } = useSidebar();
   const [userRole, setUserRole] = useState<string | undefined>(undefined);
   const [mounted, setMounted] = useState(false);
-  const supabase = createClient();
 
   useEffect(() => {
     setMounted(true); 
-    const role = getCookie('userRole');
-    setUserRole(role);
+    const roleFromCookie = getCookie('userRole');
+    setUserRole(roleFromCookie);
 
-    const { data: authListener } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        if (event === 'SIGNED_OUT' || event === 'USER_DELETED') {
-          deleteCookie('userRole');
-          router.push('/login');
-          router.refresh();
-        } else if (event === 'SIGNED_IN') {
-           // Role should be set during login, just refresh if needed
-           const currentRole = getCookie('userRole');
-           if (!currentRole && session?.user?.email) {
-             // Attempt to re-set role cookie if missing, based on email
-             let newRole = '';
-             if (session.user.email.toLowerCase().includes('admin@')) newRole = 'admin';
-             else if (session.user.email.toLowerCase().includes('manager@')) newRole = 'store_manager';
-             
-             if (newRole) {
-                const setCookie = (name: string, value: string, days: number) => {
-                    let expires = "";
-                    if (days) {
-                        const date = new Date();
-                        date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
-                        expires = "; expires=" + date.toUTCString();
-                    }
-                    document.cookie = name + "=" + (value || "") + expires + "; path=/";
-                };
-                setCookie('userRole', newRole, 1);
-                setUserRole(newRole);
-             }
-           }
-           router.refresh();
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (!user) { // If Firebase user is logged out
+        deleteCookie('userRole');
+        setUserRole(undefined);
+        // Middleware should handle redirect, but can add router.push('/login') here if needed as a fallback
+        if (pathname !== '/login') { // Avoid redirect loop if already on login
+            router.push('/login');
+        }
+      } else {
+        // User is signed in, ensure role cookie is still set or re-set it
+        const currentRole = getCookie('userRole');
+        if (!currentRole && user.email) {
+            let newRole = '';
+            if (user.email.toLowerCase().includes('admin@')) newRole = 'admin';
+            else if (user.email.toLowerCase().includes('manager@')) newRole = 'store_manager';
+            
+            if (newRole) {
+               setCookie('userRole', newRole, 1);
+               setUserRole(newRole);
+            }
+        } else if (currentRole) {
+            setUserRole(currentRole);
         }
       }
-    );
+    });
+
     return () => {
-      authListener?.subscription.unsubscribe();
+        unsubscribe();
     };
 
-  }, [router, supabase.auth]);
+  }, [router, pathname]);
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
-    deleteCookie('userRole'); // Ensure role cookie is cleared
-    router.push('/login');
-    router.refresh(); // Important to update server session state
+    try {
+      await signOut(auth);
+      deleteCookie('userRole');
+      setUserRole(undefined); // Clear local state
+      router.push('/login');
+      // router.refresh(); // May not be strictly necessary, Firebase state change should trigger UI updates
+    } catch (error) {
+      console.error("Error signing out: ", error);
+      // Optionally show a toast error
+    }
   };
 
   if (!mounted) {
+    // To prevent hydration mismatch, often good to return null or a skeleton here
     return null; 
   }
 

@@ -8,9 +8,10 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Building } from 'lucide-react';
-import { createClient } from '@/lib/supabase/client'; // Import Supabase client
+import { auth } from '@/lib/firebase/firebaseConfig'; // Import Firebase auth
+import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
 
-// Basic cookie utility (still needed for userRole)
+// Basic cookie utility
 const setCookie = (name: string, value: string, days: number) => {
   let expires = "";
   if (days) {
@@ -25,53 +26,52 @@ const setCookie = (name: string, value: string, days: number) => {
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState(''); // Changed from userId to email
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-
-  const supabase = createClient();
 
   const handleLogin = async () => {
     setError('');
     setLoading(true);
 
-    const { data, error: signInError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
 
-    setLoading(false);
+      if (user) {
+        // Determine role based on email (temporary simple logic)
+        let userRole = '';
+        if (user.email?.toLowerCase().includes('admin@')) {
+          userRole = 'admin';
+        } else if (user.email?.toLowerCase().includes('manager@')) {
+          userRole = 'store_manager';
+        } else {
+          setError('User role could not be determined. Please contact support.');
+          await signOut(auth); // Sign out if role is undetermined
+          setLoading(false);
+          return;
+        }
 
-    if (signInError) {
-      setError(signInError.message || 'Invalid login credentials.');
-      return;
-    }
+        setCookie('userRole', userRole, 1); // Store role in a cookie for UI
 
-    if (data.user) {
-      // Determine role based on email (temporary simple logic)
-      // In a real app, use Supabase custom claims or a profiles table
-      let userRole = '';
-      if (data.user.email?.toLowerCase().includes('admin@')) {
-        userRole = 'admin';
-      } else if (data.user.email?.toLowerCase().includes('manager@')) {
-        userRole = 'store_manager';
+        if (userRole === 'admin') {
+          router.push('/');
+        } else if (userRole === 'store_manager') {
+          router.push('/store-dashboard');
+        }
+        // router.refresh(); // May not be needed if middleware handles redirection correctly based on cookie
       } else {
-        setError('User role could not be determined. Please contact support.');
-        await supabase.auth.signOut(); // Sign out if role is undetermined
-        return;
+        setError('An unexpected error occurred during login.');
       }
-
-      setCookie('userRole', userRole, 1); // Store role in a cookie for UI
-
-      if (userRole === 'admin') {
-        router.push('/');
-      } else if (userRole === 'store_manager') {
-        router.push('/store-dashboard');
+    } catch (signInError: any) {
+      if (signInError.code === 'auth/invalid-credential' || signInError.code === 'auth/user-not-found' || signInError.code === 'auth/wrong-password') {
+        setError('Invalid email or password.');
+      } else {
+        setError(signInError.message || 'Failed to login. Please try again.');
       }
-      router.refresh(); // Refresh to update server-side session state for middleware
-    } else {
-      setError('An unexpected error occurred during login.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -87,7 +87,7 @@ export default function LoginPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="email">Email</Label> {/* Changed from User ID to Email */}
+            <Label htmlFor="email">Email</Label>
             <Input 
               id="email" 
               type="email"

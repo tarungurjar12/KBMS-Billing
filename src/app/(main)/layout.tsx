@@ -2,11 +2,21 @@
 "use client"; 
 
 import React, { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { SidebarProvider, Sidebar, SidebarInset, SidebarTrigger, SidebarRail } from '@/components/ui/sidebar';
 import { SidebarNav } from '@/components/layout/sidebar-nav';
 import { Skeleton } from '@/components/ui/skeleton';
-import { createClient } from '@/lib/supabase/client';
+import { auth } from '@/lib/firebase/firebaseConfig';
+import { onAuthStateChanged } from 'firebase/auth';
+
+// Basic cookie utility
+const getCookie = (name: string): string | undefined => {
+  if (typeof window === 'undefined') return undefined;
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  if (parts.length === 2) return parts.pop()?.split(';').shift();
+  return undefined;
+};
 
 export default function MainAppLayout({
   children,
@@ -14,37 +24,32 @@ export default function MainAppLayout({
   children: React.ReactNode;
 }) {
   const router = useRouter();
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
-  const supabase = createClient();
+  const pathname = usePathname();
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null); // null means loading
 
   useEffect(() => {
-    const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session) {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
         setIsAuthenticated(true);
+        // Role check could also happen here if needed, or rely on cookie set at login
+        const userRole = getCookie('userRole');
+        if (!userRole && pathname !== '/login') { // If somehow auth state is true but no role, redirect
+            router.push('/login');
+        }
       } else {
         setIsAuthenticated(false);
         // Middleware should handle actual redirection. 
-        // This is more of a client-side state update.
-        // router.push('/login'); 
-      }
-    };
-
-    checkSession();
-
-    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
-      if (session) {
-        setIsAuthenticated(true);
-      } else {
-        setIsAuthenticated(false);
-        router.push('/login'); // Redirect if session is lost client-side
+        // This is more of a client-side state update or fallback.
+        if (pathname !== '/login') {
+             router.push('/login');
+        }
       }
     });
 
     return () => {
-      authListener?.subscription.unsubscribe();
+      unsubscribe();
     };
-  }, [router, supabase.auth]);
+  }, [router, pathname]);
 
   if (isAuthenticated === null) {
     return (
@@ -64,9 +69,18 @@ export default function MainAppLayout({
     );
   }
   
-  // If not authenticated, middleware should ideally handle this.
-  // This check can be a fallback, or if middleware fails, but primarily rely on middleware for redirects.
-  // If isAuthenticated is false and we're on the client, router.push('/login') would have been called by onAuthStateChange.
+  // If not authenticated, middleware should have redirected.
+  // This client-side check is a fallback.
+  if (isAuthenticated === false && pathname !== '/login') {
+      // router.push('/login') would have been called by onAuthStateChanged
+      // Or we can return null / specific loading state if preferred before redirect fully happens
+      return (
+         <div className="flex min-h-screen w-full items-center justify-center">
+            <p>Redirecting to login...</p>
+         </div>
+      );
+  }
+
 
   return (
     <SidebarProvider defaultOpen>
