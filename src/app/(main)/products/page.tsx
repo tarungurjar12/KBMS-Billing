@@ -6,8 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PageHeader } from "@/components/page-header";
-import { Package, PlusCircle, MoreHorizontal, Edit, Trash2, PackageSearch } from "lucide-react"; // Added PackageSearch
-import Image from "next/image"; // Next.js Image component for optimized images
+import { Package, PlusCircle, MoreHorizontal, Edit, Trash2, PackageSearch, FileWarning } from "lucide-react"; 
+import Image from "next/image"; 
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -95,14 +95,19 @@ export default function ProductsPage() {
 
   const { toast } = useToast();
 
+  // React Hook Form setup
   const form = useForm<ProductFormValues>({
     resolver: zodResolver(productSchema),
     defaultValues: { name: "", sku: "", category: PRODUCT_CATEGORIES[0] || "", unitOfMeasure: UNITS_OF_MEASURE[0] || "pcs", numericPrice: 0, stock: 0, dataAiHint: "", description: "" },
   });
 
+  /**
+   * Fetches product list from Firestore, ordered by name.
+   */
   const fetchProducts = useCallback(async () => {
     setIsLoading(true);
     try {
+      // Firestore Index Required: 'products' collection, orderBy 'name' (ASC)
       const q = query(collection(db, "products"), orderBy("name", "asc"));
       const querySnapshot = await getDocs(q);
       const fetchedProducts = querySnapshot.docs.map(docSnapshot => {
@@ -118,7 +123,7 @@ export default function ProductsPage() {
              category: data.category || "Other",
              unitOfMeasure: data.unitOfMeasure || "pcs",
              imageUrl: data.imageUrl || `https://placehold.co/60x60.png?text=${encodeURIComponent(data.name.substring(0,2).toUpperCase())}`,
-             dataAiHint: data.dataAiHint || "product item",
+             dataAiHint: data.dataAiHint || "product item", // Ensure a default AI hint
              createdAt: data.createdAt,
              updatedAt: data.updatedAt,
          } as Product;
@@ -126,7 +131,16 @@ export default function ProductsPage() {
       setProductList(fetchedProducts);
     } catch (error: any) {
       console.error("Error fetching products: ", error);
-      toast({ title: "Database Error", description: `Could not load products: ${error.message}`, variant: "destructive" });
+       if (error.code === 'failed-precondition') {
+         toast({
+            title: "Database Index Required",
+            description: `A query for products failed. Please create the required Firestore index for 'products' collection (orderBy 'name' ascending). Check your browser's developer console for a Firebase link to create it, or visit the Firestore indexes page in your Firebase console.`,
+            variant: "destructive",
+            duration: 15000,
+        });
+      } else {
+        toast({ title: "Database Error", description: `Could not load products: ${error.message}`, variant: "destructive" });
+      }
     } finally {
       setIsLoading(false);
     }
@@ -136,28 +150,35 @@ export default function ProductsPage() {
     fetchProducts();
   }, [fetchProducts]);
 
+  // Resets form when dialog opens for add/edit
   useEffect(() => {
-    if (editingProduct && isFormDialogOpen) {
-      form.reset({
-        name: editingProduct.name,
-        sku: editingProduct.sku,
-        description: editingProduct.description || "",
-        category: editingProduct.category,
-        unitOfMeasure: editingProduct.unitOfMeasure,
-        numericPrice: editingProduct.numericPrice,
-        stock: editingProduct.stock,
-        dataAiHint: editingProduct.dataAiHint,
-      });
-    } else if (isFormDialogOpen && !editingProduct) { 
-      form.reset({ name: "", sku: "", description: "", category: PRODUCT_CATEGORIES[0] || "", unitOfMeasure: UNITS_OF_MEASURE[0] || "pcs", numericPrice: 0, stock: 0, dataAiHint: "" });
+    if (isFormDialogOpen) {
+      if (editingProduct) {
+        form.reset({
+          name: editingProduct.name,
+          sku: editingProduct.sku,
+          description: editingProduct.description || "",
+          category: editingProduct.category,
+          unitOfMeasure: editingProduct.unitOfMeasure,
+          numericPrice: editingProduct.numericPrice,
+          stock: editingProduct.stock,
+          dataAiHint: editingProduct.dataAiHint,
+        });
+      } else { 
+        form.reset({ name: "", sku: "", description: "", category: PRODUCT_CATEGORIES[0] || "", unitOfMeasure: UNITS_OF_MEASURE[0] || "pcs", numericPrice: 0, stock: 0, dataAiHint: "" });
+      }
     }
   }, [editingProduct, isFormDialogOpen, form]);
 
+  /**
+   * Handles submission of the product form (for both add and edit).
+   * @param {ProductFormValues} values - The validated form values.
+   */
   const handleFormSubmit = async (values: ProductFormValues) => {
     try {
       const productData = { 
          ...values, 
-         imageUrl: `https://placehold.co/100x100.png?text=${encodeURIComponent(values.name.substring(0,2).toUpperCase())}`, // Placeholder, AI hint is for future image search
+         imageUrl: `https://placehold.co/100x100.png?text=${encodeURIComponent(values.name.substring(0,2).toUpperCase())}`, 
       };
 
       if (editingProduct) { 
@@ -171,6 +192,7 @@ export default function ProductsPage() {
       fetchProducts(); 
       setIsFormDialogOpen(false); 
       setEditingProduct(null); 
+      form.reset(); // Explicitly reset form
     } catch (error: any) {
       console.error("Error saving product: ", error);
       toast({ title: "Save Error", description: `Failed to save product: ${error.message}`, variant: "destructive" });
@@ -334,7 +356,7 @@ export default function ProductsPage() {
             </Table>
           ) : (
              <div className="flex flex-col items-center justify-center py-10 text-center">
-                <PackageSearch className="h-16 w-16 text-muted-foreground mb-4" />
+                <FileWarning className="h-16 w-16 text-muted-foreground mb-4" /> {/* Changed icon */}
                 <p className="text-xl font-semibold text-muted-foreground">No Products Found</p>
                 <p className="text-sm text-muted-foreground mb-6">Get started by adding your first product to the database.</p>
                 <Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add New Product</Button>

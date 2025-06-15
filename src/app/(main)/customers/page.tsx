@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PageHeader } from "@/components/page-header";
-import { Users, PlusCircle, MoreHorizontal, Edit, Trash2, Eye, CreditCard, UserPlus } from "lucide-react"; // Added UserPlus
+import { Users, PlusCircle, MoreHorizontal, Edit, Trash2, Eye, CreditCard, UserPlus } from "lucide-react"; 
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -45,6 +45,7 @@ export interface Customer {
   address?: string; 
   createdAt?: Timestamp; 
   createdBy?: string; // UID of the user who created the customer
+  updatedAt?: Timestamp; 
 }
 
 // Zod schema for customer form validation
@@ -101,6 +102,7 @@ export default function CustomersPage() {
   const fetchCustomers = useCallback(async () => {
     setIsLoading(true);
     try {
+      // Firestore Index Required: 'customers' collection, orderBy 'name' (ASC)
       const q = query(collection(db, "customers"), orderBy("name", "asc"));
       const querySnapshot = await getDocs(q);
       const fetchedCustomers = querySnapshot.docs.map(docSnapshot => {
@@ -115,12 +117,22 @@ export default function CustomersPage() {
               totalSpent: data.totalSpent || "₹0.00", 
               createdAt: data.createdAt,
               createdBy: data.createdBy,
+              updatedAt: data.updatedAt,
           } as Customer;
       });
       setCustomerList(fetchedCustomers);
     } catch (error: any) {
       console.error("Error fetching customers: ", error);
-      toast({ title: "Database Error", description: `Could not load customers: ${error.message}`, variant: "destructive" });
+      if (error.code === 'failed-precondition') {
+         toast({
+            title: "Database Index Required",
+            description: `A query for customers failed. Please create the required Firestore index for 'customers' collection (orderBy 'name' ascending). Check your browser's developer console for a Firebase link to create it, or visit the Firestore indexes page in your Firebase console.`,
+            variant: "destructive",
+            duration: 15000,
+        });
+      } else {
+        toast({ title: "Database Error", description: `Could not load customers: ${error.message}`, variant: "destructive" });
+      }
     } finally {
       setIsLoading(false);
     }
@@ -131,14 +143,19 @@ export default function CustomersPage() {
     fetchCustomers();
   }, [fetchCustomers]);
 
+  // Handles 'addNew=true' query parameter to open the dialog on page load.
   useEffect(() => {
     if (searchParams.get('addNew') === 'true') {
       setEditingCustomer(null); // Ensure it's an "add" operation
+      form.reset({ name: "", email: "", phone: "", gstin: "", address: "" });
       setIsFormDialogOpen(true);
+       // Remove query param after opening dialog to prevent re-triggering on future renders
+      router.replace('/customers', { scroll: false });
     }
-  }, [searchParams, router]);
+  }, [searchParams, router, form]);
 
 
+  // Resets form when dialog opens for add/edit.
   useEffect(() => {
     if (isFormDialogOpen) {
       if (editingCustomer) {
@@ -157,8 +174,8 @@ export default function CustomersPage() {
 
   const handleFormSubmit = async (values: CustomerFormValues) => {
     const currentFirebaseUser = auth.currentUser;
-    if (!currentFirebaseUser && !editingCustomer) { // For new customers, require auth
-        toast({ title: "Authentication Error", description: "You must be logged in to add a customer.", variant: "destructive"});
+    if (!currentFirebaseUser) { 
+        toast({ title: "Authentication Error", description: "You must be logged in to add or edit a customer.", variant: "destructive"});
         return;
     }
     try {
@@ -174,7 +191,7 @@ export default function CustomersPage() {
           totalSpent: "₹0.00", 
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
-          createdBy: currentFirebaseUser?.uid || "unknown", // Store UID of user who created the customer
+          createdBy: currentFirebaseUser.uid, 
         };
         await addDoc(collection(db, "customers"), newCustomerData);
         toast({ title: "Customer Added", description: `${values.name} has been successfully added.` });
@@ -183,9 +200,6 @@ export default function CustomersPage() {
       form.reset();
       setIsFormDialogOpen(false);
       setEditingCustomer(null);
-      if (searchParams.get('addNew') === 'true') {
-            router.replace('/customers', { scroll: false }); // Remove query param
-      }
     } catch (error: any) {
       console.error("Error saving customer: ", error);
       toast({ title: "Save Error", description: `Failed to save customer: ${error.message}`, variant: "destructive" });
@@ -231,10 +245,8 @@ export default function CustomersPage() {
   };
 
   const handleUpdatePaymentStatus = (customer: Customer) => {
-    // This would ideally navigate to the payments page, pre-filtered for this customer
-    // or open a specific dialog for payment updates related to this customer's invoices.
     router.push(`/payments?type=customer&entityId=${customer.id}&entityName=${encodeURIComponent(customer.name)}`);
-    toast({ title: "Manage Payments", description: `Redirecting to payments for ${customer.name}.` });
+    // Toast can be shown on the payments page after navigation based on params.
   };
 
   if (isLoading) {
@@ -262,7 +274,7 @@ export default function CustomersPage() {
             setIsFormDialogOpen(false);
             setEditingCustomer(null);
             form.reset(); 
-            if (searchParams.get('addNew') === 'true') {
+            if (searchParams.get('addNew') === 'true') { // Clean up URL if dialog was opened via query param
                  router.replace('/customers', { scroll: false });
             }
           } else { 

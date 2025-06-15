@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { PageHeader } from "@/components/page-header";
-import { Truck, PlusCircle, MoreHorizontal, Edit, Trash2, Eye, Banknote } from "lucide-react";
+import { Truck, PlusCircle, MoreHorizontal, Edit, Trash2, Eye, Banknote, FileWarning } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -19,7 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { collection, addDoc, getDocs, doc, updateDoc, deleteDoc, serverTimestamp, query, orderBy, Timestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase/firebaseConfig';
-import { useRouter } from 'next/navigation'; // For navigation to payments page
+import { useRouter } from 'next/navigation'; 
 
 /**
  * @fileOverview Page for Admin to manage Seller/Supplier accounts in Firestore.
@@ -39,22 +39,21 @@ export interface Seller {
   phone: string; // Seller's phone number
   address?: string; // Optional: Seller's physical address
   gstin?: string; // Optional: Seller's GST Identification Number
-  bankDetails?: string; // Optional: Seller's bank account details (store securely and consider encryption if highly sensitive)
-  purchaseTerms?: string; // Optional: Agreed purchase terms (e.g., payment terms, delivery conditions)
-  createdAt?: Timestamp; // Firestore Timestamp of creation
-  updatedAt?: Timestamp; // Firestore Timestamp of last update
-  // Future: purchasePriceHistory (subcollection), notes, product categories supplied
+  bankDetails?: string; // Optional: Seller's bank account details
+  purchaseTerms?: string; // Optional: Agreed purchase terms
+  createdAt?: Timestamp; 
+  updatedAt?: Timestamp; 
 }
 
 // Zod schema for seller form validation
 const sellerSchema = z.object({
   name: z.string().min(3, { message: "Seller/Company name must be at least 3 characters." }),
   contactPerson: z.string().optional(),
-  email: z.string().email({ message: "Invalid email address." }).optional().or(z.literal('')), // Allows empty string or valid email
+  email: z.string().email({ message: "Invalid email address." }).optional().or(z.literal('')), 
   phone: z.string().min(10, { message: "Phone number must be at least 10 digits." }).regex(/^\d+[\d\s-]*$/, { message: "Phone number must contain valid characters (digits, spaces, hyphens)."}),
   address: z.string().optional(),
   gstin: z.string().optional().refine(val => !val || /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(val), {
-    message: "Invalid GSTIN format.", // Basic GSTIN format validation
+    message: "Invalid GSTIN format.", 
   }),
   bankDetails: z.string().optional(),
   purchaseTerms: z.string().optional(),
@@ -69,7 +68,7 @@ type SellerFormValues = z.infer<typeof sellerSchema>;
  * @returns {JSX.Element} The rendered manage sellers page.
  */
 export default function ManageSellersPage() {
-  const router = useRouter(); // Initialize router for navigation
+  const router = useRouter(); 
   const [sellers, setSellers] = useState<Seller[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isFormDialogOpen, setIsFormDialogOpen] = useState(false);
@@ -91,29 +90,40 @@ export default function ManageSellersPage() {
   const fetchSellers = useCallback(async () => {
     setIsLoading(true);
     try {
+      // Firestore Index Required: 'sellers' collection, orderBy 'name' (ASC)
       const q = query(collection(db, "sellers"), orderBy("name", "asc"));
       const querySnapshot = await getDocs(q);
       const fetchedSellers = querySnapshot.docs.map(docSnapshot => ({ id: docSnapshot.id, ...docSnapshot.data() } as Seller));
       setSellers(fetchedSellers);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error fetching sellers: ", error);
-      toast({ title: "Database Error", description: "Could not load sellers from the database. Please try again.", variant: "destructive" });
+      if (error.code === 'failed-precondition') {
+         toast({
+            title: "Database Index Required",
+            description: `A query for sellers failed. Please create the required Firestore index for 'sellers' collection (orderBy 'name' ascending). Check your browser's developer console for a Firebase link to create it, or visit the Firestore indexes page in your Firebase console.`,
+            variant: "destructive",
+            duration: 15000,
+        });
+      } else {
+        toast({ title: "Database Error", description: "Could not load sellers from the database. Please try again.", variant: "destructive" });
+      }
     } finally {
       setIsLoading(false);
     }
   }, [toast]);
 
-  // Fetch sellers when the component mounts
   useEffect(() => {
     fetchSellers();
   }, [fetchSellers]);
 
   // Effect to reset form when editingSeller or dialog state changes
   useEffect(() => {
-    if (editingSeller && isFormDialogOpen) {
-      form.reset(editingSeller);
-    } else if (isFormDialogOpen && !editingSeller) { // For "Add New"
-      form.reset({ name: "", contactPerson: "", email: "", phone: "", address: "", gstin: "", bankDetails: "", purchaseTerms: "" });
+    if (isFormDialogOpen) {
+      if (editingSeller) {
+        form.reset(editingSeller);
+      } else { 
+        form.reset({ name: "", contactPerson: "", email: "", phone: "", address: "", gstin: "", bankDetails: "", purchaseTerms: "" });
+      }
     }
   }, [editingSeller, isFormDialogOpen, form]);
 
@@ -124,95 +134,63 @@ export default function ManageSellersPage() {
    */
   const handleFormSubmit = async (values: SellerFormValues) => {
     try {
-      // Ensure email is an empty string if optional and not provided, rather than undefined
       const dataToSave = { ...values, email: values.email || "" }; 
-      if (editingSeller) { // Update existing seller
+      if (editingSeller) { 
         const sellerRef = doc(db, "sellers", editingSeller.id);
         await updateDoc(sellerRef, {...dataToSave, updatedAt: serverTimestamp()});
         toast({ title: "Seller Updated", description: `Seller "${values.name}" has been updated successfully.` });
-      } else { // Add new seller
+      } else { 
         await addDoc(collection(db, "sellers"), {...dataToSave, createdAt: serverTimestamp(), updatedAt: serverTimestamp()});
         toast({ title: "Seller Added", description: `New seller "${values.name}" has been added successfully.` });
       }
-      fetchSellers(); // Refresh the seller list
-      setIsFormDialogOpen(false); // Close the dialog
-      setEditingSeller(null); // Clear editing state
-    } catch (error) {
+      fetchSellers(); 
+      setIsFormDialogOpen(false); 
+      setEditingSeller(null); 
+      form.reset(); 
+    } catch (error: any) {
       console.error("Error saving seller: ", error);
       toast({ title: "Save Error", description: "Failed to save seller to the database. Please try again.", variant: "destructive" });
     }
   };
 
-  /**
-   * Opens the dialog for adding a new seller.
-   */
   const openAddDialog = () => {
     setEditingSeller(null);
-    // Form reset is handled by useEffect
     setIsFormDialogOpen(true);
   };
   
-  /**
-   * Opens the dialog for editing an existing seller and pre-fills the form.
-   * @param {Seller} seller - The seller to edit.
-   */
   const openEditDialog = (seller: Seller) => {
     setEditingSeller(seller);
-    // Form reset with seller data is handled by useEffect
     setIsFormDialogOpen(true);
   };
 
-  /**
-   * Opens the delete confirmation dialog for a seller.
-   * @param {Seller} seller - The seller to delete.
-   */
   const openDeleteDialog = (seller: Seller) => {
     setSellerToDelete(seller);
     setIsDeleteConfirmOpen(true);
   };
 
-  /**
-   * Confirms and executes deletion of a seller from Firestore.
-   */
   const confirmDelete = async () => {
     if (!sellerToDelete) return;
     try {
       await deleteDoc(doc(db, "sellers", sellerToDelete.id));
       toast({ title: "Seller Deleted", description: `Seller "${sellerToDelete.name}" has been deleted successfully.`, variant: "default" });
-      fetchSellers(); // Refresh the list
-    } catch (error) {
+      fetchSellers(); 
+    } catch (error: any) {
       console.error("Error deleting seller: ", error);
       toast({ title: "Deletion Error", description: "Failed to delete seller from the database. Please try again.", variant: "destructive" });
     } finally {
       setSellerToDelete(null);
-      setIsDeleteConfirmOpen(false); // Close confirmation dialog
+      setIsDeleteConfirmOpen(false); 
     }
   };
   
-  /**
-   * Placeholder for viewing purchase history related to a seller.
-   * @param {Seller} seller - The seller whose history to view.
-   */
   const handleViewPurchaseHistory = (seller: Seller) => {
     toast({ title: "View Purchase History (Placeholder)", description: `Functionality to view purchase history for ${seller.name} is planned for a future update.` });
-    // Future: router.push(`/sellers/${seller.id}/history`);
   };
   
-  /**
-   * Navigates to the Payments page to record an outgoing payment for a specific seller.
-   * Pre-fills some query parameters for the Payments page.
-   * @param {Seller} seller - The seller for whom to record a payment.
-   */
   const handleRecordOutgoingPayment = (seller: Seller) => {
     router.push(`/payments?type=supplier&entityId=${seller.id}&entityName=${encodeURIComponent(seller.name)}`);
-    // Toast notification can be shown on the Payments page after navigation if needed.
   };
 
-  /**
-   * Renders the form fields for adding or editing a seller.
-   * Used within the DialogContent.
-   * @returns {JSX.Element} The form fields.
-   */
   const renderSellerFormFields = () => (
     <>
       <FormField control={form.control} name="name" render={({ field }) => (<FormItem><FormLabel>Seller/Company Name</FormLabel><FormControl><Input placeholder="e.g., Acme Building Supplies Ltd." {...field} /></FormControl><FormMessage /></FormItem>)} />
@@ -228,7 +206,6 @@ export default function ManageSellersPage() {
     </>
   );
 
-  // Display loading state
   if (isLoading) {
     return <PageHeader title="Manage Sellers/Suppliers" description="Loading seller data from database..." icon={Truck} />;
   }
@@ -242,12 +219,11 @@ export default function ManageSellersPage() {
         actions={<Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add New Seller/Supplier</Button>} 
       />
 
-      {/* Dialog for Adding or Editing Sellers */}
       <Dialog open={isFormDialogOpen} onOpenChange={(isOpen) => { 
           if(!isOpen) { 
             setIsFormDialogOpen(false); 
             setEditingSeller(null); 
-            form.reset(); // Ensure form is reset when dialog closes
+            form.reset(); 
           } else { 
             setIsFormDialogOpen(isOpen); 
           }
@@ -260,9 +236,9 @@ export default function ManageSellersPage() {
             </DialogDescription>
           </DialogHeader>
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-4 py-2 max-h-[75vh] overflow-y-auto pr-3"> {/* Added pr-3 for scrollbar */}
+            <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-4 py-2 max-h-[75vh] overflow-y-auto pr-4">
               {renderSellerFormFields()}
-              <DialogFooter className="pt-4 sticky bottom-0 bg-background pb-2 border-t"> {/* Added border-t */}
+              <DialogFooter className="pt-4 sticky bottom-0 bg-background pb-2 border-t -mx-6 px-6"> 
                 <DialogClose asChild><Button type="button" variant="outline">Cancel</Button></DialogClose>
                 <Button type="submit" disabled={form.formState.isSubmitting}>
                   {form.formState.isSubmitting ? (editingSeller ? "Saving..." : "Adding...") : (editingSeller ? "Save Changes" : "Add Seller")}
@@ -273,7 +249,6 @@ export default function ManageSellersPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
       <AlertDialog open={isDeleteConfirmOpen} onOpenChange={(isOpen) => { if(!isOpen) setSellerToDelete(null); setIsDeleteConfirmOpen(isOpen);}}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -287,7 +262,6 @@ export default function ManageSellersPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Sellers List Table */}
       <Card className="shadow-lg rounded-xl">
         <CardHeader>
           <CardTitle className="font-headline text-foreground">Seller/Supplier List</CardTitle>
@@ -327,10 +301,16 @@ export default function ManageSellersPage() {
                     ))}
                 </TableBody>
             </Table>
-          ) : (<div className="text-center py-8 text-muted-foreground">No sellers or suppliers found. Click "Add New Seller/Supplier" to get started.</div>)}
+          ) : (
+            <div className="flex flex-col items-center justify-center py-10 text-center">
+                <FileWarning className="h-16 w-16 text-muted-foreground mb-4" />
+                <p className="text-xl font-semibold text-muted-foreground">No Sellers Found</p>
+                <p className="text-sm text-muted-foreground mb-6">Add your first seller or supplier to the database.</p>
+                <Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add New Seller/Supplier</Button>
+            </div>
+          )}
         </CardContent>
       </Card>
     </>
   );
 }
-

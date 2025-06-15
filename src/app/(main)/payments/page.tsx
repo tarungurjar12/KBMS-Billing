@@ -3,12 +3,12 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"; // Removed CardFooter as it's not used
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"; 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/page-header";
-import { CreditCard, PlusCircle, MoreHorizontal, Edit, Trash2, DollarSign } from "lucide-react"; 
+import { CreditCard, PlusCircle, MoreHorizontal, Edit, Trash2, DollarSign, FileWarning } from "lucide-react"; 
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -53,10 +53,12 @@ export interface PaymentRecord {
   updatedAt?: Timestamp;
 }
 
+// Constants for form dropdowns
 const PAYMENT_METHODS = ["Cash", "UPI", "Card", "Bank Transfer", "ACH", "Check", "Other"] as const;
 const PAYMENT_STATUSES = ["Completed", "Pending", "Failed", "Sent", "Received"] as const;
 const PAYMENT_TYPES = ["customer", "supplier"] as const;
 
+// Zod schema for payment record form validation
 const paymentRecordSchema = z.object({
   type: z.enum(PAYMENT_TYPES, { required_error: "Payment type is required." }),
   relatedEntityName: z.string().min(1, "Entity name is required."),
@@ -75,6 +77,11 @@ const paymentRecordSchema = z.object({
 
 type PaymentFormValues = z.infer<typeof paymentRecordSchema>;
 
+/**
+ * Formats a number as an Indian Rupee string.
+ * @param {number} num - The number to format.
+ * @returns {string} A string representing the currency.
+ */
 const formatCurrency = (num: number): string => `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 /**
@@ -89,6 +96,7 @@ export default function PaymentsPage() {
   const [isFormDialogOpen, setIsFormDialogOpen] = useState(false);
   const [editingPayment, setEditingPayment] = useState<PaymentRecord | null>(null);
   
+  // React Hook Form setup
   const form = useForm<PaymentFormValues>({
     resolver: zodResolver(paymentRecordSchema),
     defaultValues: { 
@@ -102,6 +110,9 @@ export default function PaymentsPage() {
     },
   });
 
+  /**
+   * Fetches all payment records from Firestore, ordered by date.
+   */
   const fetchPayments = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -119,7 +130,7 @@ export default function PaymentsPage() {
             } else if (data.isoDate instanceof Timestamp) { 
                 paymentDate = format(data.isoDate.toDate(), "MMM dd, yyyy");
             }
-        } else if (data.createdAt instanceof Timestamp) {
+        } else if (data.createdAt instanceof Timestamp) { // Fallback to createdAt for display if isoDate is missing/invalid
             paymentDate = format(data.createdAt.toDate(), "MMM dd, yyyy");
         }
         return { 
@@ -146,7 +157,7 @@ export default function PaymentsPage() {
        if (error.code === 'failed-precondition') {
         toast({
             title: "Database Index Required",
-            description: `A query for payments failed. Please create the required Firestore index for 'payments' (orderBy 'isoDate' descending). Check console for a link from Firebase or create manually. Go to: https://console.firebase.google.com/project/${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID}/firestore/indexes`,
+            description: `A query for payments failed. Please create the required Firestore index for 'payments' (orderBy 'isoDate' descending). Check your browser's developer console for a Firebase link to create it, or visit the Firestore indexes page in your Firebase console.`,
             variant: "destructive",
             duration: 15000,
         });
@@ -162,15 +173,17 @@ export default function PaymentsPage() {
     fetchPayments();
   }, [fetchPayments]);
 
+  // Resets form when dialog opens or editingPayment changes
   useEffect(() => {
     if (isFormDialogOpen) {
       if (editingPayment) {
         form.reset({
           ...editingPayment,
+          // Ensure isoDate is correctly formatted for the date input field
           isoDate: editingPayment.isoDate ? editingPayment.isoDate.split('T')[0] : new Date().toISOString().split('T')[0], 
         });
       } else {
-        form.reset({ 
+        form.reset({ // Default values for new payment
           type: "customer", 
           isoDate: new Date().toISOString().split('T')[0], 
           status: "Completed", 
@@ -186,11 +199,15 @@ export default function PaymentsPage() {
     }
   }, [editingPayment, isFormDialogOpen, form]);
 
+  /**
+   * Handles form submission for adding or editing a payment record.
+   * @param {PaymentFormValues} values - The validated form values.
+   */
   const handleFormSubmit = async (values: PaymentFormValues) => {
     try {
       const dataToSave = {
         ...values,
-        displayAmount: formatCurrency(values.amount), 
+        displayAmount: formatCurrency(values.amount), // Ensure displayAmount is also saved/updated
         updatedAt: serverTimestamp(),
       };
 
@@ -202,9 +219,10 @@ export default function PaymentsPage() {
         await addDoc(collection(db, "payments"), {...dataToSave, createdAt: serverTimestamp()});
         toast({ title: "Payment Added", description: "New payment record added successfully." });
       }
-      fetchPayments(); 
+      fetchPayments(); // Refresh the list
       setIsFormDialogOpen(false); 
       setEditingPayment(null); 
+      form.reset(); // Explicitly reset form after successful submission
     } catch (error: any) {
       console.error("Error saving payment: ", error);
       toast({ title: "Save Error", description: `Could not save payment record: ${error.message}`, variant: "destructive" });
@@ -221,12 +239,12 @@ export default function PaymentsPage() {
     setIsFormDialogOpen(true);
   };
   
-  const handleDeletePayment = async (paymentId: string) => {
-    // Future: Consider soft delete or archiving instead of hard delete for financial records.
-    // For now, it's a hard delete.
+  const handleDeletePayment = async (paymentId: string, paymentDetails: string) => {
+    // For financial records, soft delete (archiving) is often preferred over hard delete.
+    // This implementation performs a hard delete for simplicity as per current scope.
     try {
         await deleteDoc(doc(db, "payments", paymentId));
-        toast({ title: "Payment Deleted", description: "Payment record deleted successfully." });
+        toast({ title: "Payment Deleted", description: `Payment record for ${paymentDetails} deleted successfully.` });
         fetchPayments(); 
     } catch (error: any) {
         console.error("Error deleting payment: ", error);
@@ -234,6 +252,11 @@ export default function PaymentsPage() {
     }
   };
 
+  /**
+   * Determines the badge variant based on payment status.
+   * @param {PaymentRecord['status']} status - The payment status.
+   * @returns {"default" | "secondary" | "destructive" | "outline"} The badge variant.
+   */
   const getBadgeVariant = (status: PaymentRecord['status']): "default" | "secondary" | "destructive" | "outline" => {
     switch (status) {
       case "Completed":
@@ -256,6 +279,12 @@ export default function PaymentsPage() {
   const customerPayments = allPayments.filter(p => p.type === "customer");
   const supplierPayments = allPayments.filter(p => p.type === "supplier");
 
+  /**
+   * Renders a table of payment records.
+   * @param {PaymentRecord[]} payments - Array of payment records to display.
+   * @param {"customer" | "supplier"} type - The type of payments (customer or supplier).
+   * @returns {JSX.Element} The rendered table.
+   */
   const renderPaymentTable = (payments: PaymentRecord[], type: "customer" | "supplier") => (
     <Table>
       <TableHeader><TableRow>
@@ -290,7 +319,7 @@ export default function PaymentsPage() {
                 <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /><span className="sr-only">Actions for payment {payment.id}</span></Button></DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem onClick={() => openEditDialog(payment)}><Edit className="mr-2 h-4 w-4" /> Edit Record</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => handleDeletePayment(payment.id)} className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground">
+                  <DropdownMenuItem onClick={() => handleDeletePayment(payment.id, `${payment.relatedEntityName} - ${payment.displayAmount}`)} className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground">
                     <Trash2 className="mr-2 h-4 w-4" /> Delete Record
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -341,7 +370,7 @@ export default function PaymentsPage() {
               <FormField control={form.control} name="relatedEntityId" render={({ field }) => (<FormItem><FormLabel>{form.watch("type") === "customer" ? "Customer ID" : "Supplier ID"} (from database)</FormLabel><FormControl><Input placeholder={`Enter ${form.watch("type")} Firestore ID`} {...field} /></FormControl><FormMessage /></FormItem>)} />
               <FormField control={form.control} name="relatedInvoiceId" render={({ field }) => (<FormItem><FormLabel>Related Invoice/PO ID (Optional)</FormLabel><FormControl><Input placeholder="e.g., INV00123 or PO-789" {...field} /></FormControl><FormMessage /></FormItem>)} />
               <FormField control={form.control} name="isoDate" render={({ field }) => (<FormItem><FormLabel>Payment Date</FormLabel><FormControl><Input type="date" {...field} /></FormControl><FormMessage /></FormItem>)} />
-              <FormField control={form.control} name="amount" render={({ field }) => (<FormItem><FormLabel>Amount (₹)</FormLabel><FormControl><Input type="number" step="0.01" placeholder="e.g., 1000.00" {...field} /></FormControl><FormMessage /></FormItem>)} />
+              <FormField control={form.control} name="amount" render={({ field }) => (<FormItem><FormLabel>Amount (₹)</FormLabel><FormControl><Input type="number" step="0.01" placeholder="e.g., 1000.00" {...field} onChange={e => field.onChange(parseFloat(e.target.value) || 0)} /></FormControl><FormMessage /></FormItem>)} />
               <FormField control={form.control} name="method" render={({ field }) => (
                 <FormItem><FormLabel>Payment Method</FormLabel>
                   <Select onValueChange={field.onChange} value={field.value}>
@@ -382,7 +411,7 @@ export default function PaymentsPage() {
             <CardContent>
                 {customerPayments.length > 0 ? renderPaymentTable(customerPayments, "customer") : (
                     <div className="flex flex-col items-center justify-center py-10 text-center">
-                        <DollarSign className="h-16 w-16 text-muted-foreground mb-4" />
+                        <FileWarning className="h-16 w-16 text-muted-foreground mb-4" />
                         <p className="text-xl font-semibold text-muted-foreground">No Customer Payments Recorded</p>
                         <p className="text-sm text-muted-foreground mb-6">Track payments received from your customers here.</p>
                         <Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Record First Customer Payment</Button>
@@ -397,7 +426,7 @@ export default function PaymentsPage() {
             <CardContent>
                 {supplierPayments.length > 0 ? renderPaymentTable(supplierPayments, "supplier") : (
                     <div className="flex flex-col items-center justify-center py-10 text-center">
-                        <DollarSign className="h-16 w-16 text-muted-foreground mb-4" />
+                        <FileWarning className="h-16 w-16 text-muted-foreground mb-4" />
                         <p className="text-xl font-semibold text-muted-foreground">No Supplier Payments Recorded</p>
                         <p className="text-sm text-muted-foreground mb-6">Keep track of payments made to your suppliers.</p>
                         <Button onClick={() => {form.setValue("type", "supplier"); openAddDialog();}}><PlusCircle className="mr-2 h-4 w-4" />Record First Supplier Payment</Button>
@@ -410,4 +439,3 @@ export default function PaymentsPage() {
     </>
   );
 }
-

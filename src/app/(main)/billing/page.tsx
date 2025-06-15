@@ -11,7 +11,7 @@ import { FileText, PlusCircle, MoreHorizontal, Download, Printer, Edit, Eye, Tra
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
-import { collection, getDocs, doc, updateDoc, deleteDoc, query, orderBy, Timestamp, serverTimestamp } from 'firebase/firestore'; // Added serverTimestamp
+import { collection, getDocs, doc, updateDoc, deleteDoc, query, orderBy, Timestamp, serverTimestamp } from 'firebase/firestore'; 
 import { db } from '@/lib/firebase/firebaseConfig';
 import { format, parseISO } from 'date-fns';
 
@@ -136,7 +136,7 @@ export default function BillingPage() {
       if (error.code === 'failed-precondition') {
         toast({
             title: "Database Index Required",
-            description: `A query for invoices failed. Please create the required Firestore index for 'invoices' collection (orderBy 'isoDate' descending). Check console for a link from Firebase or create manually. Go to: https://console.firebase.google.com/project/${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID}/firestore/indexes`,
+            description: `A query for invoices failed. Please create the required Firestore index for 'invoices' collection (orderBy 'isoDate' descending). Check your browser's developer console for a Firebase link to create it, or visit the Firestore indexes page in your Firebase console.`,
             variant: "destructive",
             duration: 15000, 
         });

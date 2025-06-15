@@ -5,7 +5,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { PageHeader } from "@/components/page-header";
-import { SlidersHorizontal, PlusCircle, Edit, Trash2, ToggleRight, ToggleLeft, Info, AlertCircle } from "lucide-react"; 
+import { SlidersHorizontal, PlusCircle, Edit, Trash2, ToggleRight, ToggleLeft, Info, AlertCircle, FileWarning } from "lucide-react"; 
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -35,16 +35,18 @@ export interface PricingRule {
   type: "Tiered Pricing" | "Bulk Pricing" | "Volume Pricing" | "Manual Override"; 
   description: string; 
   status: "Active" | "Inactive"; 
-  conditions: string; 
-  action: string;     
-  priority?: number; 
+  conditions: string; // Descriptive text for conditions
+  action: string;     // Descriptive text for actions
+  priority?: number; // Lower numbers mean higher priority
   createdAt?: Timestamp; 
   updatedAt?: Timestamp; 
 }
 
+// Constants for form dropdowns
 const PRICING_RULE_TYPES = ["Tiered Pricing", "Bulk Pricing", "Volume Pricing", "Manual Override"] as const;
 const PRICING_RULE_STATUSES = ["Active", "Inactive"] as const;
 
+// Zod schema for pricing rule form validation
 const pricingRuleSchema = z.object({
   name: z.string().min(3, { message: "Rule name must be at least 3 characters." }),
   type: z.enum(PRICING_RULE_TYPES, { required_error: "Please select a rule type." }),
@@ -53,8 +55,8 @@ const pricingRuleSchema = z.object({
   conditions: z.string().min(5, {message: "Conditions field must be at least 5 characters."}).describe("e.g., Product SKU: PW-001, Min Qty: 10, Customer Group: Wholesale"),
   action: z.string().min(5, {message: "Action field must be at least 5 characters."}).describe("e.g., Discount: 10% OR Set Price: ₹1800 OR Add free item: SKU-FREEBIE"),
   priority: z.preprocess(
-    (val) => (String(val).trim() === "" ? undefined : parseInt(String(val), 10)),
-    z.number().int().min(0).optional() 
+    (val) => (String(val).trim() === "" ? undefined : parseInt(String(val), 10)), // Convert empty string to undefined
+    z.number().int().min(0).optional() // Priority is optional, must be integer >= 0
   ),
 });
 
@@ -74,26 +76,29 @@ export default function PricingRulesPage() {
   const [ruleToDelete, setRuleToDelete] = useState<PricingRule | null>(null);
   const { toast } = useToast();
 
+  // React Hook Form setup
   const form = useForm<PricingRuleFormValues>({
     resolver: zodResolver(pricingRuleSchema),
     defaultValues: { type: "Bulk Pricing", status: "Active", name: "", description: "", conditions: "", action: "", priority: undefined },
   });
 
+  /**
+   * Fetches pricing rules from Firestore, ordered by priority and then by name.
+   */
   const fetchRules = useCallback(async () => {
     setIsLoading(true);
     try {
       // Firestore Index Required: 'pricingRules' collection, index on 'priority' (ASC) and 'name' (ASC).
-      // This is needed for the multiple orderBy clauses.
       const q = query(collection(db, "pricingRules"), orderBy("priority", "asc"), orderBy("name", "asc")); 
       const querySnapshot = await getDocs(q);
       const fetchedRules = querySnapshot.docs.map(docSnapshot => ({ id: docSnapshot.id, ...docSnapshot.data() } as PricingRule));
       setPricingRules(fetchedRules);
-    } catch (error: any) {
+    } catch (error: any)_CLIENT_PROJECT_MODIFIED_
       console.error("Error fetching pricing rules: ", error);
       if (error.code === 'failed-precondition') {
         toast({
             title: "Database Index Required",
-            description: `A query for pricing rules failed. Please create the required Firestore index for 'pricingRules' (priority ASC, name ASC). Check console for a link from Firebase or create manually. Go to: https://console.firebase.google.com/project/${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID}/firestore/indexes`,
+            description: `A query for pricing rules failed. Please create the required Firestore index for 'pricingRules' (priority ASC, name ASC). Check your browser's developer console for a Firebase link to create it, or visit the Firestore indexes page in your Firebase console.`,
             variant: "destructive",
             duration: 15000,
         });
@@ -109,16 +114,22 @@ export default function PricingRulesPage() {
     fetchRules();
   }, [fetchRules]);
 
+  // Resets form when dialog opens or editingRule changes
   useEffect(() => {
     if (isFormDialogOpen) {
       if (editingRule) {
-        form.reset(editingRule);
+        form.reset(editingRule); // Pre-fill form with editing rule data
       } else { 
+        // Default values for new rule
         form.reset({ type: "Bulk Pricing", status: "Active", name: "", description: "", conditions: "", action: "", priority: undefined });
       }
     }
   }, [editingRule, isFormDialogOpen, form]);
 
+  /**
+   * Handles submission of the pricing rule form (for both add and edit).
+   * @param {PricingRuleFormValues} values - The validated form values.
+   */
   const handleFormSubmit = async (values: PricingRuleFormValues) => {
     try {
       const dataToSave = { ...values, updatedAt: serverTimestamp() };
@@ -130,9 +141,10 @@ export default function PricingRulesPage() {
         await addDoc(collection(db, "pricingRules"), { ...dataToSave, createdAt: serverTimestamp() });
         toast({ title: "Rule Added", description: `New pricing rule "${values.name}" has been added successfully.` });
       }
-      fetchRules(); 
+      fetchRules(); // Refresh the list
       setIsFormDialogOpen(false); 
       setEditingRule(null); 
+      form.reset(); // Explicitly reset form
     } catch (error: any) {
       console.error("Error saving pricing rule: ", error);
       toast({ title: "Save Error", description: `Could not save pricing rule: ${error.message}`, variant: "destructive" });
@@ -169,6 +181,10 @@ export default function PricingRulesPage() {
     }
   };
 
+  /**
+   * Toggles the status (Active/Inactive) of a pricing rule in Firestore.
+   * @param {PricingRule} rule - The rule whose status to toggle.
+   */
   const handleToggleStatus = async (rule: PricingRule) => {
     const newStatus = rule.status === "Active" ? "Inactive" : "Active";
     try {
@@ -330,7 +346,7 @@ export default function PricingRulesPage() {
         </div>
        ) : (
         <div className="flex flex-col items-center justify-center py-10 text-center">
-            <AlertCircle className="mx-auto h-16 w-16 text-muted-foreground mb-4" />
+            <FileWarning className="h-16 w-16 text-muted-foreground mb-4" />
             <p className="text-xl font-semibold text-muted-foreground mb-2">No Pricing Rules Yet</p>
             <p className="text-sm text-muted-foreground mb-6">Get started by defining your first pricing rule to automate discounts or special prices.</p>
             <Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add New Pricing Rule</Button>
@@ -339,4 +355,3 @@ export default function PricingRulesPage() {
     </>
   );
 }
-

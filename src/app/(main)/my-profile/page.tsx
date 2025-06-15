@@ -4,20 +4,20 @@
 import { useState, useEffect } from "react";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
-import { UserCircle, ShieldCheck, Mail, Phone } from "lucide-react"; // Added Mail, Phone icons
+import { UserCircle, ShieldCheck, Mail, Phone } from "lucide-react"; 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { auth, db } from '@/lib/firebase/firebaseConfig'; // Added db
+import { auth, db } from '@/lib/firebase/firebaseConfig'; 
 import { onAuthStateChanged, updatePassword, EmailAuthProvider, reauthenticateWithCredential, User as FirebaseUser } from "firebase/auth";
-import { doc, getDoc, updateDoc, serverTimestamp } from "firebase/firestore"; // Firestore functions for profile data
+import { doc, getDoc, updateDoc, serverTimestamp } from "firebase/firestore"; 
 
 /**
  * @fileOverview My Profile page for authenticated users (Admin and Store Manager).
  * Allows users to:
  *  - View their profile information (name, email, contact number from Firestore).
- *  - Update their contact number (saved to Firestore).
+ *  - Update their name and contact number (saved to Firestore).
  *  - Change their password (via Firebase Auth).
  */
 
@@ -29,7 +29,7 @@ interface UserProfile {
   name: string; 
   email: string; // From Firebase Auth, read-only here
   contactNumber: string; // Stored in Firestore
-  role?: 'admin' | 'store_manager'; // Stored in Firestore
+  role?: 'admin' | 'store_manager'; // Stored in Firestore 'users' collection
 }
 
 /**
@@ -43,19 +43,19 @@ export default function MyProfilePage() {
   const [isLoading, setIsLoading] = useState(true);
 
   // Form states for profile update
+  const [name, setName] = useState(""); 
   const [contactNumber, setContactNumber] = useState("");
-  const [name, setName] = useState(""); // Allow name update
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
   const [isUpdating, setIsUpdating] = useState(false);
 
-  // Effect to fetch current user data from Firebase Auth and Firestore
+  // Effect to fetch current user data from Firebase Auth and Firestore 'users' collection.
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
       if (firebaseUser) {
         try {
-          // Fetch additional profile details from Firestore 'users' collection
+          // Fetch additional profile details from Firestore 'users' collection using UID.
           const userDocRef = doc(db, "users", firebaseUser.uid); 
           const userDoc = await getDoc(userDocRef);
           
@@ -64,44 +64,46 @@ export default function MyProfilePage() {
             const profile: UserProfile = {
               uid: firebaseUser.uid,
               email: firebaseUser.email || "N/A",
-              name: userData.name || firebaseUser.displayName || "User",
+              name: userData.name || firebaseUser.displayName || "User", // Prioritize Firestore name
               contactNumber: userData.contactNumber || "",
-              role: userData.role,
+              role: userData.role, // Role is stored in Firestore 'users' collection
             };
             setUserProfile(profile);
-            setName(profile.name); // Pre-fill form field
-            setContactNumber(profile.contactNumber); // Pre-fill form field
+            setName(profile.name); // Pre-fill form field for name
+            setContactNumber(profile.contactNumber); // Pre-fill form field for contact
           } else {
-            // Fallback if no Firestore document found (should ideally not happen for logged-in users)
+            // Fallback if no Firestore document found (e.g., user authenticated but profile data missing)
             const profile: UserProfile = {
               uid: firebaseUser.uid,
               email: firebaseUser.email || "N/A",
-              name: firebaseUser.displayName || firebaseUser.email || "User",
+              name: firebaseUser.displayName || firebaseUser.email || "User", // Fallback name
               contactNumber: "",
+              role: undefined, // Role unknown if Firestore doc is missing
             };
             setUserProfile(profile);
             setName(profile.name);
-            toast({ title: "Profile Incomplete", description: "Some profile details are missing from the database.", variant: "default"});
+            toast({ title: "Profile Incomplete", description: "Some profile details are missing from the database. Please update if necessary.", variant: "default"});
           }
         } catch (error) {
             console.error("Error fetching user profile from Firestore:", error);
             toast({ title: "Profile Load Error", description: "Could not load your full profile details.", variant: "destructive"});
-             // Basic fallback with auth data only
+             // Basic fallback with auth data only if Firestore fetch fails
             const profile: UserProfile = {
               uid: firebaseUser.uid,
               email: firebaseUser.email || "N/A",
               name: firebaseUser.displayName || firebaseUser.email || "User",
               contactNumber: "",
+              role: undefined,
             };
             setUserProfile(profile);
             setName(profile.name);
         }
       } else {
-        setUserProfile(null); // No user authenticated, should be redirected by middleware/layout
+        setUserProfile(null); // No user authenticated (should be redirected by middleware/layout)
       }
       setIsLoading(false);
     });
-    return () => unsubscribe(); // Cleanup subscription
+    return () => unsubscribe(); // Cleanup Firebase auth subscription on component unmount
   }, [toast]);
 
   /**
@@ -116,31 +118,32 @@ export default function MyProfilePage() {
     let passwordChanged = false;
 
     const firebaseUser = auth.currentUser;
-    if (!firebaseUser || !userProfile) { // Ensure both Firebase user and local profile state exist
+    if (!firebaseUser || !userProfile) { 
       toast({ title: "Authentication Error", description: "User not authenticated or profile data missing.", variant: "destructive" });
       setIsUpdating(false);
       return;
     }
 
-    // Update name and contact number in Firestore
-    const newProfileData: Partial<UserProfile> = {};
-    if (name !== userProfile.name) newProfileData.name = name;
-    if (contactNumber !== userProfile.contactNumber) newProfileData.contactNumber = contactNumber;
+    // Part 1: Update name and contact number in Firestore 'users' collection
+    const profileDataToUpdate: { name?: string; contactNumber?: string; updatedAt?: any } = {};
+    if (name !== userProfile.name) profileDataToUpdate.name = name;
+    if (contactNumber !== userProfile.contactNumber) profileDataToUpdate.contactNumber = contactNumber;
 
-    if (Object.keys(newProfileData).length > 0) {
+    if (Object.keys(profileDataToUpdate).length > 0) {
+      profileDataToUpdate.updatedAt = serverTimestamp(); // Always update timestamp if any field changed
       try {
         const userDocRef = doc(db, "users", firebaseUser.uid);
-        await updateDoc(userDocRef, {...newProfileData, updatedAt: serverTimestamp()}); // Add updatedAt timestamp
-        setUserProfile(prev => prev ? {...prev, ...newProfileData} : null); // Update local state
+        await updateDoc(userDocRef, profileDataToUpdate);
+        setUserProfile(prev => prev ? {...prev, ...profileDataToUpdate, name: name, contactNumber: contactNumber } : null); // Update local state
         profileUpdatedInFirestore = true;
       } catch (error) {
         console.error("Error updating profile in Firestore: ", error);
         toast({ title: "Profile Update Failed", description: "Failed to update your name or contact number in the database.", variant: "destructive" });
-        // Do not return here, allow password change attempt if fields were filled
+        // Continue to password change attempt even if profile update fails
       }
     }
 
-    // Handle password change if new password fields are filled
+    // Part 2: Handle password change if new password fields are filled
     if (newPassword) {
       if (newPassword !== confirmNewPassword) {
         toast({ title: "Password Mismatch", description: "New passwords do not match. Please re-enter.", variant: "destructive" });
@@ -155,7 +158,7 @@ export default function MyProfilePage() {
 
       try {
         // Re-authenticate user before password update for security
-        if (firebaseUser.email) { // Ensure email exists for credential creation
+        if (firebaseUser.email) { 
             const credential = EmailAuthProvider.credential(firebaseUser.email, currentPassword);
             await reauthenticateWithCredential(firebaseUser, credential);
             await updatePassword(firebaseUser, newPassword); // Update password in Firebase Auth
@@ -174,6 +177,8 @@ export default function MyProfilePage() {
             errorMessage = "Incorrect current password. Please try again.";
         } else if (error.code === 'auth/weak-password') {
             errorMessage = "The new password is too weak. It must be at least 6 characters.";
+        } else if (error.code === 'auth/requires-recent-login') {
+             errorMessage = "This operation is sensitive and requires recent authentication. Please log out and log back in before changing your password.";
         }
         toast({ title: "Password Change Failed", description: errorMessage, variant: "destructive" });
         setIsUpdating(false);
@@ -181,26 +186,24 @@ export default function MyProfilePage() {
       }
     }
 
-    // Provide feedback toast based on what was updated
+    // Provide consolidated feedback toast
     if (profileUpdatedInFirestore && passwordChanged) {
       toast({ title: "Profile & Password Updated", description: "Your information and password have been successfully updated." });
     } else if (profileUpdatedInFirestore) {
       toast({ title: "Profile Updated", description: "Your name/contact information has been updated." });
     } else if (passwordChanged) {
       toast({ title: "Password Changed", description: "Your password has been successfully updated." });
-    } else if (!Object.keys(newProfileData).length && !newPassword) { // No changes made
+    } else if (!Object.keys(profileDataToUpdate).length && !newPassword) { // No changes were made
        toast({ title: "No Changes Detected", description: "No information was changed." });
     }
     
     setIsUpdating(false);
   };
   
-  // Display loading state
   if (isLoading) {
     return <PageHeader title="My Profile" description="Loading your profile information..." icon={UserCircle} />;
   }
 
-  // Handle case where user is not authenticated (should be caught by layout/middleware)
   if (!userProfile) {
     return <PageHeader title="My Profile" description="Please log in to view your profile." icon={UserCircle} />;
   }
@@ -232,6 +235,7 @@ export default function MyProfilePage() {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 disabled={isUpdating}
+                autoComplete="name"
               />
             </div>
             <div className="space-y-2">
@@ -242,10 +246,10 @@ export default function MyProfilePage() {
                 value={contactNumber}
                 onChange={(e) => setContactNumber(e.target.value)}
                 disabled={isUpdating}
+                autoComplete="tel"
               />
             </div>
             
-            {/* Password Change Section */}
             <div className="border-t pt-6 space-y-2">
                 <h3 className="text-lg font-medium flex items-center"><ShieldCheck className="mr-2 h-5 w-5 text-primary" />Change Password</h3>
                 <p className="text-sm text-muted-foreground">Leave these fields blank if you do not want to change your password.</p>
@@ -297,4 +301,3 @@ export default function MyProfilePage() {
     </>
   );
 }
-
