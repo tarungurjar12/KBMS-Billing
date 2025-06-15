@@ -1,8 +1,7 @@
-
-import type { Metadata, Viewport } from 'next'; // Added Viewport
+import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { Toaster } from "@/components/ui/toaster";
-import { Inter } from 'next/font/google'; // Import Inter font
+import { Inter } from 'next/font/google';
 
 /**
  * @fileOverview Root layout for the entire application.
@@ -10,10 +9,10 @@ import { Inter } from 'next/font/google'; // Import Inter font
  */
 
 // Initialize Inter font with subsets
-const inter = Inter({ 
+const inter = Inter({
   subsets: ['latin'],
   display: 'swap', // Use swap for better font loading performance
-  variable: '--font-inter', // Optional: if you want to use it as a CSS variable
+  variable: '--font-inter', // This defines the CSS variable name for Tailwind
 });
 
 export const metadata: Metadata = {
@@ -39,15 +38,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning className={inter.variable}> {/* Apply Inter font variable if defined */}
+    <html lang="en" suppressHydrationWarning className={inter.variable}>
       <head>
-        {/* Google Fonts Preconnect - Already in tailwind.config.ts via Inter import, but can be explicit here too */}
-        {/* <link rel="preconnect" href="https://fonts.googleapis.com" /> */}
-        {/* <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" /> */}
-        {/* Inter font is now handled by next/font */}
-        {/* <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" /> */}
+        {/* Metadata and other head elements are injected by Next.js */}
       </head>
-      <body className="font-body antialiased bg-background text-foreground"> {/* Ensure body uses Inter and theme colors */}
+      <body className={`${inter.className} antialiased bg-background text-foreground`}>
         {children}
         <Toaster /> {/* Toaster for displaying notifications globally */}
       </body>
