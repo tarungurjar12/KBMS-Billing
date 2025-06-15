@@ -84,6 +84,7 @@ export default function PricingRulesPage() {
 
   /**
    * Fetches pricing rules from Firestore, ordered by priority and then by name.
+   * Firestore Index Required: 'pricingRules' collection, index on 'priority' (ASC) and 'name' (ASC).
    */
   const fetchRules = useCallback(async () => {
     setIsLoading(true);
@@ -93,7 +94,7 @@ export default function PricingRulesPage() {
       const querySnapshot = await getDocs(q);
       const fetchedRules = querySnapshot.docs.map(docSnapshot => ({ id: docSnapshot.id, ...docSnapshot.data() } as PricingRule));
       setPricingRules(fetchedRules);
-    } catch (error: any)_CLIENT_PROJECT_MODIFIED_
+    } catch (error: any) {
       console.error("Error fetching pricing rules: ", error);
       if (error.code === 'failed-precondition') {
         toast({
