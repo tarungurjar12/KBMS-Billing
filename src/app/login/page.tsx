@@ -36,6 +36,13 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
+      // Ensure Firebase config is loaded and valid before this point
+      if (!auth.app) {
+        setError('Firebase app is not initialized. Check configuration.');
+        setLoading(false);
+        return;
+      }
+
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
 
@@ -67,7 +74,10 @@ export default function LoginPage() {
     } catch (signInError: any) {
       if (signInError.code === 'auth/invalid-credential' || signInError.code === 'auth/user-not-found' || signInError.code === 'auth/wrong-password') {
         setError('Invalid email or password.');
-      } else {
+      } else if (signInError.code === 'auth/invalid-api-key') {
+        setError('Firebase API Key is invalid. Please check your Firebase project configuration.');
+      }
+      else {
         setError(signInError.message || 'Failed to login. Please try again.');
       }
     } finally {
