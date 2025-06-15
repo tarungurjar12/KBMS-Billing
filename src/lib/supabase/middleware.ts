@@ -1,10 +1,33 @@
+
 import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import type { NextRequest, NextResponse } from 'next/server'
 
 export async function createClient(request: NextRequest, response: NextResponse) {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl) {
+    console.error(
+      "Supabase Middleware: NEXT_PUBLIC_SUPABASE_URL environment variable is not defined. " +
+      "Ensure it's in your .env.local file and the server has been restarted."
+    );
+    throw new Error(
+      "Supabase Middleware: NEXT_PUBLIC_SUPABASE_URL environment variable is not defined."
+    );
+  }
+  if (!supabaseAnonKey) {
+    console.error(
+      "Supabase Middleware: NEXT_PUBLIC_SUPABASE_ANON_KEY environment variable is not defined. " +
+      "Ensure it's in your .env.local file and the server has been restarted."
+    );
+    throw new Error(
+      "Supabase Middleware: NEXT_PUBLIC_SUPABASE_ANON_KEY environment variable is not defined."
+    );
+  }
+
   return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    supabaseUrl,
+    supabaseAnonKey,
     {
       cookies: {
         get(name: string) {
