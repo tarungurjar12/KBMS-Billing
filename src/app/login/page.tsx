@@ -7,22 +7,23 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Building } from 'lucide-react';
-import { auth } from '@/lib/firebase/firebaseConfig';
-import { signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
+import { Building } from 'lucide-react'; // Icon for branding
+import { auth } from '@/lib/firebase/firebaseConfig'; // Firebase auth instance
+import { signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth'; // Firebase auth functions
 
 /**
  * @fileOverview Login page for user authentication.
  * Handles user login using Firebase email/password authentication.
- * Sets a 'userRole' cookie based on the email address for UI differentiation.
+ * Sets a 'userRole' cookie based on the email address for UI differentiation and basic route protection.
  * Redirects users to appropriate dashboards upon successful login.
+ * Also redirects already authenticated users away from the login page.
  */
 
 /**
- * Sets a cookie in the browser.
- * @param name - The name of the cookie.
- * @param value - The value of the cookie.
- * @param days - The number of days until the cookie expires.
+ * Helper function to set a cookie in the browser.
+ * @param {string} name - The name of the cookie.
+ * @param {string} value - The value of the cookie.
+ * @param {number} days - The number of days until the cookie expires.
  */
 const setCookie = (name: string, value: string, days: number) => {
   let expires = "";
@@ -31,9 +32,23 @@ const setCookie = (name: string, value: string, days: number) => {
     date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
     expires = "; expires=" + date.toUTCString();
   }
+  // Ensure document is available (client-side)
   if (typeof document !== 'undefined') {
     document.cookie = name + "=" + (value || "") + expires + "; path=/";
   }
+};
+
+/**
+ * Helper function to get a cookie value by name.
+ * @param {string} name - The name of the cookie.
+ * @returns {string | undefined} The cookie value or undefined if not found.
+ */
+const getCookie = (name: string): string | undefined => {
+  if (typeof document === 'undefined') return undefined;
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  if (parts.length === 2) return parts.pop()?.split(';').shift();
+  return undefined;
 };
 
 /**
@@ -44,102 +59,113 @@ export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(''); // State for displaying login errors
+  const [loading, setLoading] = useState(false); // State to manage loading UI during login attempt
 
-  // Redirect if already logged in
+  /**
+   * Effect hook to handle redirection if a user is already authenticated and lands on the login page.
+   * It listens to Firebase's auth state. If a user is logged in (via Firebase) and
+   * has a 'userRole' cookie, they are redirected to their respective dashboard.
+   */
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
-        // User is signed in, check role and redirect
-        const userRoleCookie = document.cookie.split('; ').find(row => row.startsWith('userRole='))?.split('=')[1];
+        // Firebase indicates a user is signed in.
+        // Check for the userRole cookie to decide on redirection.
+        const userRoleCookie = getCookie('userRole');
         if (userRoleCookie === 'admin') {
-          router.push('/');
+          router.push('/'); // Redirect admin to admin dashboard
         } else if (userRoleCookie === 'store_manager') {
-          router.push('/store-dashboard');
-        } else {
-          // If role cookie is missing but user is auth'd, attempt to set it.
-          // This path might be hit if a user bookmarked /login but was already authenticated.
-           let determinedRole = '';
-            if (user.email?.toLowerCase().includes('admin@')) {
-              determinedRole = 'admin';
-            } else if (user.email?.toLowerCase().includes('manager@')) {
-              determinedRole = 'store_manager';
-            }
-            if(determinedRole) {
-                setCookie('userRole', determinedRole, 1);
-                router.push(determinedRole === 'admin' ? '/' : '/store-dashboard');
-            } else {
-                 // Failsafe, redirect to login if role unknown
-                router.push('/login');
-            }
+          router.push('/store-dashboard'); // Redirect manager to store dashboard
         }
+        // If Firebase user exists but no valid role cookie, stay on login page.
+        // The handleLogin function will establish the role and cookie upon a new login attempt.
+        // Middleware handles unauthorized access to other protected pages.
       }
     });
+    // Cleanup subscription on unmount
     return () => unsubscribe();
   }, [router]);
 
 
   /**
    * Handles the login process when the form is submitted.
-   * Authenticates with Firebase, sets user role cookie, and redirects.
+   * - Authenticates with Firebase using email and password.
+   * - Determines user role based on email content (admin@ or manager@).
+   * - Sets a 'userRole' cookie for client-side role management.
+   * - Redirects to the appropriate dashboard on successful login.
+   * - Displays errors if login fails.
    */
   const handleLogin = async () => {
-    setError('');
-    setLoading(true);
+    setError(''); // Clear any previous errors
+    setLoading(true); // Set loading state
 
     try {
-      if (!auth.app) {
-        setError('Firebase app is not initialized. Check configuration.');
+      // Check if Firebase auth object is available (it should be if config is correct)
+      if (!auth) {
+        setError('Firebase authentication service is not available. Please check configuration.');
         setLoading(false);
         return;
       }
 
+      // Sign in with Firebase
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
 
       if (user && user.email) {
         let userRole = '';
+        // Determine role based on email pattern
         if (user.email.toLowerCase().includes('admin@')) {
           userRole = 'admin';
         } else if (user.email.toLowerCase().includes('manager@')) {
           userRole = 'store_manager';
         } else {
+          // If role cannot be determined, show error and sign out to prevent partial login state
           setError('User role could not be determined. Please contact support.');
-          await signOut(auth);
+          await signOut(auth); // Sign out the user from Firebase
           setLoading(false);
           return;
         }
 
-        setCookie('userRole', userRole, 1); // Store role in a cookie for UI & middleware
+        // Set the userRole cookie. Expires in 1 day.
+        setCookie('userRole', userRole, 1);
 
+        // Redirect based on role
         if (userRole === 'admin') {
-          router.push('/');
+          router.push('/'); // Admin dashboard
         } else if (userRole === 'store_manager') {
-          router.push('/store-dashboard');
+          router.push('/store-dashboard'); // Store Manager dashboard
         }
       } else {
-        setError('An unexpected error occurred during login.');
+        // This case should ideally not be reached if signInWithEmailAndPassword succeeds
+        setError('An unexpected error occurred during login. User data not found.');
       }
     } catch (signInError: any) {
+      // Handle Firebase authentication errors
       console.error("Firebase Sign-In Error:", signInError);
-      if (signInError.code === 'auth/invalid-credential' || signInError.code === 'auth/user-not-found' || signInError.code === 'auth/wrong-password') {
-        setError('Invalid email or password.');
+      if (signInError.code === 'auth/invalid-credential' || 
+          signInError.code === 'auth/user-not-found' || 
+          signInError.code === 'auth/wrong-password' ||
+          signInError.code === 'auth/invalid-email') {
+        setError('Invalid email or password. Please try again.');
       } else if (signInError.code === 'auth/invalid-api-key') {
-        setError('Firebase API Key is invalid. Check your Firebase project configuration in firebaseConfig.ts.');
+        setError('Firebase API Key is invalid. Check your Firebase project configuration.');
       } else if (signInError.code === 'auth/network-request-failed') {
         setError('Network error. Please check your internet connection and try again.');
-      } else {
-        setError(signInError.message || 'Failed to login. Please try again.');
+      } else if (signInError.code === 'auth/too-many-requests') {
+        setError('Access to this account has been temporarily disabled due to many failed login attempts. You can immediately restore it by resetting your password or you can try again later.');
+      }
+       else {
+        setError(signInError.message || 'Failed to login. An unknown error occurred.');
       }
     } finally {
-      setLoading(false);
+      setLoading(false); // Reset loading state
     }
   };
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
-      <Card className="w-full max-w-md shadow-2xl">
+      <Card className="w-full max-w-md shadow-2xl rounded-xl">
         <CardHeader className="space-y-1 text-center">
           <div className="flex justify-center items-center mb-4">
             <Building className="h-10 w-10 text-primary" />
@@ -147,7 +173,7 @@ export default function LoginPage() {
           <CardTitle className="text-3xl font-bold font-headline text-foreground">KBMS Billing</CardTitle>
           <CardDescription>Enter your credentials to access your account</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-6">
           <div className="space-y-2">
             <Label htmlFor="email">Email</Label>
             <Input 
@@ -157,7 +183,7 @@ export default function LoginPage() {
               value={email} 
               onChange={(e) => setEmail(e.target.value)} 
               disabled={loading}
-              autoComplete="email"
+              autoComplete="email" // Added for browser autofill
             />
           </div>
           <div className="space-y-2">
@@ -169,10 +195,11 @@ export default function LoginPage() {
               value={password} 
               onChange={(e) => setPassword(e.target.value)} 
               disabled={loading}
-              autoComplete="current-password"
+              autoComplete="current-password" // Added for browser autofill
             />
           </div>
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {/* Display login errors here */}
+          {error && <p className="text-sm text-destructive text-center">{error}</p>}
         </CardContent>
         <CardFooter>
           <Button className="w-full" onClick={handleLogin} disabled={loading}>
