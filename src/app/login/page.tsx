@@ -8,8 +8,9 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Building } from 'lucide-react';
+import { createClient } from '@/lib/supabase/client'; // Import Supabase client
 
-// Basic cookie utility
+// Basic cookie utility (still needed for userRole)
 const setCookie = (name: string, value: string, days: number) => {
   let expires = "";
   if (days) {
@@ -17,29 +18,60 @@ const setCookie = (name: string, value: string, days: number) => {
     date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
     expires = "; expires=" + date.toUTCString();
   }
-  document.cookie = name + "=" + (value || "") + expires + "; path=/";
+  if (typeof document !== 'undefined') {
+    document.cookie = name + "=" + (value || "") + expires + "; path=/";
+  }
 };
 
 export default function LoginPage() {
   const router = useRouter();
-  const [userId, setUserId] = useState('');
+  const [email, setEmail] = useState(''); // Changed from userId to email
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleLogin = () => {
-    setError(''); // Clear previous errors
+  const supabase = createClient();
 
-    if (userId === 'admin' && password === 'admin') {
-      setCookie('userRole', 'admin', 1);
-      setCookie('authStatus', 'loggedIn', 1);
-      router.push('/'); // Redirect to Admin Dashboard
-    } else if (userId === 'manager' && password === 'manager') {
-      setCookie('userRole', 'store_manager', 1);
-      setCookie('authStatus', 'loggedIn', 1);
-      // For now, redirecting to a placeholder store manager dashboard
-      router.push('/store-dashboard'); 
+  const handleLogin = async () => {
+    setError('');
+    setLoading(true);
+
+    const { data, error: signInError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    setLoading(false);
+
+    if (signInError) {
+      setError(signInError.message || 'Invalid login credentials.');
+      return;
+    }
+
+    if (data.user) {
+      // Determine role based on email (temporary simple logic)
+      // In a real app, use Supabase custom claims or a profiles table
+      let userRole = '';
+      if (data.user.email?.toLowerCase().includes('admin@')) {
+        userRole = 'admin';
+      } else if (data.user.email?.toLowerCase().includes('manager@')) {
+        userRole = 'store_manager';
+      } else {
+        setError('User role could not be determined. Please contact support.');
+        await supabase.auth.signOut(); // Sign out if role is undetermined
+        return;
+      }
+
+      setCookie('userRole', userRole, 1); // Store role in a cookie for UI
+
+      if (userRole === 'admin') {
+        router.push('/');
+      } else if (userRole === 'store_manager') {
+        router.push('/store-dashboard');
+      }
+      router.refresh(); // Refresh to update server-side session state for middleware
     } else {
-      setError('Invalid User ID or Password.');
+      setError('An unexpected error occurred during login.');
     }
   };
 
@@ -55,12 +87,14 @@ export default function LoginPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="userId">User ID</Label>
+            <Label htmlFor="email">Email</Label> {/* Changed from User ID to Email */}
             <Input 
-              id="userId" 
-              placeholder="e.g., admin or manager" 
-              value={userId} 
-              onChange={(e) => setUserId(e.target.value)} 
+              id="email" 
+              type="email"
+              placeholder="e.g., admin@example.com" 
+              value={email} 
+              onChange={(e) => setEmail(e.target.value)} 
+              disabled={loading}
             />
           </div>
           <div className="space-y-2">
@@ -68,16 +102,17 @@ export default function LoginPage() {
             <Input 
               id="password" 
               type="password" 
-              placeholder="e.g., admin or manager"
+              placeholder="Enter your password"
               value={password} 
               onChange={(e) => setPassword(e.target.value)} 
+              disabled={loading}
             />
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
         </CardContent>
         <CardFooter>
-          <Button className="w-full" onClick={handleLogin}>
-            Login
+          <Button className="w-full" onClick={handleLogin} disabled={loading}>
+            {loading ? 'Logging in...' : 'Login'}
           </Button>
         </CardFooter>
       </Card>

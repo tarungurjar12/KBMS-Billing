@@ -32,6 +32,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Button } from "../ui/button";
+import { createClient } from '@/lib/supabase/client'; // Import Supabase client
 
 interface NavItem {
   href: string;
@@ -57,8 +58,9 @@ const allNavItems: NavItem[] = [
   { href: "/my-profile", label: "My Profile", icon: UserCircle, roles: ['store_manager'] },
 ];
 
-// Basic cookie utility
+// Basic cookie utility for userRole
 const getCookie = (name: string): string | undefined => {
+  if (typeof document === 'undefined') return undefined;
   const value = `; ${document.cookie}`;
   const parts = value.split(`; ${name}=`);
   if (parts.length === 2) return parts.pop()?.split(';').shift();
@@ -66,7 +68,9 @@ const getCookie = (name: string): string | undefined => {
 };
 
 const deleteCookie = (name: string) => {
-  document.cookie = name + '=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;';
+  if (typeof document !== 'undefined') {
+    document.cookie = name + '=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;';
+  }
 };
 
 export function SidebarNav() {
@@ -75,21 +79,60 @@ export function SidebarNav() {
   const { open } = useSidebar();
   const [userRole, setUserRole] = useState<string | undefined>(undefined);
   const [mounted, setMounted] = useState(false);
+  const supabase = createClient();
 
   useEffect(() => {
-    setMounted(true); // Ensure component is mounted before trying to access cookies
+    setMounted(true); 
     const role = getCookie('userRole');
     setUserRole(role);
-  }, []);
 
-  const handleLogout = () => {
-    deleteCookie('userRole');
-    deleteCookie('authStatus');
+    const { data: authListener } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        if (event === 'SIGNED_OUT' || event === 'USER_DELETED') {
+          deleteCookie('userRole');
+          router.push('/login');
+          router.refresh();
+        } else if (event === 'SIGNED_IN') {
+           // Role should be set during login, just refresh if needed
+           const currentRole = getCookie('userRole');
+           if (!currentRole && session?.user?.email) {
+             // Attempt to re-set role cookie if missing, based on email
+             let newRole = '';
+             if (session.user.email.toLowerCase().includes('admin@')) newRole = 'admin';
+             else if (session.user.email.toLowerCase().includes('manager@')) newRole = 'store_manager';
+             
+             if (newRole) {
+                const setCookie = (name: string, value: string, days: number) => {
+                    let expires = "";
+                    if (days) {
+                        const date = new Date();
+                        date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
+                        expires = "; expires=" + date.toUTCString();
+                    }
+                    document.cookie = name + "=" + (value || "") + expires + "; path=/";
+                };
+                setCookie('userRole', newRole, 1);
+                setUserRole(newRole);
+             }
+           }
+           router.refresh();
+        }
+      }
+    );
+    return () => {
+      authListener?.subscription.unsubscribe();
+    };
+
+  }, [router, supabase.auth]);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    deleteCookie('userRole'); // Ensure role cookie is cleared
     router.push('/login');
+    router.refresh(); // Important to update server session state
   };
 
   if (!mounted) {
-    // Optionally return a loading state or null
     return null; 
   }
 
@@ -98,7 +141,7 @@ export function SidebarNav() {
   return (
     <>
       <SidebarHeader className="p-4">
-        <Link href={userRole === 'admin' ? '/' : '/store-dashboard'} className="flex items-center gap-2">
+        <Link href={userRole === 'admin' ? '/' : (userRole === 'store_manager' ? '/store-dashboard' : '/login')} className="flex items-center gap-2">
           <Building className="h-7 w-7 text-primary" />
           {open && <h1 className="text-xl font-semibold text-primary font-headline">KBMS Billing</h1>}
         </Link>

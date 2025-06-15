@@ -1,44 +1,49 @@
 
-import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
+import { type NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@/lib/supabase/middleware';
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
+  const response = NextResponse.next();
+  const supabase = await createClient(request, response);
+
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
   const { pathname } = request.nextUrl;
-  const authStatus = request.cookies.get('authStatus')?.value;
-  const userRole = request.cookies.get('userRole')?.value;
+  const userRole = request.cookies.get('userRole')?.value; // Still using this for quick role checks
 
-  // If trying to access login page while already logged in, redirect to appropriate dashboard
-  if (pathname === '/login' && authStatus === 'loggedIn') {
+  // If trying to access login page while already logged in via Supabase session
+  if (pathname === '/login' && session) {
     if (userRole === 'admin') {
-      return NextResponse.redirect(new URL('/', request.url));
+      return NextResponse.redirect(new URL('/', request.url), { headers: response.headers });
     }
     if (userRole === 'store_manager') {
-      return NextResponse.redirect(new URL('/store-dashboard', request.url));
+      return NextResponse.redirect(new URL('/store-dashboard', request.url), { headers: response.headers });
     }
     // Fallback if role is somehow not set but logged in
-    return NextResponse.redirect(new URL('/', request.url)); 
+    return NextResponse.redirect(new URL('/', request.url), { headers: response.headers });
   }
 
-  // Protect all routes under / (main app routes) except /login
+  // Allow access to static files and API routes without auth check
   if (pathname.startsWith('/_next') || pathname.startsWith('/api') || pathname === '/login') {
-    return NextResponse.next();
+    return response;
   }
   
-  // If not logged in and trying to access a protected route
-  if (authStatus !== 'loggedIn' && pathname !== '/login') {
-    return NextResponse.redirect(new URL('/login', request.url));
+  // If no Supabase session and trying to access a protected route
+  if (!session && pathname !== '/login') {
+    return NextResponse.redirect(new URL('/login', request.url), { headers: response.headers });
   }
   
-  // Role-based dashboard redirection if user lands on a generic path
-  if (authStatus === 'loggedIn') {
+  // Role-based dashboard redirection if user lands on a generic path with an active session
+  if (session) {
     if (pathname === '/' && userRole === 'store_manager') {
-        return NextResponse.redirect(new URL('/store-dashboard', request.url));
+        return NextResponse.redirect(new URL('/store-dashboard', request.url), { headers: response.headers });
     }
     // Admins are fine on '/'
   }
 
-
-  return NextResponse.next();
+  return response;
 }
 
 export const config = {
