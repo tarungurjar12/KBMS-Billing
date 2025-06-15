@@ -1,9 +1,10 @@
+
 // src/app/layout.tsx
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { Toaster } from "@/components/ui/toaster"; // For displaying notifications
 import { Inter } from 'next/font/google'; // Import Inter font
-import ClientOnly from '@/components/client-only'; // Import the ClientOnly component
+import ClientOnly from '@/components/client-only'; 
 
 /**
  * @fileOverview Root layout for the entire application.
@@ -24,7 +25,6 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: 'KBMS Billing',
   description: 'KBMS Billing Application for Building Material Supply Business by Nikhil Dedha.',
-  // Future: Add more metadata like openGraph, icons, etc.
 };
 
 /**
@@ -34,7 +34,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1, // Optional: prevent zooming if desired
+  maximumScale: 1, 
 };
 
 /**
@@ -56,7 +56,7 @@ export default function RootLayout({
       <head>
         {/* Metadata and other head elements are injected by Next.js */}
       </head>
-      <body className={`antialiased bg-background text-foreground ${inter.className}`}>
+      <body className={`antialiased bg-background text-foreground`}> {/* Removed inter.className, relying on globals.css and inter.variable */}
         <ClientOnly>
           {children}
         </ClientOnly>

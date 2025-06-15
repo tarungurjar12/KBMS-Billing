@@ -7,13 +7,13 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/page-header";
-import { FileText, PlusCircle, MoreHorizontal, Download, Printer, Edit, Eye, Trash2 } from "lucide-react";
+import { FileText, PlusCircle, MoreHorizontal, Download, Printer, Edit, Eye, Trash2, AlertCircle } from "lucide-react"; // Added AlertCircle
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 import { collection, getDocs, doc, updateDoc, deleteDoc, query, orderBy, Timestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase/firebaseConfig';
-import { format } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 
 /**
  * @fileOverview Page for Admin to manage Billing and Invoicing.
@@ -79,13 +79,10 @@ export default function BillingPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  /**
-   * Fetches invoices from Firestore, ordered by date (descending).
-   * Transforms Firestore data into the Invoice interface for UI display.
-   */
   const fetchInvoices = useCallback(async () => {
     setIsLoading(true);
     try {
+      // This query requires a composite index on 'isoDate' (DESC).
       const q = query(collection(db, "invoices"), orderBy("isoDate", "desc"));
       const querySnapshot = await getDocs(q);
       const fetchedInvoices = querySnapshot.docs.map(docSnapshot => {
@@ -94,9 +91,23 @@ export default function BillingPage() {
         // Handle both ISO string and Firestore Timestamp for isoDate field
         if (data.isoDate) {
             if (typeof data.isoDate === 'string') {
-                invoiceDate = format(new Date(data.isoDate), "MMM dd, yyyy");
+                 try {
+                    invoiceDate = format(parseISO(data.isoDate), "MMM dd, yyyy"); // Use parseISO for ISO strings
+                } catch (e) {
+                    console.warn("Invalid isoDate string format:", data.isoDate, e);
+                    invoiceDate = "Invalid Date";
+                }
             } else if (data.isoDate instanceof Timestamp) {
                 invoiceDate = format(data.isoDate.toDate(), "MMM dd, yyyy");
+            } else {
+                 invoiceDate = "Unknown Date"; // Fallback for unexpected type
+            }
+        } else {
+            // Fallback if isoDate is missing, using createdAt if available
+            if (data.createdAt instanceof Timestamp) {
+                invoiceDate = format(data.createdAt.toDate(), "MMM dd, yyyy");
+            } else {
+                invoiceDate = "Date N/A";
             }
         }
 
@@ -107,7 +118,7 @@ export default function BillingPage() {
           customerId: data.customerId || '',
           date: invoiceDate,
           isoDate: typeof data.isoDate === 'string' ? data.isoDate : (data.isoDate instanceof Timestamp ? data.isoDate.toDate().toISOString() : new Date().toISOString()),
-          totalAmount: data.totalAmount || data.grandTotal || 0, // Prioritize totalAmount, fallback to grandTotal for compatibility
+          totalAmount: data.totalAmount || data.grandTotal || 0, 
           displayTotal: formatCurrency(data.totalAmount || data.grandTotal || 0),
           status: data.status || 'Pending',
           items: data.items || [],
@@ -121,9 +132,18 @@ export default function BillingPage() {
         } as Invoice;
       });
       setInvoices(fetchedInvoices);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error fetching invoices: ", error);
-      toast({ title: "Database Error", description: "Could not load invoices. Please try again later.", variant: "destructive" });
+      if (error.code === 'failed-precondition') {
+        toast({
+            title: "Database Index Required",
+            description: `A query for invoices failed. Please ensure the necessary Firestore index for 'isoDate' (descending) is created. Check console for link. Error: ${error.message}`,
+            variant: "destructive",
+            duration: 10000, // Longer duration for important messages
+        });
+      } else {
+        toast({ title: "Database Error", description: `Could not load invoices: ${error.message}`, variant: "destructive" });
+      }
     } finally {
       setIsLoading(false);
     }
@@ -133,110 +153,70 @@ export default function BillingPage() {
     fetchInvoices();
   }, [fetchInvoices]);
 
-  /**
-   * Navigates to the page for creating new bills/invoices.
-   */
   const handleCreateNewInvoice = () => {
     router.push("/create-bill");
   };
 
-  /**
-   * Handles viewing an invoice. (Placeholder for detailed view)
-   * Future: Implement a detailed view page or modal for the invoice.
-   * @param {string} invoiceId - The ID of the invoice to view.
-   */
   const handleViewInvoice = (invoiceId: string) => {
     const invoice = invoices.find(inv => inv.id === invoiceId);
     toast({ 
         title: `View Invoice (Placeholder): ${invoice?.invoiceNumber || invoiceId}`, 
-        description: `Customer: ${invoice?.customerName}, Total: ${invoice?.displayTotal}. Detailed view to be implemented.` 
+        description: `Detailed view for Customer: ${invoice?.customerName}, Total: ${invoice?.displayTotal} is planned for future implementation.` 
     });
-    // Example: router.push(`/billing/${invoiceId}`);
   };
 
-  /**
-   * Handles downloading an invoice PDF. (Placeholder)
-   * Future: Implement PDF generation (e.g., using jsPDF or a backend service) and download.
-   * @param {string} invoiceId - The ID of the invoice to download.
-   */
   const handleDownloadPDF = (invoiceId: string) => {
-    toast({ title: "Download PDF (Placeholder)", description: `Downloading PDF for invoice ID: ${invoiceId}. PDF generation to be implemented.` });
+    toast({ title: "Download PDF (Placeholder)", description: `PDF generation for invoice ID: ${invoiceId} is a planned feature.` });
   };
   
-  /**
-   * Handles printing an invoice. (Placeholder)
-   * Future: Implement print functionality, possibly opening window.print() on a formatted page.
-   * @param {string} invoiceId - The ID of the invoice to print.
-   */
   const handlePrintInvoice = (invoiceId: string) => {
-    toast({ title: "Print Invoice (Placeholder)", description: `Printing invoice ID: ${invoiceId}. Print-friendly view/logic to be implemented.` });
+    toast({ title: "Print Invoice (Placeholder)", description: `Print-friendly view/logic for invoice ID: ${invoiceId} to be implemented.` });
   };
 
-  /**
-   * Navigates to the edit invoice page.
-   * @param {string} invoiceId - The ID of the invoice to edit.
-   */
   const handleEditInvoice = (invoiceId: string) => {
-    router.push(`/create-bill?editInvoiceId=${invoiceId}`); // Pass invoice ID as query param
+    router.push(`/create-bill?editInvoiceId=${invoiceId}`); 
   };
   
-  /**
-   * Updates the status of an invoice in Firestore.
-   * @param {string} invoiceId - The ID of the invoice to update.
-   * @param {Invoice['status']} newStatus - The new status to set.
-   */
   const handleUpdateStatus = async (invoiceId: string, newStatus: Invoice['status']) => {
     try {
       const invoiceRef = doc(db, "invoices", invoiceId);
-      await updateDoc(invoiceRef, { status: newStatus });
+      await updateDoc(invoiceRef, { status: newStatus, updatedAt: serverTimestamp() });
       toast({ title: "Status Updated", description: `Invoice status changed to ${newStatus}.` });
-      fetchInvoices(); // Refresh the list to show the updated status
-    } catch (error) {
+      fetchInvoices(); 
+    } catch (error: any) {
       console.error("Error updating invoice status: ", error);
-      toast({ title: "Update Error", description: "Could not update invoice status. Please try again.", variant: "destructive" });
+      toast({ title: "Update Error", description: `Could not update invoice status: ${error.message}`, variant: "destructive" });
     }
   };
 
-  /**
-   * Deletes an invoice from Firestore.
-   * Future: Implement soft delete (archiving by setting an 'isArchived' flag) instead of hard delete for auditing and recovery.
-   * @param {string} invoiceId - The ID of the invoice to delete.
-   * @param {string} invoiceNumber - The number of the invoice, for display in toast.
-   */
   const handleDeleteInvoice = async (invoiceId: string, invoiceNumber: string) => {
     try {
       await deleteDoc(doc(db, "invoices", invoiceId));
       toast({ title: "Invoice Deleted", description: `Invoice ${invoiceNumber} has been successfully deleted.`, variant: "default" });
-      fetchInvoices(); // Refresh the list
-    } catch (error) {
+      fetchInvoices(); 
+    } catch (error: any) {
       console.error("Error deleting invoice: ", error);
-      toast({ title: "Deletion Error", description: "Could not delete invoice. Please try again.", variant: "destructive" });
+      toast({ title: "Deletion Error", description: `Could not delete invoice: ${error.message}`, variant: "destructive" });
     }
   };
   
-  /**
-   * Determines the badge variant based on invoice status for styling.
-   * @param {Invoice['status']} status - The status of the invoice.
-   * @returns {"default" | "secondary" | "destructive" | "outline"} The badge variant.
-   */
   const getBadgeVariant = (status: Invoice['status']): "default" | "secondary" | "destructive" | "outline" => {
     switch (status) {
       case "Paid":
-        return "default"; // Uses accent color for 'Paid' as defined in Badge component variants
+        return "default"; 
       case "Pending":
         return "secondary";
       case "Overdue":
         return "destructive";
       case "Partially Paid":
-        return "outline"; // Uses outline variant, can be styled further with custom classes
+        return "outline"; 
       case "Cancelled":
-        return "destructive"; // Similar to overdue or a distinct gray
+        return "destructive"; 
       default:
         return "secondary";
     }
   };
 
-  // Display loading state
   if (isLoading) {
     return <PageHeader title="Billing & Invoicing" description="Loading invoices from database..." icon={FileText} />;
   }
@@ -260,78 +240,82 @@ export default function BillingPage() {
           <CardDescription>A list of all generated invoices, fetched from Firestore. Most recent first.</CardDescription>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Invoice #</TableHead>
-                <TableHead>Customer</TableHead>
-                <TableHead>Date</TableHead>
-                <TableHead className="text-right">Total</TableHead>
-                <TableHead className="text-center">Status</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {invoices.map((invoice) => (
-                <TableRow key={invoice.id}>
-                  <TableCell className="font-medium">{invoice.invoiceNumber}</TableCell>
-                  <TableCell>{invoice.customerName}</TableCell>
-                  <TableCell>{invoice.date}</TableCell>
-                  <TableCell className="text-right">{invoice.displayTotal}</TableCell>
-                  <TableCell className="text-center">
-                    <Badge 
-                        variant={getBadgeVariant(invoice.status)}
-                        // Custom styling for specific statuses on top of variant
-                        className={
-                            invoice.status === "Paid" ? "bg-accent text-accent-foreground" : 
-                            invoice.status === "Partially Paid" ? "border-yellow-500 text-yellow-600 dark:border-yellow-400 dark:text-yellow-300" :
-                            invoice.status === "Cancelled" ? "bg-muted text-muted-foreground border-muted-foreground/30" : ""
-                        }
-                    >
-                      {invoice.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-right">
-                     <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon">
-                          <MoreHorizontal className="h-4 w-4" />
-                           <span className="sr-only">Actions for {invoice.invoiceNumber}</span>
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => handleViewInvoice(invoice.id)}>
-                            <Eye className="mr-2 h-4 w-4" /> View Details
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleDownloadPDF(invoice.id)}>
-                            <Download className="mr-2 h-4 w-4" /> Download PDF
-                        </DropdownMenuItem>
-                         <DropdownMenuItem onClick={() => handlePrintInvoice(invoice.id)}>
-                            <Printer className="mr-2 h-4 w-4" /> Print Invoice
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem onClick={() => handleEditInvoice(invoice.id)}>
-                            <Edit className="mr-2 h-4 w-4" /> Edit Invoice
-                        </DropdownMenuItem>
-                        {/* Simplified status updates directly in menu for demo purposes */}
-                        {invoice.status !== "Paid" && <DropdownMenuItem onClick={() => handleUpdateStatus(invoice.id, "Paid")}>Mark as Paid</DropdownMenuItem>}
-                        {invoice.status !== "Pending" && <DropdownMenuItem onClick={() => handleUpdateStatus(invoice.id, "Pending")}>Mark as Pending</DropdownMenuItem>}
-                        {invoice.status !== "Overdue" && <DropdownMenuItem onClick={() => handleUpdateStatus(invoice.id, "Overdue")}>Mark as Overdue</DropdownMenuItem>}
-                        {invoice.status !== "Cancelled" && <DropdownMenuItem onClick={() => handleUpdateStatus(invoice.id, "Cancelled")}>Mark as Cancelled</DropdownMenuItem>}
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem onClick={() => handleDeleteInvoice(invoice.id, invoice.invoiceNumber)} className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground">
-                            <Trash2 className="mr-2 h-4 w-4" /> Delete Invoice
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
+          {invoices.length > 0 ? (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Invoice #</TableHead>
+                  <TableHead>Customer</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
+                  <TableHead className="text-center">Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-          {invoices.length === 0 && !isLoading && (
-            <div className="text-center py-8 text-muted-foreground">
-                No invoices found in the database.
+              </TableHeader>
+              <TableBody>
+                {invoices.map((invoice) => (
+                  <TableRow key={invoice.id}>
+                    <TableCell className="font-medium">{invoice.invoiceNumber}</TableCell>
+                    <TableCell>{invoice.customerName}</TableCell>
+                    <TableCell>{invoice.date}</TableCell>
+                    <TableCell className="text-right">{invoice.displayTotal}</TableCell>
+                    <TableCell className="text-center">
+                      <Badge 
+                          variant={getBadgeVariant(invoice.status)}
+                          className={
+                              invoice.status === "Paid" ? "bg-accent text-accent-foreground" : 
+                              invoice.status === "Partially Paid" ? "border-yellow-500 text-yellow-600 dark:border-yellow-400 dark:text-yellow-300 bg-transparent" : // Added bg-transparent for better theme compatibility
+                              invoice.status === "Cancelled" ? "bg-muted text-muted-foreground border-muted-foreground/30" : ""
+                          }
+                      >
+                        {invoice.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                       <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon">
+                            <MoreHorizontal className="h-4 w-4" />
+                             <span className="sr-only">Actions for {invoice.invoiceNumber}</span>
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => handleViewInvoice(invoice.id)}>
+                              <Eye className="mr-2 h-4 w-4" /> View Details
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleDownloadPDF(invoice.id)}>
+                              <Download className="mr-2 h-4 w-4" /> Download PDF
+                          </DropdownMenuItem>
+                           <DropdownMenuItem onClick={() => handlePrintInvoice(invoice.id)}>
+                              <Printer className="mr-2 h-4 w-4" /> Print Invoice
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem onClick={() => handleEditInvoice(invoice.id)}>
+                              <Edit className="mr-2 h-4 w-4" /> Edit Invoice
+                          </DropdownMenuItem>
+                          {invoice.status !== "Paid" && <DropdownMenuItem onClick={() => handleUpdateStatus(invoice.id, "Paid")}>Mark as Paid</DropdownMenuItem>}
+                          {invoice.status !== "Pending" && <DropdownMenuItem onClick={() => handleUpdateStatus(invoice.id, "Pending")}>Mark as Pending</DropdownMenuItem>}
+                          {invoice.status !== "Overdue" && <DropdownMenuItem onClick={() => handleUpdateStatus(invoice.id, "Overdue")}>Mark as Overdue</DropdownMenuItem>}
+                          {invoice.status !== "Cancelled" && <DropdownMenuItem onClick={() => handleUpdateStatus(invoice.id, "Cancelled")}>Mark as Cancelled</DropdownMenuItem>}
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem onClick={() => handleDeleteInvoice(invoice.id, invoice.invoiceNumber)} className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground">
+                              <Trash2 className="mr-2 h-4 w-4" /> Delete Invoice
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-10 text-center">
+                <AlertCircle className="h-16 w-16 text-muted-foreground mb-4" />
+                <p className="text-xl font-semibold text-muted-foreground">No Invoices Found</p>
+                <p className="text-sm text-muted-foreground mb-6">It seems there are no invoices in the database yet.</p>
+                <Button onClick={handleCreateNewInvoice}>
+                    <PlusCircle className="mr-2 h-4 w-4" /> Create First Invoice
+                </Button>
             </div>
           )}
         </CardContent>
@@ -339,4 +323,3 @@ export default function BillingPage() {
     </>
   );
 }
-

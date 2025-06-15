@@ -3,7 +3,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { PageHeader } from "@/components/page-header";
-import { DollarSign, Users, FileText, PackageMinus, LayoutDashboard, Package, BarChart3, TrendingUp, AlertCircle } from "lucide-react";
+import { DollarSign, Users, FileText, PackageMinus, LayoutDashboard, Package, BarChart3, TrendingUp, AlertCircle, Activity } from "lucide-react"; // Added Activity
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { collection, getDocs, query, where, limit, orderBy, Timestamp,getCountFromServer } from 'firebase/firestore'; 
@@ -23,7 +23,7 @@ import { format } from 'date-fns';
 interface DashboardMetric {
   title: string;
   value: string;
-  change?: string; // Optional: for displaying change like "+5 this week"
+  change?: string; 
   icon: React.ElementType;
   dataAiHint?: string; 
   link?: string; 
@@ -84,7 +84,7 @@ export default function AdminDashboardPage() {
       });
       updateMetric("Pending Invoices", { 
         value: pendingInvoicesSnapshot.size.toString(),
-        change: `Total Pending: ₹${totalPendingRevenue.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`
+        change: `Total Value: ₹${totalPendingRevenue.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`
       });
 
       // Fetch low stock items count
@@ -93,6 +93,7 @@ export default function AdminDashboardPage() {
       updateMetric("Low Stock Items", { value: lowStockSnapshot.data().count.toString() });
       
       // Fetch a sample of total revenue from recently paid invoices
+      // This query requires a composite index on 'status' (ASC) and 'isoDate' (DESC).
       const paidInvoicesQuery = query(collection(db, "invoices"), where("status", "==", "Paid"), orderBy("isoDate", "desc"), limit(100)); 
       const paidInvoicesSnapshot = await getDocs(paidInvoicesQuery);
       let totalPaidRevenue = 0;
@@ -108,22 +109,44 @@ export default function AdminDashboardPage() {
       const recentSalesSnapshot = await getDocs(recentSalesQuery);
       const salesData = recentSalesSnapshot.docs.map(doc => {
         const data = doc.data();
+        let formattedDate = "Invalid Date";
+        try {
+          if (data.isoDate) { // Assuming isoDate is a valid ISO string or Firestore Timestamp
+            const dateObj = (data.isoDate instanceof Timestamp) ? data.isoDate.toDate() : new Date(data.isoDate);
+            formattedDate = format(dateObj, "MMM dd");
+          }
+        } catch (e) {
+          console.warn("Error formatting date for recent sales chart item:", data.isoDate, e);
+        }
         return {
-          name: format(new Date(data.isoDate), "MMM dd"), 
-          uv: data.totalAmount, 
-          invoice: data.invoiceNumber,
-          customer: data.customerName,
+          name: formattedDate, 
+          uv: data.totalAmount || 0, // 'uv' is a common key for Recharts, can be 'sales' or 'revenue'
+          invoice: data.invoiceNumber || "N/A",
+          customer: data.customerName || "N/A",
         };
       });
       setRecentSales(salesData.reverse()); 
       setIsLoadingSalesChart(false);
 
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error fetching dashboard data: ", error);
+      if (error.code === 'failed-precondition') {
+        toast({
+            title: "Database Index Required",
+            description: `A database query failed because a required index is missing. Please check the console for a link to create it in Firebase. Error: ${error.message}`,
+            variant: "destructive",
+            duration: 10000,
+        });
+      } else {
+        toast({
+            title: "Dashboard Load Error",
+            description: "Could not load some dashboard metrics. Please try again later.",
+            variant: "destructive",
+        });
+      }
       metrics.forEach(m => updateMetric(m.title, { value: "Error", isLoading: false }));
       setIsLoadingSalesChart(false);
     }
-  // Removed `metrics` from dependency array to prevent potential re-fetch loops.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); 
 
@@ -136,7 +159,7 @@ export default function AdminDashboardPage() {
     <>
       <PageHeader
         title="Admin Dashboard"
-        description="Overview of your business metrics and quick access to common tasks."
+        description="Key business metrics and quick access to common tasks."
         icon={LayoutDashboard}
       />
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
@@ -170,21 +193,24 @@ export default function AdminDashboardPage() {
         <Card className="lg:col-span-2 shadow-lg rounded-xl">
           <CardHeader>
             <CardTitle className="font-headline text-foreground flex items-center"><TrendingUp className="mr-2 h-6 w-6 text-primary"/>Recent Sales Activity</CardTitle>
-            <CardDescription>A summary of recent sales trends. (Placeholder: Chart component integration needed)</CardDescription>
+            <CardDescription>A visual summary of recent sales trends from paid invoices.</CardDescription>
           </CardHeader>
           <CardContent>
             {isLoadingSalesChart ? (
                  <div className="h-64 flex items-center justify-center bg-muted/30 rounded-md border border-dashed">
+                    <Activity className="h-10 w-10 text-muted-foreground animate-spin mr-3" />
                     <p className="text-muted-foreground">Loading sales data for chart...</p>
                  </div>
             ) : recentSales.length > 0 ? (
-              <div className="h-64 flex items-center justify-center bg-muted/30 rounded-md border border-dashed">
-                <p className="text-muted-foreground p-4">Sales chart data loaded ({recentSales.length} entries). Actual chart component to be implemented here using this data.</p>
+              <div className="h-64 flex items-center justify-center bg-muted/20 dark:bg-muted/10 rounded-md border border-dashed">
+                {/* Future: Replace this div with an actual chart component (e.g., from recharts or shadcn/ui charts) */}
+                {/* <BarChart width={500} height={250} data={recentSales}> ... </BarChart> */}
+                <p className="text-muted-foreground p-4 text-center">Sales chart data loaded ({recentSales.length} entries).<br/> Actual chart component to be implemented here.</p>
               </div>
             ) : (
               <div className="h-64 flex items-center justify-center bg-muted/30 rounded-md border border-dashed">
                 <AlertCircle className="h-8 w-8 text-muted-foreground mr-2"/>
-                <p className="text-muted-foreground">No recent sales data available for the chart.</p>
+                <p className="text-muted-foreground">No recent sales data available to display.</p>
               </div>
             )}
           </CardContent>
@@ -193,13 +219,13 @@ export default function AdminDashboardPage() {
         <Card className="shadow-lg rounded-xl">
           <CardHeader>
             <CardTitle className="font-headline text-foreground">Quick Actions</CardTitle>
-             <CardDescription>Access common administrative tasks quickly.</CardDescription>
+             <CardDescription>Access common administrative tasks efficiently.</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col space-y-3">
              {quickActions.map((action) => (
                 <Link href={action.href} key={action.label} passHref legacyBehavior>
                     <Button variant="outline" className="w-full h-auto justify-start p-3 text-left flex items-start gap-3 hover:bg-accent/10 transition-colors group">
-                        <action.icon className="h-6 w-6 text-primary mt-1 transition-transform group-hover:scale-110" />
+                        <action.icon className="h-6 w-6 text-primary mt-1 transition-transform group-hover:scale-110 shrink-0" />
                         <div className="flex-1">
                             <span className="font-medium text-foreground">{action.label}</span>
                             <p className="text-xs text-muted-foreground">{action.description}</p>
@@ -209,7 +235,7 @@ export default function AdminDashboardPage() {
             ))}
              <Link href="/managers" passHref legacyBehavior>
                 <Button variant="outline" className="w-full h-auto justify-start p-3 text-left flex items-start gap-3 hover:bg-accent/10 transition-colors group">
-                    <Users className="h-6 w-6 text-primary mt-1 transition-transform group-hover:scale-110" />
+                    <Users className="h-6 w-6 text-primary mt-1 transition-transform group-hover:scale-110 shrink-0" />
                     <div className="flex-1">
                         <span className="font-medium text-foreground">Manage Staff</span>
                         <p className="text-xs text-muted-foreground">Administer Store Manager accounts and permissions.</p>
@@ -222,4 +248,3 @@ export default function AdminDashboardPage() {
     </>
   );
 }
-

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PageHeader } from "@/components/page-header";
-import { UserCog, PlusCircle, MoreHorizontal, ShieldAlert, ShieldCheck, KeyRound } from "lucide-react";
+import { UserCog, PlusCircle, MoreHorizontal, ShieldAlert, ShieldCheck, KeyRound, Users } from "lucide-react"; // Added Users icon
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -19,7 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
 import { auth, db } from '@/lib/firebase/firebaseConfig';
-import { doc, setDoc, getDocs, collection, updateDoc, serverTimestamp, query, orderBy, Timestamp, where } from 'firebase/firestore'; // Added 'where'
+import { doc, setDoc, getDocs, collection, updateDoc, serverTimestamp, query, orderBy, Timestamp, where } from 'firebase/firestore'; 
 
 /**
  * @fileOverview Page for Admin to manage Store Manager accounts.
@@ -33,7 +33,6 @@ import { doc, setDoc, getDocs, collection, updateDoc, serverTimestamp, query, or
 
 /**
  * Interface representing a Store Manager document in Firestore.
- * This is typically stored in a 'users' collection with a 'role' field.
  */
 export interface Manager {
   id: string; // Firestore document ID (should be the same as Firebase Auth UID)
@@ -42,10 +41,10 @@ export interface Manager {
   status: "Active" | "Frozen"; // Application-level status
   authUid: string; // Firebase Auth UID
   role: "store_manager"; // Explicit role field
-  createdAt?: Timestamp; // Firestore Timestamp of creation
+  createdAt?: Timestamp; 
+  updatedAt?: Timestamp;
 }
 
-// Zod schema for the "Add New Manager" form validation
 const managerSchema = z.object({
   name: z.string().min(3, { message: "Name must be at least 3 characters." }),
   email: z.string().email({ message: "Invalid email address. This will be their login ID."}),
@@ -75,79 +74,74 @@ export default function ManageManagersPage() {
     defaultValues: { name: "", email: "", password: "" },
   });
 
-  /**
-   * Fetches the list of store managers from Firestore.
-   * Filters users by role 'store_manager' and orders them by name.
-   */
   const fetchManagers = useCallback(async () => {
     setIsLoading(true);
     try {
-      // Query the 'users' collection, filtering for documents where role is 'store_manager'
+      // Query requires a composite index on 'role' (ASC) and 'name' (ASC).
       const q = query(collection(db, "users"), where("role", "==", "store_manager"), orderBy("name", "asc"));
       const querySnapshot = await getDocs(q);
       const fetchedManagers = querySnapshot.docs.map(docSnapshot => {
         const data = docSnapshot.data();
         return {
-          id: docSnapshot.id, // Firestore document ID
+          id: docSnapshot.id, 
           name: data.name,
           email: data.email,
-          status: data.status || "Active", // Default to Active if status is missing
-          authUid: data.authUid, // This should be the Firebase Auth UID
-          role: data.role, // Should be 'store_manager'
+          status: data.status || "Active", 
+          authUid: data.authUid, 
+          role: data.role, 
           createdAt: data.createdAt,
+          updatedAt: data.updatedAt,
         } as Manager;
       });
       setManagers(fetchedManagers);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error fetching managers: ", error);
-      toast({ title: "Database Error", description: "Could not load managers from the database. Please try again.", variant: "destructive" });
+       if (error.code === 'failed-precondition') {
+        toast({
+            title: "Database Index Required",
+            description: `A query for managers failed. Please ensure the necessary Firestore index is created. Check console for a link to create it. Error: ${error.message}`,
+            variant: "destructive",
+            duration: 10000,
+        });
+      } else {
+        toast({ title: "Database Error", description: `Could not load managers: ${error.message}`, variant: "destructive" });
+      }
     } finally {
       setIsLoading(false);
     }
   }, [toast]);
 
-  // Fetch managers when the component mounts
   useEffect(() => {
     fetchManagers();
   }, [fetchManagers]);
 
-
-  /**
-   * Handles submission of the "Add New Manager" form.
-   * 1. Creates a new user in Firebase Authentication.
-   * 2. Creates a corresponding manager profile in Firestore's 'users' collection,
-   *    using the Firebase Auth UID as the document ID and setting role to 'store_manager'.
-   * @param {ManagerFormValues} values - The validated form values.
-   */
   const handleAddManagerSubmit = async (values: ManagerFormValues) => {
     try {
-      // Create user in Firebase Authentication
       const userCredential = await createUserWithEmailAndPassword(auth, values.email, values.password);
-      const newUserId = userCredential.user.uid; // This is the Firebase Auth UID
+      const newUserId = userCredential.user.uid; 
       
-      // Prepare manager data for Firestore
-      const newManagerData: Omit<Manager, 'id' | 'createdAt'> & {createdAt: any} = { 
+      const newManagerData = { 
         name: values.name, 
         email: values.email, 
-        status: "Active", // Default status
-        authUid: newUserId, // Store the Auth UID
-        role: "store_manager", // Explicitly set role
-        createdAt: serverTimestamp() // Firestore server-side timestamp
+        status: "Active", 
+        authUid: newUserId, 
+        role: "store_manager", 
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
       };
       
-      // Create manager document in Firestore 'users' collection, using authUid as the document ID
       await setDoc(doc(db, "users", newUserId), newManagerData); 
       
       toast({
         title: "Manager Added Successfully",
-        description: `${values.name} can now log in. A password reset might be needed for them to set their own password if this was temporary.`,
+        description: `${values.name} can now log in. They may need to reset their password to set their own.`,
       });
-      fetchManagers(); // Refresh manager list
-      form.reset(); // Reset form fields
-      setIsAddManagerDialogOpen(false); // Close the dialog
+      fetchManagers(); 
+      form.reset(); 
+      setIsAddManagerDialogOpen(false); 
     } catch (error: any) {
       console.error("Error adding manager: ", error);
-      let errorMessage = "Failed to add manager. Please check the details and try again.";
+      let errorMessage = `Failed to add manager: ${error.message}`;
       if (error.code === 'auth/email-already-in-use') {
         errorMessage = "This email address is already registered. Please use a different email.";
       } else if (error.code === 'auth/weak-password') {
@@ -157,52 +151,36 @@ export default function ManageManagersPage() {
     }
   };
 
-  /**
-   * Opens the confirmation dialog for toggling a manager's account status.
-   * @param {Manager} manager - The manager whose status is to be toggled.
-   */
   const openToggleStatusDialog = (manager: Manager) => {
     setManagerToToggleStatus(manager);
     setIsToggleStatusConfirmOpen(true);
   };
 
-  /**
-   * Toggles a manager's account status (Active/Frozen) in their Firestore document.
-   * 'Frozen' status typically means the user cannot perform actions within the application,
-   * though their Firebase Auth account remains active unless disabled separately in Firebase Console.
-   */
   const confirmToggleStatus = async () => {
     if (!managerToToggleStatus) return;
     const newStatus = managerToToggleStatus.status === "Active" ? "Frozen" : "Active";
     try {
-      const managerRef = doc(db, "users", managerToToggleStatus.authUid); // Use authUid to reference the document
-      await updateDoc(managerRef, { status: newStatus });
+      const managerRef = doc(db, "users", managerToToggleStatus.authUid); 
+      await updateDoc(managerRef, { status: newStatus, updatedAt: serverTimestamp() });
       toast({
         title: `Manager Account ${newStatus === "Active" ? "Activated" : "Frozen"}`,
         description: `${managerToToggleStatus.name}'s account status is now ${newStatus.toLowerCase()}.`,
       });
-      fetchManagers(); // Refresh list to reflect the change
-    } catch (error) {
+      fetchManagers(); 
+    } catch (error: any) {
       console.error("Error updating manager status: ", error);
-      toast({ title: "Status Update Error", description: "Failed to update manager status in the database.", variant: "destructive" });
+      toast({ title: "Status Update Error", description: `Failed to update manager status: ${error.message}`, variant: "destructive" });
     } finally {
-        setIsToggleStatusConfirmOpen(false); // Close confirmation dialog
+        setIsToggleStatusConfirmOpen(false); 
         setManagerToToggleStatus(null);
     }
   };
 
-  /**
-   * Opens the confirmation dialog for sending a password reset email.
-   * @param {Manager} manager - The manager for whom to reset the password.
-   */
   const openResetPasswordDialog = (manager: Manager) => {
     setManagerToResetPassword(manager);
     setIsResetPasswordConfirmOpen(true);
   };
 
-  /**
-   * Sends a password reset email to the manager using Firebase Authentication.
-   */
   const confirmResetPassword = async () => {
     if (!managerToResetPassword) return;
     try {
@@ -215,12 +193,11 @@ export default function ManageManagersPage() {
       console.error("Error sending password reset email: ", error);
       toast({ title: "Password Reset Error", description: error.message || "Failed to send password reset email. Please try again.", variant: "destructive" });
     } finally {
-        setIsResetPasswordConfirmOpen(false); // Close confirmation dialog
+        setIsResetPasswordConfirmOpen(false); 
         setManagerToResetPassword(null);
     }
   };
 
-  // Display loading state while fetching managers
   if (isLoading) {
     return <PageHeader title="Manage Managers" description="Loading manager data from database..." icon={UserCog} />;
   }
@@ -239,17 +216,15 @@ export default function ManageManagersPage() {
         }
       />
 
-      {/* Add Manager Dialog */}
       <Dialog open={isAddManagerDialogOpen} onOpenChange={(isOpen) => {
           setIsAddManagerDialogOpen(isOpen);
-          if (!isOpen) form.reset(); // Reset form when dialog closes
+          if (!isOpen) form.reset(); 
         }}>
-        <DialogContent className="sm:max-w-[480px]">
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Add New Store Manager</DialogTitle>
             <DialogDescription>
               Fill in the details to create a new Store Manager account. The email will be their login ID.
-              The manager will receive instructions to set their password if this is temporary.
             </DialogDescription>
           </DialogHeader>
           <Form {...form}>
@@ -289,7 +264,6 @@ export default function ManageManagersPage() {
         </DialogContent>
       </Dialog>
       
-      {/* Confirm Toggle Status Dialog */}
       <AlertDialog open={isToggleStatusConfirmOpen} onOpenChange={(isOpen) => { if(!isOpen) setManagerToToggleStatus(null); setIsToggleStatusConfirmOpen(isOpen);}}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -303,14 +277,13 @@ export default function ManageManagersPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => {setIsToggleStatusConfirmOpen(false); setManagerToToggleStatus(null);}}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmToggleStatus} className={managerToToggleStatus?.status === "Active" ? "bg-destructive hover:bg-destructive/90" : ""}>
+            <AlertDialogAction onClick={confirmToggleStatus} className={managerToToggleStatus?.status === "Active" ? "bg-destructive hover:bg-destructive/90" : "bg-green-600 hover:bg-green-700"}>
               {managerToToggleStatus?.status === "Active" ? "Freeze Account" : "Unfreeze Account"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Confirm Reset Password Dialog */}
       <AlertDialog open={isResetPasswordConfirmOpen} onOpenChange={(isOpen) => { if(!isOpen) setManagerToResetPassword(null); setIsResetPasswordConfirmOpen(isOpen);}}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -328,7 +301,6 @@ export default function ManageManagersPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Manager List Table */}
       <Card className="shadow-lg rounded-xl">
         <CardHeader>
           <CardTitle className="font-headline text-foreground">Manager List</CardTitle>
@@ -381,9 +353,14 @@ export default function ManageManagersPage() {
                 ))}
               </TableBody>
             </Table>
-          ) : ( // Display message if no managers are found
-            <div className="text-center py-8 text-muted-foreground">
-                No managers found in the database. Click "Add New Manager" to get started.
+          ) : ( 
+            <div className="flex flex-col items-center justify-center py-10 text-center">
+                <Users className="h-16 w-16 text-muted-foreground mb-4" />
+                <p className="text-xl font-semibold text-muted-foreground">No Managers Found</p>
+                <p className="text-sm text-muted-foreground mb-6">Create manager accounts to grant access to store operations.</p>
+                <Button onClick={() => { form.reset(); setIsAddManagerDialogOpen(true); }}>
+                    <PlusCircle className="mr-2 h-4 w-4" /> Add New Manager
+                </Button>
             </div>
           )}
         </CardContent>
@@ -391,4 +368,3 @@ export default function ManageManagersPage() {
     </>
   );
 }
-

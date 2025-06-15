@@ -6,14 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PageHeader } from "@/components/page-header";
-import { Package, PlusCircle, MoreHorizontal, Edit, Trash2 } from "lucide-react";
+import { Package, PlusCircle, MoreHorizontal, Edit, Trash2, PackageSearch } from "lucide-react"; // Added PackageSearch
 import Image from "next/image"; // Next.js Image component for optimized images
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea"; // Added for product description
+import { Textarea } from "@/components/ui/textarea"; 
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -46,10 +46,9 @@ export interface Product {
   dataAiHint: string; // Keywords for AI-assisted image searching or placeholder generation
   createdAt?: Timestamp; // Firestore Timestamp of creation
   updatedAt?: Timestamp; // Firestore Timestamp of last update
-  // Future fields: supplierId, purchasePrice, lowStockThreshold, hsnCode, taxRate
 }
 
-// Predefined lists for form dropdowns - can be expanded or fetched from Firestore in future
+// Predefined lists for form dropdowns
 const PRODUCT_CATEGORIES = ["Widgets", "Gizmos", "Doodads", "Thingamajigs", "Electronics", "Stationery", "Software", "Apparel", "Home Goods", "Building Materials", "Pipes & Fittings", "Cement", "Bricks", "Steel Bars", "Hardware", "Tools", "Paint", "Other"];
 const UNITS_OF_MEASURE = ["pcs", "kg", "meter", "sq ft", "liter", "box", "bag", "set", "dozen", "ton", "bundle", "unit", "pair", "roll", "nos"];
 
@@ -61,14 +60,14 @@ const productSchema = z.object({
   category: z.string().min(1, { message: "Please select a product category." }),
   unitOfMeasure: z.string().min(1, { message: "Please select a unit of measure."}),
   numericPrice: z.preprocess(
-    (val) => parseFloat(String(val).replace(/[^0-9.]+/g, "")), // Clean and parse price
+    (val) => parseFloat(String(val).replace(/[^0-9.]+/g, "")), 
     z.number({invalid_type_error: "Price must be a valid number."}).positive({ message: "Price must be a positive value." })
   ),
   stock: z.preprocess(
-    (val) => parseInt(String(val).replace(/[^0-9]+/g, ""), 10), // Clean and parse stock
+    (val) => parseInt(String(val).replace(/[^0-9]+/g, ""), 10), 
     z.number({invalid_type_error: "Stock quantity must be a whole number."}).int().min(0, { message: "Stock quantity cannot be negative." })
   ),
-  dataAiHint: z.string().min(2, {message: "Image hint must be at least 2 characters."}).max(30, {message: "Image hint too long (max 30 characters)."}),
+  dataAiHint: z.string().min(2, {message: "Image hint must be at least 2 characters."}).max(30, {message: "Image hint too long (max 30 chars). Use 1-2 keywords."}),
 });
 
 type ProductFormValues = z.infer<typeof productSchema>;
@@ -96,16 +95,11 @@ export default function ProductsPage() {
 
   const { toast } = useToast();
 
-  // React Hook Form setup
   const form = useForm<ProductFormValues>({
     resolver: zodResolver(productSchema),
-    defaultValues: { name: "", sku: "", category: "", unitOfMeasure: "pcs", numericPrice: 0, stock: 0, dataAiHint: "", description: "" },
+    defaultValues: { name: "", sku: "", category: PRODUCT_CATEGORIES[0] || "", unitOfMeasure: UNITS_OF_MEASURE[0] || "pcs", numericPrice: 0, stock: 0, dataAiHint: "", description: "" },
   });
 
-  /**
-   * Fetches product list from Firestore, ordered by name.
-   * Transforms Firestore data into the Product interface for UI display.
-   */
   const fetchProducts = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -119,32 +113,29 @@ export default function ProductsPage() {
              sku: data.sku,
              description: data.description || "",
              numericPrice: data.numericPrice || 0,
-             price: formatCurrency(data.numericPrice || 0), // Format price for display
+             price: formatCurrency(data.numericPrice || 0),
              stock: data.stock || 0,
              category: data.category || "Other",
              unitOfMeasure: data.unitOfMeasure || "pcs",
-             // Generate a placeholder image URL using product name initials if no imageUrl is present
-             imageUrl: data.imageUrl || `https://placehold.co/40x40.png?text=${encodeURIComponent(data.name.substring(0,2).toUpperCase())}`,
-             dataAiHint: data.dataAiHint || "product item", // Default AI hint
+             imageUrl: data.imageUrl || `https://placehold.co/60x60.png?text=${encodeURIComponent(data.name.substring(0,2).toUpperCase())}`,
+             dataAiHint: data.dataAiHint || "product item",
              createdAt: data.createdAt,
              updatedAt: data.updatedAt,
          } as Product;
       });
       setProductList(fetchedProducts);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error fetching products: ", error);
-      toast({ title: "Database Error", description: "Could not load products. Please try again.", variant: "destructive" });
+      toast({ title: "Database Error", description: `Could not load products: ${error.message}`, variant: "destructive" });
     } finally {
       setIsLoading(false);
     }
   }, [toast]);
 
-  // Fetch products when the component mounts
   useEffect(() => {
     fetchProducts();
   }, [fetchProducts]);
 
-  // Effect to reset form when editingProduct or dialog state changes
   useEffect(() => {
     if (editingProduct && isFormDialogOpen) {
       form.reset({
@@ -157,89 +148,65 @@ export default function ProductsPage() {
         stock: editingProduct.stock,
         dataAiHint: editingProduct.dataAiHint,
       });
-    } else if (isFormDialogOpen && !editingProduct) { // For "Add New"
+    } else if (isFormDialogOpen && !editingProduct) { 
       form.reset({ name: "", sku: "", description: "", category: PRODUCT_CATEGORIES[0] || "", unitOfMeasure: UNITS_OF_MEASURE[0] || "pcs", numericPrice: 0, stock: 0, dataAiHint: "" });
     }
   }, [editingProduct, isFormDialogOpen, form]);
 
-  /**
-   * Handles submission of the product form (for both add and edit).
-   * Saves or updates the product data in Firestore.
-   * @param {ProductFormValues} values - The validated form values.
-   */
   const handleFormSubmit = async (values: ProductFormValues) => {
     try {
       const productData = { 
          ...values, 
-         // Generate placeholder image URL based on name initials and dataAiHint for better placeholder
-         imageUrl: `https://placehold.co/100x100.png?text=${encodeURIComponent(values.name.substring(0,2).toUpperCase())}`,
-         // `price` (formatted string) is not stored, only `numericPrice`. It's formatted on retrieval.
+         imageUrl: `https://placehold.co/100x100.png?text=${encodeURIComponent(values.name.substring(0,2).toUpperCase())}`, // Placeholder, AI hint is for future image search
       };
 
-      if (editingProduct) { // Update existing product
+      if (editingProduct) { 
         const productRef = doc(db, "products", editingProduct.id);
         await updateDoc(productRef, {...productData, updatedAt: serverTimestamp()});
         toast({ title: "Product Updated", description: `Product "${values.name}" has been updated successfully.` });
-      } else { // Add new product
+      } else { 
         await addDoc(collection(db, "products"), {...productData, createdAt: serverTimestamp(), updatedAt: serverTimestamp()});
         toast({ title: "Product Added", description: `New product "${values.name}" has been added successfully.` });
       }
-      fetchProducts(); // Refresh the product list
-      setIsFormDialogOpen(false); // Close the dialog
-      setEditingProduct(null); // Clear editing state
-    } catch (error) {
+      fetchProducts(); 
+      setIsFormDialogOpen(false); 
+      setEditingProduct(null); 
+    } catch (error: any) {
       console.error("Error saving product: ", error);
-      toast({ title: "Save Error", description: "Failed to save product to the database. Please try again.", variant: "destructive" });
+      toast({ title: "Save Error", description: `Failed to save product: ${error.message}`, variant: "destructive" });
     }
   };
   
-  /**
-   * Opens the dialog for adding a new product.
-   */
   const openAddDialog = () => {
     setEditingProduct(null);
-    // Form reset is handled by useEffect
     setIsFormDialogOpen(true);
   };
   
-  /**
-   * Opens the dialog for editing an existing product and pre-fills the form.
-   * @param {Product} product - The product to edit.
-   */
   const openEditDialog = (product: Product) => {
     setEditingProduct(product);
-    // Form reset with product data is handled by useEffect
     setIsFormDialogOpen(true);
   };
 
-  /**
-   * Opens the delete confirmation dialog for a product.
-   * @param {Product} product - The product to delete.
-   */
   const openDeleteDialog = (product: Product) => {
     setProductToDelete(product);
     setIsDeleteConfirmOpen(true);
   };
 
-  /**
-   * Confirms and executes deletion of a product from Firestore.
-   */
   const confirmDelete = async () => {
     if (!productToDelete) return;
     try {
       await deleteDoc(doc(db, "products", productToDelete.id));
       toast({ title: "Product Deleted", description: `Product "${productToDelete.name}" has been deleted successfully.`, variant: "default" });
-      fetchProducts(); // Refresh the list
-    } catch (error) {
+      fetchProducts(); 
+    } catch (error: any) {
       console.error("Error deleting product: ", error);
-      toast({ title: "Deletion Error", description: "Failed to delete product from the database. Please try again.", variant: "destructive" });
+      toast({ title: "Deletion Error", description: `Failed to delete product: ${error.message}`, variant: "destructive" });
     } finally {
       setProductToDelete(null);
-      setIsDeleteConfirmOpen(false); // Close confirmation dialog
+      setIsDeleteConfirmOpen(false); 
     }
   };
 
-  // Display loading state
   if (isLoading) {
     return <PageHeader title="Product Database" description="Loading product data from database..." icon={Package} />;
   }
@@ -253,17 +220,16 @@ export default function ProductsPage() {
         actions={<Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add New Product</Button>}
       />
 
-      {/* Dialog for Adding or Editing Products */}
       <Dialog open={isFormDialogOpen} onOpenChange={(isOpen) => { 
           if(!isOpen) { 
             setIsFormDialogOpen(false); 
             setEditingProduct(null); 
-            form.reset(); // Ensure form is reset when dialog closes
+            form.reset(); 
           } else { 
             setIsFormDialogOpen(isOpen); 
           }
       }}>
-        <DialogContent className="sm:max-w-lg"> {/* Increased max-width for more space */}
+        <DialogContent className="sm:max-w-xl"> 
           <DialogHeader>
             <DialogTitle>{editingProduct ? "Edit Product Details" : "Add New Product"}</DialogTitle>
             <DialogDescription>
@@ -271,7 +237,7 @@ export default function ProductsPage() {
             </DialogDescription>
           </DialogHeader>
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-4 py-2 max-h-[75vh] overflow-y-auto pr-3"> {/* Added padding-right for scrollbar */}
+            <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-4 py-2 max-h-[75vh] overflow-y-auto pr-4"> 
               <FormField control={form.control} name="name" render={({ field }) => (<FormItem><FormLabel>Product Name</FormLabel><FormControl><Input placeholder="e.g., Premium Widget Model X" {...field} /></FormControl><FormMessage /></FormItem>)} />
               <FormField control={form.control} name="sku" render={({ field }) => (<FormItem><FormLabel>SKU (Stock Keeping Unit)</FormLabel><FormControl><Input placeholder="e.g., WIDGET-X-PREM001" {...field} /></FormControl><FormMessage /></FormItem>)} />
               <FormField control={form.control} name="description" render={({ field }) => (<FormItem><FormLabel>Description (Optional)</FormLabel><FormControl><Textarea placeholder="Detailed description of the product, features, specifications..." {...field} rows={3} /></FormControl><FormMessage /></FormItem>)} />
@@ -297,8 +263,8 @@ export default function ProductsPage() {
                 <FormField control={form.control} name="numericPrice" render={({ field }) => (<FormItem><FormLabel>Price (₹)</FormLabel><FormControl><Input type="number" step="0.01" placeholder="e.g., 1999.00" {...field} onChange={e => field.onChange(parseFloat(e.target.value) || 0)} /></FormControl><FormMessage /></FormItem>)} />
                 <FormField control={form.control} name="stock" render={({ field }) => (<FormItem><FormLabel>Stock Quantity</FormLabel><FormControl><Input type="number" placeholder="e.g., 100" {...field} onChange={e => field.onChange(parseInt(e.target.value, 10) || 0)} /></FormControl><FormMessage /></FormItem>)} />
               </div>
-              <FormField control={form.control} name="dataAiHint" render={({ field }) => (<FormItem><FormLabel>Image Hint</FormLabel><FormControl><Input placeholder="e.g., blue gadget or shiny pipe" {...field} /></FormControl><FormDescription>Keywords for placeholder image (e.g., &quot;steel pipe&quot;, &quot;red brick&quot;). Max 2-3 words.</FormDescription><FormMessage /></FormItem>)} />
-              <DialogFooter className="pt-4 sticky bottom-0 bg-background pb-2 border-t"> {/* Added border-t */}
+              <FormField control={form.control} name="dataAiHint" render={({ field }) => (<FormItem><FormLabel>Image Hint</FormLabel><FormControl><Input placeholder="e.g., blue gadget or shiny pipe" {...field} /></FormControl><FormDescription>Keywords for placeholder image (e.g., &quot;steel pipe&quot;). Max 2-3 words.</FormDescription><FormMessage /></FormItem>)} />
+              <DialogFooter className="pt-4 sticky bottom-0 bg-background pb-2 border-t -mx-6 px-6"> 
                 <DialogClose asChild><Button type="button" variant="outline">Cancel</Button></DialogClose>
                 <Button type="submit" disabled={form.formState.isSubmitting}>
                   {form.formState.isSubmitting ? (editingProduct ? "Saving..." : "Adding...") : (editingProduct ? "Save Changes" : "Add Product")}
@@ -309,7 +275,6 @@ export default function ProductsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
       <AlertDialog open={isDeleteConfirmOpen} onOpenChange={(isOpen) => { if(!isOpen) setProductToDelete(null); setIsDeleteConfirmOpen(isOpen);}}>
         <AlertDialogContent>
           <AlertDialogHeader><AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle><AlertDialogDescription>This action cannot be undone. This will permanently delete the product &quot;{productToDelete?.name}&quot; from the database.</AlertDialogDescription></AlertDialogHeader>
@@ -317,60 +282,66 @@ export default function ProductsPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Product List Table */}
       <Card className="shadow-lg rounded-xl">
         <CardHeader><CardTitle className="font-headline text-foreground">Product List</CardTitle><CardDescription>A comprehensive list of all available products from Firestore, ordered by name.</CardDescription></CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader><TableRow>
-                <TableHead className="w-[60px] sm:w-[80px]">Image</TableHead>
-                <TableHead>Name</TableHead>
-                <TableHead className="hidden md:table-cell">SKU</TableHead>
-                <TableHead className="hidden lg:table-cell">Category</TableHead>
-                <TableHead>Unit</TableHead>
-                <TableHead className="text-right">Price (₹)</TableHead>
-                <TableHead className="text-right">Stock</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-            </TableRow></TableHeader>
-            <TableBody>
-              {productList.map((product) => (
-                <TableRow key={product.id}>
-                  <TableCell>
-                    <Image 
-                        src={product.imageUrl} 
-                        alt={product.name} 
-                        width={40} 
-                        height={40} 
-                        className="rounded-md object-cover border" 
-                        data-ai-hint={product.dataAiHint}
-                        onError={(e) => { e.currentTarget.src = `https://placehold.co/40x40.png?text=${encodeURIComponent(product.name.substring(0,2).toUpperCase())}`; }} // Fallback for broken images
-                    />
-                  </TableCell>
-                  <TableCell className="font-medium">{product.name}</TableCell>
-                  <TableCell className="hidden md:table-cell">{product.sku}</TableCell>
-                  <TableCell className="hidden lg:table-cell">{product.category}</TableCell>
-                  <TableCell>{product.unitOfMeasure}</TableCell>
-                  <TableCell className="text-right font-semibold">{product.price}</TableCell>
-                  <TableCell className="text-right">{product.stock}</TableCell>
-                  <TableCell className="text-right">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /><span className="sr-only">Actions for {product.name}</span></Button></DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => openEditDialog(product)}><Edit className="mr-2 h-4 w-4" />Edit Product</DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => openDeleteDialog(product)} className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground">
-                            <Trash2 className="mr-2 h-4 w-4" />Delete Product
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-           {productList.length === 0 && !isLoading && (<div className="text-center py-8 text-muted-foreground">No products found in the database. Click "Add New Product" to get started.</div>)}
+          {productList.length > 0 ? (
+            <Table>
+              <TableHeader><TableRow>
+                  <TableHead className="w-[60px] sm:w-[80px]">Image</TableHead>
+                  <TableHead>Name</TableHead>
+                  <TableHead className="hidden md:table-cell">SKU</TableHead>
+                  <TableHead className="hidden lg:table-cell">Category</TableHead>
+                  <TableHead>Unit</TableHead>
+                  <TableHead className="text-right">Price (₹)</TableHead>
+                  <TableHead className="text-right">Stock</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+              </TableRow></TableHeader>
+              <TableBody>
+                {productList.map((product) => (
+                  <TableRow key={product.id}>
+                    <TableCell>
+                      <Image 
+                          src={product.imageUrl} 
+                          alt={product.name} 
+                          width={40} 
+                          height={40} 
+                          className="rounded-md object-cover border" 
+                          data-ai-hint={product.dataAiHint}
+                          onError={(e) => { e.currentTarget.src = `https://placehold.co/40x40.png?text=${encodeURIComponent(product.name.substring(0,2).toUpperCase())}`; }} 
+                      />
+                    </TableCell>
+                    <TableCell className="font-medium">{product.name}</TableCell>
+                    <TableCell className="hidden md:table-cell">{product.sku}</TableCell>
+                    <TableCell className="hidden lg:table-cell">{product.category}</TableCell>
+                    <TableCell>{product.unitOfMeasure}</TableCell>
+                    <TableCell className="text-right font-semibold">{product.price}</TableCell>
+                    <TableCell className="text-right">{product.stock}</TableCell>
+                    <TableCell className="text-right">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /><span className="sr-only">Actions for {product.name}</span></Button></DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => openEditDialog(product)}><Edit className="mr-2 h-4 w-4" />Edit Product</DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => openDeleteDialog(product)} className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground">
+                              <Trash2 className="mr-2 h-4 w-4" />Delete Product
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+             <div className="flex flex-col items-center justify-center py-10 text-center">
+                <PackageSearch className="h-16 w-16 text-muted-foreground mb-4" />
+                <p className="text-xl font-semibold text-muted-foreground">No Products Found</p>
+                <p className="text-sm text-muted-foreground mb-6">Get started by adding your first product to the database.</p>
+                <Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add New Product</Button>
+            </div>
+           )}
         </CardContent>
       </Card>
     </>
   );
 }
-

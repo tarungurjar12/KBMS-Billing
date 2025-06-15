@@ -1,5 +1,6 @@
 
 import type {Config} from 'tailwindcss';
+import defaultTheme from 'tailwindcss/defaultTheme'; // Import defaultTheme
 
 const config = {
   darkMode: ['class'],
@@ -19,11 +20,10 @@ const config = {
     },
     extend: {
       fontFamily: {
-        // Use CSS variable for Inter, or direct stack
-        // body: ['var(--font-inter)', 'Inter', 'sans-serif'], 
-        // headline: ['var(--font-inter)', 'Inter', 'sans-serif'],
-        body: ['Inter', 'system-ui', 'sans-serif'], // Simplified stack
-        headline: ['Inter', 'system-ui', 'sans-serif'], // Simplified stack
+        // Use CSS variable for Inter, and fallback to Tailwind's default sans-serif stack
+        sans: ['var(--font-inter)', ...defaultTheme.fontFamily.sans],
+        // Remove specific body/headline if 'sans' covers it, or define them explicitly using var(--font-inter)
+        // headline: ['var(--font-inter)', ...defaultTheme.fontFamily.sans], 
         code: ['monospace'],
       },
       colors: {
@@ -86,14 +86,13 @@ const config = {
       },
       keyframes: {
         'accordion-down': {
-          from: { height: "0" }, // Use string "0"
+          from: { height: "0" }, 
           to: { height: 'var(--radix-accordion-content-height)' },
         },
         'accordion-up': {
           from: { height: 'var(--radix-accordion-content-height)' },
-          to: { height: "0" }, // Use string "0"
+          to: { height: "0" }, 
         },
-        // Adding standard ShadCN keyframes if they were missing
         "collapsible-down": {
           from: { height: "0" },
           to: { height: "var(--radix-collapsible-content-height)" },

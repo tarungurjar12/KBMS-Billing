@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PageHeader } from "@/components/page-header";
-import { Users, PlusCircle, MoreHorizontal, Edit, Trash2, Eye, CreditCard } from "lucide-react";
+import { Users, PlusCircle, MoreHorizontal, Edit, Trash2, Eye, CreditCard, UserPlus } from "lucide-react"; // Added UserPlus
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -17,7 +17,7 @@ import { z } from "zod";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { collection, addDoc, getDocs, doc, updateDoc, deleteDoc, serverTimestamp, query, orderBy, Timestamp } from 'firebase/firestore';
-import { db, auth } from '@/lib/firebase/firebaseConfig'; // Added auth
+import { db, auth } from '@/lib/firebase/firebaseConfig'; 
 import { useRouter, useSearchParams } from 'next/navigation';
 
 
@@ -52,7 +52,9 @@ const customerSchema = z.object({
   name: z.string().min(2, { message: "Name must be at least 2 characters." }),
   email: z.string().email({ message: "Invalid email address." }).optional().or(z.literal('')),
   phone: z.string().min(10, { message: "Phone number must be at least 10 digits." }).regex(/^\d+[\d\s-]*$/, { message: "Phone number must contain valid characters (digits, spaces, hyphens)."}),
-  gstin: z.string().optional().or(z.literal('')),
+  gstin: z.string().optional().or(z.literal('')).refine(val => !val || /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(val), {
+    message: "Invalid GSTIN format. Example: 29ABCDE1234F1Z5",
+  }),
   address: z.string().optional(),
 });
 
@@ -60,7 +62,6 @@ type CustomerFormValues = z.infer<typeof customerSchema>;
 
 /**
  * Retrieves a cookie value by name.
- * Used here to determine the current user's role for access control.
  * @param {string} name - The name of the cookie.
  * @returns {string | undefined} The cookie value or undefined if not found.
  */
@@ -84,8 +85,7 @@ export default function CustomersPage() {
 
   const [customerList, setCustomerList] = useState<Customer[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [isAddCustomerDialogOpen, setIsAddCustomerDialogOpen] = useState(false);
-  const [isEditCustomerDialogOpen, setIsEditCustomerDialogOpen] = useState(false);
+  const [isFormDialogOpen, setIsFormDialogOpen] = useState(false); // Single state for both add/edit
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [customerToDelete, setCustomerToDelete] = useState<Customer | null>(null);
@@ -98,9 +98,6 @@ export default function CustomersPage() {
     defaultValues: { name: "", email: "", phone: "", gstin: "", address: "" },
   });
 
-  /**
-   * Fetches customer list from Firestore, ordered by name.
-   */
   const fetchCustomers = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -121,9 +118,9 @@ export default function CustomersPage() {
           } as Customer;
       });
       setCustomerList(fetchedCustomers);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error fetching customers: ", error);
-      toast({ title: "Database Error", description: "Could not load customers. Please try again.", variant: "destructive" });
+      toast({ title: "Database Error", description: `Could not load customers: ${error.message}`, variant: "destructive" });
     } finally {
       setIsLoading(false);
     }
@@ -136,93 +133,75 @@ export default function CustomersPage() {
 
   useEffect(() => {
     if (searchParams.get('addNew') === 'true') {
-      setIsAddCustomerDialogOpen(true);
-      // Optional: Clear the query param after opening the dialog
-      // router.replace('/customers', { scroll: false }); 
+      setEditingCustomer(null); // Ensure it's an "add" operation
+      setIsFormDialogOpen(true);
     }
   }, [searchParams, router]);
 
 
   useEffect(() => {
-    if (editingCustomer && isEditCustomerDialogOpen) {
-      form.reset({
-        name: editingCustomer.name,
-        email: editingCustomer.email,
-        phone: editingCustomer.phone,
-        gstin: editingCustomer.gstin || "",
-        address: editingCustomer.address || "",
-      });
-    } else if (isAddCustomerDialogOpen) { 
-      form.reset({ name: "", email: "", phone: "", gstin: "", address: "" });
+    if (isFormDialogOpen) {
+      if (editingCustomer) {
+        form.reset({
+          name: editingCustomer.name,
+          email: editingCustomer.email,
+          phone: editingCustomer.phone,
+          gstin: editingCustomer.gstin || "",
+          address: editingCustomer.address || "",
+        });
+      } else { 
+        form.reset({ name: "", email: "", phone: "", gstin: "", address: "" });
+      }
     }
-  }, [editingCustomer, isEditCustomerDialogOpen, isAddCustomerDialogOpen, form]);
+  }, [editingCustomer, isFormDialogOpen, form]);
 
-  /**
-   * Handles submission of the "Add New Customer" form.
-   * Saves new customer data to Firestore, including `createdBy` field.
-   * @param {CustomerFormValues} values - The validated form values.
-   */
-  const handleAddSubmit = async (values: CustomerFormValues) => {
+  const handleFormSubmit = async (values: CustomerFormValues) => {
     const currentFirebaseUser = auth.currentUser;
-    if (!currentFirebaseUser) {
+    if (!currentFirebaseUser && !editingCustomer) { // For new customers, require auth
         toast({ title: "Authentication Error", description: "You must be logged in to add a customer.", variant: "destructive"});
         return;
     }
     try {
-      const newCustomerData = { 
-        ...values, 
-        email: values.email || "", 
-        totalSpent: "₹0.00", 
-        createdAt: serverTimestamp(),
-        createdBy: currentFirebaseUser.uid, // Store UID of user who created the customer
-      };
-      await addDoc(collection(db, "customers"), newCustomerData);
-      toast({ title: "Customer Added", description: `${values.name} has been successfully added.` });
+      if (editingCustomer) {
+        const customerRef = doc(db, "customers", editingCustomer.id);
+        const updatedData = { ...values, email: values.email || "", updatedAt: serverTimestamp() }; 
+        await updateDoc(customerRef, updatedData);
+        toast({ title: "Customer Updated", description: `${values.name} has been successfully updated.` });
+      } else {
+        const newCustomerData = { 
+          ...values, 
+          email: values.email || "", 
+          totalSpent: "₹0.00", 
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          createdBy: currentFirebaseUser?.uid || "unknown", // Store UID of user who created the customer
+        };
+        await addDoc(collection(db, "customers"), newCustomerData);
+        toast({ title: "Customer Added", description: `${values.name} has been successfully added.` });
+      }
       fetchCustomers(); 
       form.reset();
-      setIsAddCustomerDialogOpen(false);
-    } catch (error) {
-      console.error("Error adding customer: ", error);
-      toast({ title: "Save Error", description: "Failed to add customer to the database.", variant: "destructive" });
-    }
-  };
-
-  /**
-   * Handles submission of the "Edit Customer" form.
-   * Updates existing customer data in Firestore.
-   * @param {CustomerFormValues} values - The validated form values.
-   */
-  const handleEditSubmit = async (values: CustomerFormValues) => {
-    if (!editingCustomer) return; 
-    try {
-      const customerRef = doc(db, "customers", editingCustomer.id);
-      // When updating, ensure email is a string and add/update an `updatedAt` field.
-      const updatedData = { ...values, email: values.email || "", updatedAt: serverTimestamp() }; 
-      await updateDoc(customerRef, updatedData);
-      toast({ title: "Customer Updated", description: `${values.name} has been successfully updated.` });
-      fetchCustomers(); 
+      setIsFormDialogOpen(false);
       setEditingCustomer(null);
-      setIsEditCustomerDialogOpen(false);
-      form.reset();
-    } catch (error) {
-      console.error("Error updating customer: ", error);
-      toast({ title: "Update Error", description: "Failed to update customer in the database.", variant: "destructive" });
+      if (searchParams.get('addNew') === 'true') {
+            router.replace('/customers', { scroll: false }); // Remove query param
+      }
+    } catch (error: any) {
+      console.error("Error saving customer: ", error);
+      toast({ title: "Save Error", description: `Failed to save customer: ${error.message}`, variant: "destructive" });
     }
   };
   
-  /**
-   * Opens the edit customer dialog and pre-fills form with customer data.
-   * @param {Customer} customer - The customer object to edit.
-   */
   const openEditDialog = (customer: Customer) => {
     setEditingCustomer(customer);
-    setIsEditCustomerDialogOpen(true);
+    setIsFormDialogOpen(true);
+  };
+  
+  const openAddDialog = () => {
+    setEditingCustomer(null);
+    setIsFormDialogOpen(true);
   };
 
-  /**
-   * Opens the delete confirmation dialog for a customer. Restricted to Admins.
-   * @param {Customer} customer - The customer object to delete.
-   */
   const openDeleteDialog = (customer: Customer) => {
     if (currentUserRole !== 'admin') { 
       toast({ title: "Permission Denied", description: "Only Admins can delete customers.", variant: "destructive"});
@@ -232,39 +211,30 @@ export default function CustomersPage() {
     setIsDeleteConfirmOpen(true);
   };
 
-  /**
-   * Confirms and executes deletion of a customer from Firestore. Restricted to Admins.
-   */
   const confirmDelete = async () => {
     if (!customerToDelete || currentUserRole !== 'admin') return;
     try {
       await deleteDoc(doc(db, "customers", customerToDelete.id));
       toast({ title: "Customer Deleted", description: `${customerToDelete.name} has been successfully deleted.`, variant: "default" });
       fetchCustomers(); 
-      setCustomerToDelete(null);
-      setIsDeleteConfirmOpen(false);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error deleting customer: ", error);
-      toast({ title: "Deletion Error", description: "Failed to delete customer from the database.", variant: "destructive" });
+      toast({ title: "Deletion Error", description: `Failed to delete customer: ${error.message}`, variant: "destructive" });
+    } finally {
+        setCustomerToDelete(null);
+        setIsDeleteConfirmOpen(false);
     }
   };
 
-  /**
-   * Placeholder for viewing detailed customer history.
-   * @param {Customer} customer - The customer whose details to view.
-   */
   const handleViewDetails = (customer: Customer) => {
     toast({ title: "View Details (Placeholder)", description: `Viewing details for ${customer.name}. Purchase/payment history page to be implemented.`});
-    // Future: router.push(`/customers/${customer.id}`);
   };
 
-  /**
-   * Placeholder for updating payment status related to a customer.
-   * @param {Customer} customer - The customer involved.
-   */
   const handleUpdatePaymentStatus = (customer: Customer) => {
-    toast({ title: "Update Payment Status (Placeholder)", description: `Functionality to update payment status for ${customer.name}'s bills to be implemented.`});
-    // Future: This would likely involve selecting a specific bill and then updating its status in Firestore.
+    // This would ideally navigate to the payments page, pre-filtered for this customer
+    // or open a specific dialog for payment updates related to this customer's invoices.
+    router.push(`/payments?type=customer&entityId=${customer.id}&entityName=${encodeURIComponent(customer.name)}`);
+    toast({ title: "Manage Payments", description: `Redirecting to payments for ${customer.name}.` });
   };
 
   if (isLoading) {
@@ -275,10 +245,10 @@ export default function CustomersPage() {
     <>
       <PageHeader
         title="Manage Customers"
-        description="View, add, edit customer profiles. Admins can also delete."
+        description="View, add, and edit customer profiles. Admins can also delete."
         icon={Users}
         actions={
-          <Button onClick={() => { form.reset(); setIsAddCustomerDialogOpen(true); }}>
+          <Button onClick={openAddDialog}>
             <PlusCircle className="mr-2 h-4 w-4" />
             Add New Customer
           </Button>
@@ -286,23 +256,21 @@ export default function CustomersPage() {
       />
 
       <Dialog 
-        open={isAddCustomerDialogOpen || isEditCustomerDialogOpen} 
+        open={isFormDialogOpen} 
         onOpenChange={(isOpen) => {
           if (!isOpen) { 
-            setIsAddCustomerDialogOpen(false);
-            setIsEditCustomerDialogOpen(false);
+            setIsFormDialogOpen(false);
             setEditingCustomer(null);
             form.reset(); 
             if (searchParams.get('addNew') === 'true') {
                  router.replace('/customers', { scroll: false });
             }
           } else { 
-            if (editingCustomer) setIsEditCustomerDialogOpen(true);
-            else setIsAddCustomerDialogOpen(true);
+            setIsFormDialogOpen(true);
           }
         }}
       >
-        <DialogContent className="sm:max-w-[480px]">
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>{editingCustomer ? "Edit Customer" : "Add New Customer"}</DialogTitle>
             <DialogDescription>
@@ -310,7 +278,7 @@ export default function CustomersPage() {
             </DialogDescription>
           </DialogHeader>
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(editingCustomer ? handleEditSubmit : handleAddSubmit)} className="space-y-4 py-2">
+            <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-4 py-2 max-h-[75vh] overflow-y-auto pr-4">
               <FormField control={form.control} name="name" render={({ field }) => (
                   <FormItem>
                     <FormLabel>Full Name</FormLabel>
@@ -351,7 +319,7 @@ export default function CustomersPage() {
                   </FormItem>
                 )}
               />
-              <DialogFooter className="pt-4">
+              <DialogFooter className="pt-4 sticky bottom-0 bg-background pb-2 border-t -mx-6 px-6">
                 <DialogClose asChild><Button type="button" variant="outline">Cancel</Button></DialogClose>
                 <Button type="submit" disabled={form.formState.isSubmitting}>{form.formState.isSubmitting ? (editingCustomer ? "Saving..." : "Adding...") : (editingCustomer ? "Save Changes" : "Add Customer")}</Button>
               </DialogFooter>
@@ -383,65 +351,68 @@ export default function CustomersPage() {
           <CardDescription>A list of all registered customers from Firestore, ordered alphabetically.</CardDescription>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Email</TableHead>
-                <TableHead>Phone</TableHead>
-                <TableHead>GSTIN</TableHead>
-                <TableHead className="text-right">Total Spent</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {customerList.map((customer) => (
-                <TableRow key={customer.id}>
-                  <TableCell className="font-medium">{customer.name}</TableCell>
-                  <TableCell>{customer.email || "N/A"}</TableCell>
-                  <TableCell>{customer.phone}</TableCell>
-                  <TableCell>{customer.gstin || "N/A"}</TableCell>
-                  <TableCell className="text-right">{customer.totalSpent}</TableCell>
-                  <TableCell className="text-right">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon">
-                          <MoreHorizontal className="h-4 w-4" />
-                          <span className="sr-only">Actions for {customer.name}</span>
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => handleViewDetails(customer)}>
-                            <Eye className="mr-2 h-4 w-4" /> View Details & History
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => openEditDialog(customer)}>
-                            <Edit className="mr-2 h-4 w-4" /> Edit Customer
-                        </DropdownMenuItem>
-                        {(currentUserRole === 'store_manager' || currentUserRole === 'admin') && (
-                            <DropdownMenuItem onClick={() => handleUpdatePaymentStatus(customer)}>
-                                <CreditCard className="mr-2 h-4 w-4" /> Update Payment Status
-                            </DropdownMenuItem>
-                        )}
-                        {currentUserRole === 'admin' && (
-                          <DropdownMenuItem onClick={() => openDeleteDialog(customer)} className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground">
-                            <Trash2 className="mr-2 h-4 w-4" /> Delete Customer
-                          </DropdownMenuItem>
-                        )}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
+          {customerList.length > 0 ? (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Email</TableHead>
+                  <TableHead>Phone</TableHead>
+                  <TableHead>GSTIN</TableHead>
+                  <TableHead className="text-right hidden sm:table-cell">Total Spent</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-           {customerList.length === 0 && !isLoading && ( 
-             <div className="text-center py-8 text-muted-foreground">
-                No customers found in the database. Click "Add New Customer" to get started.
-             </div>
+              </TableHeader>
+              <TableBody>
+                {customerList.map((customer) => (
+                  <TableRow key={customer.id}>
+                    <TableCell className="font-medium">{customer.name}</TableCell>
+                    <TableCell>{customer.email || "N/A"}</TableCell>
+                    <TableCell>{customer.phone}</TableCell>
+                    <TableCell>{customer.gstin || "N/A"}</TableCell>
+                    <TableCell className="text-right hidden sm:table-cell">{customer.totalSpent}</TableCell>
+                    <TableCell className="text-right">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon">
+                            <MoreHorizontal className="h-4 w-4" />
+                            <span className="sr-only">Actions for {customer.name}</span>
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => handleViewDetails(customer)}>
+                              <Eye className="mr-2 h-4 w-4" /> View Details & History
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => openEditDialog(customer)}>
+                              <Edit className="mr-2 h-4 w-4" /> Edit Customer
+                          </DropdownMenuItem>
+                          {(currentUserRole === 'store_manager' || currentUserRole === 'admin') && (
+                              <DropdownMenuItem onClick={() => handleUpdatePaymentStatus(customer)}>
+                                  <CreditCard className="mr-2 h-4 w-4" /> Manage Payments
+                              </DropdownMenuItem>
+                          )}
+                          {currentUserRole === 'admin' && (
+                            <DropdownMenuItem onClick={() => openDeleteDialog(customer)} className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground">
+                              <Trash2 className="mr-2 h-4 w-4" /> Delete Customer
+                            </DropdownMenuItem>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+             <div className="flex flex-col items-center justify-center py-10 text-center">
+                <UserPlus className="h-16 w-16 text-muted-foreground mb-4" />
+                <p className="text-xl font-semibold text-muted-foreground">No Customers Found</p>
+                <p className="text-sm text-muted-foreground mb-6">It looks like there are no customers in your database yet.</p>
+                <Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add New Customer</Button>
+            </div>
            )}
         </CardContent>
       </Card>
     </>
   );
 }
-
