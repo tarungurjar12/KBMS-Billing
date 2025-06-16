@@ -38,9 +38,9 @@ export interface PaymentRecord {
   amountPaid: number; 
   displayAmountPaid: string; 
   originalInvoiceAmount?: number | null; 
-  method: "Cash" | "UPI" | "Card" | "Bank Transfer" | "ACH" | "Check" | "Other"; 
+  method: typeof PAYMENT_METHODS[number] | null; // Updated to allow null
   transactionId: string | null; 
-  status: "Completed" | "Pending" | "Failed" | "Sent" | "Received" | "Partial"; 
+  status: typeof PAYMENT_STATUSES[number]; 
   notes: string | null; 
   createdAt?: Timestamp; 
   updatedAt?: Timestamp;
@@ -50,7 +50,8 @@ const PAYMENT_METHODS = ["Cash", "UPI", "Card", "Bank Transfer", "ACH", "Check",
 const PAYMENT_STATUSES = ["Completed", "Pending", "Failed", "Sent", "Received", "Partial"] as const;
 const PAYMENT_TYPES = ["customer", "supplier"] as const;
 
-const paymentRecordSchema = z.object({
+// Base schema without conditional method requirement
+const paymentRecordBaseSchema = z.object({
   type: z.enum(PAYMENT_TYPES, { required_error: "Payment type is required." }),
   relatedEntityName: z.string().min(1, "Entity name is required."),
   relatedEntityId: z.string().min(1, "Entity ID is required."), 
@@ -62,13 +63,25 @@ const paymentRecordSchema = z.object({
   ),
   originalInvoiceAmount: z.preprocess(
     (val) => (String(val).trim() === "" || String(val) === "0" ? undefined : parseFloat(String(val).replace(/[^0-9.]+/g, ""))),
-    z.number().positive({ message: "Original amount must be positive if provided." }).optional().transform(val => val === undefined ? null : val)
+    z.number().positive({ message: "Original amount must be positive if provided." }).optional().nullable()
   ),
-  method: z.enum(PAYMENT_METHODS, { required_error: "Payment method is required." }),
+  method: z.enum(PAYMENT_METHODS).nullable().optional().transform(val => val === "" ? null : val), // Optional, nullable
   transactionId: z.string().optional().transform(val => val === "" ? null : val),
   status: z.enum(PAYMENT_STATUSES, { required_error: "Payment status is required." }),
   notes: z.string().optional().transform(val => val === "" ? null : val),
 });
+
+// Refined schema to make 'method' required for specific statuses
+const paymentRecordSchema = paymentRecordBaseSchema.superRefine((data, ctx) => {
+  if ((data.status === "Completed" || data.status === "Partial" || data.status === "Received") && !data.method) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Payment method is required for Completed, Partial, or Received status.",
+      path: ["method"],
+    });
+  }
+});
+
 
 type PaymentFormValues = z.infer<typeof paymentRecordSchema>;
 
@@ -85,12 +98,21 @@ export default function PaymentsPage() {
     resolver: zodResolver(paymentRecordSchema),
     defaultValues: { 
       type: "customer", isoDate: new Date().toISOString().split('T')[0], 
-      status: "Completed", method: "Cash",
+      status: "Completed", method: "Cash", // Default status "Completed" means method "Cash" is fine
       relatedEntityName: "", relatedEntityId: "",
       amountPaid: 0, originalInvoiceAmount: null,
       relatedInvoiceId: null, transactionId: null, notes: null,
     },
   });
+
+  const paymentStatusWatcher = form.watch("status");
+  const shouldShowPaymentMethod = paymentStatusWatcher === "Completed" || paymentStatusWatcher === "Partial" || paymentStatusWatcher === "Received";
+
+  useEffect(() => {
+    if (!shouldShowPaymentMethod) {
+      form.setValue("method", null); // Clear method if it's hidden
+    }
+  }, [shouldShowPaymentMethod, form]);
 
   // Firestore Index Required: 'payments' collection, orderBy 'isoDate' (DESC)
   const fetchPayments = useCallback(async () => {
@@ -113,8 +135,10 @@ export default function PaymentsPage() {
           isoDate: typeof data.isoDate === 'string' ? data.isoDate : (data.isoDate instanceof Timestamp ? data.isoDate.toDate().toISOString().split('T')[0] : new Date().toISOString().split('T')[0]),
           amountPaid: data.amountPaid || data.amount || 0, 
           displayAmountPaid: formatCurrency(data.amountPaid || data.amount || 0),
-          originalInvoiceAmount: data.originalInvoiceAmount || null, method: data.method || 'Other',
-          transactionId: data.transactionId || null, status: data.status || 'Pending',
+          originalInvoiceAmount: data.originalInvoiceAmount || null, 
+          method: data.method || null, // Ensure method can be null
+          transactionId: data.transactionId || null, 
+          status: data.status || 'Pending',
           notes: data.notes || null, createdAt: data.createdAt, updatedAt: data.updatedAt,
         } as PaymentRecord;
       });
@@ -143,6 +167,7 @@ export default function PaymentsPage() {
         form.reset({
           ...editingPayment,
           isoDate: editingPayment.isoDate ? editingPayment.isoDate.split('T')[0] : new Date().toISOString().split('T')[0],
+          method: editingPayment.method || null, // Explicitly allow null for method
           relatedInvoiceId: editingPayment.relatedInvoiceId || null,
           transactionId: editingPayment.transactionId || null,
           notes: editingPayment.notes || null,
@@ -160,8 +185,13 @@ export default function PaymentsPage() {
 
   const handleFormSubmit = async (values: PaymentFormValues) => {
     try {
-      const dataToSave = {
-        ...values, // Zod schema already transforms empty strings to null for optional fields
+      const dataToSave: Partial<PaymentRecord> & {updatedAt: any, displayAmountPaid: string, createdAt?: any} = {
+        ...values, 
+        method: values.method || null, // Ensure method is null if not provided
+        notes: values.notes || null,
+        transactionId: values.transactionId || null,
+        relatedInvoiceId: values.relatedInvoiceId || null,
+        originalInvoiceAmount: values.originalInvoiceAmount || null,
         displayAmountPaid: formatCurrency(values.amountPaid),
         updatedAt: serverTimestamp(),
       };
@@ -171,7 +201,8 @@ export default function PaymentsPage() {
         await updateDoc(paymentRef, dataToSave); 
         toast({ title: "Payment Updated", description: "Payment record updated successfully." });
       } else { 
-        await addDoc(collection(db, "payments"), {...dataToSave, createdAt: serverTimestamp()});
+        dataToSave.createdAt = serverTimestamp();
+        await addDoc(collection(db, "payments"), dataToSave);
         toast({ title: "Payment Added", description: "New payment record added successfully." });
       }
       fetchPayments(); setIsFormDialogOpen(false); setEditingPayment(null); form.reset(); 
@@ -231,7 +262,7 @@ export default function PaymentsPage() {
             <TableCell>{payment.date}</TableCell>
             <TableCell>{payment.relatedEntityName}</TableCell>
             <TableCell>{payment.relatedInvoiceId || "N/A"}</TableCell>
-            <TableCell>{payment.method}</TableCell>
+            <TableCell>{payment.method || "N/A"}</TableCell>
             <TableCell className="text-right">{payment.displayAmountPaid}</TableCell>
             {type === "customer" && <TableCell className="text-right">{payment.originalInvoiceAmount ? formatCurrency(payment.originalInvoiceAmount) : "N/A"}</TableCell>}
             <TableCell className="text-center">
@@ -297,18 +328,7 @@ export default function PaymentsPage() {
               <FormField control={form.control} name="relatedInvoiceId" render={({ field }) => (<FormItem><FormLabel>Related Invoice/PO ID (Optional)</FormLabel><FormControl><Input placeholder="e.g., INV00123 or PO-789" {...field} /></FormControl><FormMessage /></FormItem>)} />
               <FormField control={form.control} name="isoDate" render={({ field }) => (<FormItem><FormLabel>Payment Date</FormLabel><FormControl><Input type="date" {...field} /></FormControl><FormMessage /></FormItem>)} />
               <FormField control={form.control} name="amountPaid" render={({ field }) => (<FormItem><FormLabel>Amount Paid (₹)</FormLabel><FormControl><Input type="number" step="0.01" placeholder="e.g., 1000.00" {...field} onChange={e => field.onChange(parseFloat(e.target.value) || 0)} /></FormControl><FormMessage /></FormItem>)} />
-              {form.watch("status") === "Partial" && form.watch("type") === "customer" && (
-                <FormField control={form.control} name="originalInvoiceAmount" render={({ field }) => (<FormItem><FormLabel>Original Invoice Amount (₹) (Optional)</FormLabel><FormControl><Input type="number" step="0.01" placeholder="e.g., 2000.00" {...field} onChange={e => field.onChange(e.target.value ? parseFloat(e.target.value) : null)} /></FormControl><FormMessage /></FormItem>)} />
-              )}
-              <FormField control={form.control} name="method" render={({ field }) => (
-                <FormItem><FormLabel>Payment Method</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value}>
-                    <FormControl><SelectTrigger><SelectValue placeholder="Select payment method" /></SelectTrigger></FormControl>
-                    <SelectContent>{PAYMENT_METHODS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
-                  </Select><FormMessage />
-                </FormItem>)}
-              />
-              <FormField control={form.control} name="transactionId" render={({ field }) => (<FormItem><FormLabel>Transaction ID / Check No. (Optional)</FormLabel><FormControl><Input placeholder="e.g., Bank transaction reference" {...field} /></FormControl><FormMessage /></FormItem>)} />
+              
               <FormField control={form.control} name="status" render={({ field }) => (
                 <FormItem><FormLabel>Payment Status</FormLabel>
                   <Select onValueChange={(value) => {
@@ -320,6 +340,20 @@ export default function PaymentsPage() {
                   </Select><FormMessage />
                 </FormItem>)}
               />
+              {shouldShowPaymentMethod && (
+                <FormField control={form.control} name="method" render={({ field }) => (
+                  <FormItem><FormLabel>Payment Method</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value ?? ""}>
+                      <FormControl><SelectTrigger><SelectValue placeholder="Select payment method" /></SelectTrigger></FormControl>
+                      <SelectContent>{PAYMENT_METHODS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
+                    </Select><FormMessage />
+                  </FormItem>)}
+                />
+              )}
+              {form.watch("status") === "Partial" && form.watch("type") === "customer" && (
+                <FormField control={form.control} name="originalInvoiceAmount" render={({ field }) => (<FormItem><FormLabel>Original Invoice Amount (₹) (Optional)</FormLabel><FormControl><Input type="number" step="0.01" placeholder="e.g., 2000.00" {...field} onChange={e => field.onChange(e.target.value ? parseFloat(e.target.value) : null)} /></FormControl><FormMessage /></FormItem>)} />
+              )}
+              <FormField control={form.control} name="transactionId" render={({ field }) => (<FormItem><FormLabel>Transaction ID / Check No. (Optional)</FormLabel><FormControl><Input placeholder="e.g., Bank transaction reference" {...field} /></FormControl><FormMessage /></FormItem>)} />
               <FormField control={form.control} name="notes" render={({ field }) => (<FormItem><FormLabel>Notes (Optional)</FormLabel><FormControl><Textarea placeholder="Any additional notes about this payment..." {...field} rows={3} /></FormControl><FormMessage /></FormItem>)} />
               <DialogFooter className="pt-4 sticky bottom-0 bg-background pb-2 border-t -mx-6 px-6">
                 <DialogClose asChild><Button type="button" variant="outline">Cancel</Button></DialogClose>
@@ -371,3 +405,4 @@ export default function PaymentsPage() {
     </>
   );
 }
+
