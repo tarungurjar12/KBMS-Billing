@@ -48,6 +48,8 @@ export default function AdminDashboardPage() {
 
   const LOW_STOCK_THRESHOLD = 50; 
 
+  // Firestore Index Required: 'invoices' (status ASC, isoDate DESC) for Paid Invoices Sample
+  // Firestore Index Required: 'products' (stock ASC) - usually covered by single field index, but if combined with other filters/orders, might need composite.
   const fetchDashboardData = useCallback(async () => {
     const updateMetricState = (title: string, newValue: Partial<DashboardMetric>) => {
       setMetrics(prevMetrics => 
@@ -76,12 +78,14 @@ export default function AdminDashboardPage() {
       const lowStockSnapshot = await getCountFromServer(lowStockQuery);
       updateMetricState("Low Stock Items", { value: lowStockSnapshot.data().count.toString() });
       
+      // Query for 'Paid' invoices, ordered by 'isoDate' descending
       const paidInvoicesQuery = query(collection(db, "invoices"), where("status", "==", "Paid"), orderBy("isoDate", "desc"), limit(100)); 
       const paidInvoicesSnapshot = await getDocs(paidInvoicesQuery);
       let totalPaidRevenue = 0;
       paidInvoicesSnapshot.forEach(doc => { totalPaidRevenue += doc.data().totalAmount || 0; });
       updateMetricState("Total Revenue (Paid Invoices Sample)", { value: `₹${totalPaidRevenue.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`});
 
+      // Query for recent sales for the chart
       const recentSalesQuery = query(collection(db, "invoices"), where("status", "==", "Paid"), orderBy("isoDate", "desc"), limit(5));
       const recentSalesSnapshot = await getDocs(recentSalesQuery);
       const salesData = recentSalesSnapshot.docs.map(doc => {
@@ -109,12 +113,13 @@ export default function AdminDashboardPage() {
       } else {
         toast({ title: "Dashboard Load Error", description: "Could not load some dashboard metrics. Please try again later.", variant: "destructive" });
       }
+      // Ensure all metrics are marked as not loading even if an error occurs
       setMetrics(prevMetrics => prevMetrics.map(m => ({ ...m, value: m.isLoading ? "Error" : m.value, isLoading: false })));
     } finally {
       setMetrics(prevMetrics => prevMetrics.map(m => ({...m, isLoading: false})));
       setIsLoadingSalesChart(false);
     }
-  }, [toast]); 
+  }, [toast]); // Dependency: toast (stable)
 
   useEffect(() => { fetchDashboardData(); }, [fetchDashboardData]); 
 
@@ -154,9 +159,10 @@ export default function AdminDashboardPage() {
                 <p className="text-muted-foreground p-4 text-center">Sales chart data loaded ({recentSales.length} entries). Actual chart component to be implemented here.</p>
               </div>
             ) : (
-              <div className="h-64 flex items-center justify-center bg-muted/30 rounded-md border border-dashed">
-                <AlertCircle className="h-8 w-8 text-muted-foreground mr-2"/>
-                <p className="text-muted-foreground">No recent sales data available to display.</p>
+              <div className="h-64 flex flex-col items-center justify-center bg-muted/30 rounded-md border border-dashed">
+                <AlertCircle className="h-8 w-8 text-muted-foreground mb-2"/>
+                <p className="text-muted-foreground font-semibold">No Recent Sales Data</p>
+                <p className="text-sm text-muted-foreground">No paid invoices found to display recent sales trends.</p>
               </div>
             )}
           </CardContent>
@@ -171,9 +177,9 @@ export default function AdminDashboardPage() {
                 <Link href={action.href} key={action.label} passHref legacyBehavior>
                     <Button variant="outline" className="w-full h-auto justify-start p-3 text-left flex items-start gap-3 hover:bg-accent/10 transition-colors group">
                         <action.icon className="h-6 w-6 text-primary mt-1 transition-transform group-hover:scale-110 shrink-0" />
-                        <div className="flex-1 min-w-0"> {/* Helps with text wrapping in flex containers */}
+                        <div className="flex-1 min-w-0"> 
                             <span className="font-medium text-foreground block">{action.label}</span>
-                            <p className="text-xs text-muted-foreground whitespace-normal">{action.description}</p>
+                            <p className="text-xs text-muted-foreground whitespace-normal break-words">{action.description}</p>
                         </div>
                     </Button>
                 </Link>
@@ -183,7 +189,7 @@ export default function AdminDashboardPage() {
                     <UserCog className="h-6 w-6 text-primary mt-1 transition-transform group-hover:scale-110 shrink-0" />
                     <div className="flex-1 min-w-0">
                         <span className="font-medium text-foreground">Manage Staff</span>
-                        <p className="text-xs text-muted-foreground whitespace-normal">Administer Store Manager accounts and permissions.</p>
+                        <p className="text-xs text-muted-foreground whitespace-normal break-words">Administer Store Manager accounts and permissions.</p>
                     </div>
                 </Button>
             </Link>

@@ -27,20 +27,17 @@ import { format, parseISO } from 'date-fns';
  * @fileOverview Page for Admin to manage Payment Records in Firestore.
  */
 
-/**
- * Interface representing a Payment Record document in Firestore.
- */
 export interface PaymentRecord {
   id: string; 
   type: "customer" | "supplier"; 
   relatedEntityName: string; 
   relatedEntityId: string; 
   relatedInvoiceId: string | null; 
-  date: string; 
-  isoDate: string; 
-  amountPaid: number; // Amount actually paid in this transaction
+  date: string; // Formatted for display
+  isoDate: string; // ISO string for storing and sorting
+  amountPaid: number; 
   displayAmountPaid: string; 
-  originalInvoiceAmount?: number | null; // Optional: Total amount of the invoice being partially paid
+  originalInvoiceAmount?: number | null; 
   method: "Cash" | "UPI" | "Card" | "Bank Transfer" | "ACH" | "Check" | "Other"; 
   transactionId: string | null; 
   status: "Completed" | "Pending" | "Failed" | "Sent" | "Received" | "Partial"; 
@@ -49,17 +46,15 @@ export interface PaymentRecord {
   updatedAt?: Timestamp;
 }
 
-// Constants
 const PAYMENT_METHODS = ["Cash", "UPI", "Card", "Bank Transfer", "ACH", "Check", "Other"] as const;
 const PAYMENT_STATUSES = ["Completed", "Pending", "Failed", "Sent", "Received", "Partial"] as const;
 const PAYMENT_TYPES = ["customer", "supplier"] as const;
 
-// Zod schema
 const paymentRecordSchema = z.object({
   type: z.enum(PAYMENT_TYPES, { required_error: "Payment type is required." }),
   relatedEntityName: z.string().min(1, "Entity name is required."),
   relatedEntityId: z.string().min(1, "Entity ID is required."), 
-  relatedInvoiceId: z.string().optional(),
+  relatedInvoiceId: z.string().optional().transform(val => val === "" ? null : val),
   isoDate: z.string().refine((date) => !isNaN(parseISO(date).valueOf()), { message: "A valid payment date is required." }),
   amountPaid: z.preprocess(
     (val) => parseFloat(String(val).replace(/[^0-9.]+/g, "")), 
@@ -67,12 +62,12 @@ const paymentRecordSchema = z.object({
   ),
   originalInvoiceAmount: z.preprocess(
     (val) => (String(val).trim() === "" || String(val) === "0" ? undefined : parseFloat(String(val).replace(/[^0-9.]+/g, ""))),
-    z.number().positive({ message: "Original amount must be positive if provided." }).optional()
+    z.number().positive({ message: "Original amount must be positive if provided." }).optional().transform(val => val === undefined ? null : val)
   ),
   method: z.enum(PAYMENT_METHODS, { required_error: "Payment method is required." }),
-  transactionId: z.string().optional(),
+  transactionId: z.string().optional().transform(val => val === "" ? null : val),
   status: z.enum(PAYMENT_STATUSES, { required_error: "Payment status is required." }),
-  notes: z.string().optional(),
+  notes: z.string().optional().transform(val => val === "" ? null : val),
 });
 
 type PaymentFormValues = z.infer<typeof paymentRecordSchema>;
@@ -89,17 +84,15 @@ export default function PaymentsPage() {
   const form = useForm<PaymentFormValues>({
     resolver: zodResolver(paymentRecordSchema),
     defaultValues: { 
-      type: "customer", 
-      isoDate: new Date().toISOString().split('T')[0], 
-      status: "Completed", 
-      method: "Cash",
-      relatedEntityName: "",
-      relatedEntityId: "",
-      amountPaid: 0, 
-      originalInvoiceAmount: undefined,
+      type: "customer", isoDate: new Date().toISOString().split('T')[0], 
+      status: "Completed", method: "Cash",
+      relatedEntityName: "", relatedEntityId: "",
+      amountPaid: 0, originalInvoiceAmount: null,
+      relatedInvoiceId: null, transactionId: null, notes: null,
     },
   });
 
+  // Firestore Index Required: 'payments' collection, orderBy 'isoDate' (DESC)
   const fetchPayments = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -114,22 +107,15 @@ export default function PaymentsPage() {
             } else if (data.isoDate instanceof Timestamp) { paymentDate = format(data.isoDate.toDate(), "MMM dd, yyyy"); }
         } else if (data.createdAt instanceof Timestamp) { paymentDate = format(data.createdAt.toDate(), "MMM dd, yyyy"); }
         return { 
-          id: docSnapshot.id,
-          type: data.type || 'customer', 
-          relatedEntityName: data.relatedEntityName || 'N/A',
-          relatedEntityId: data.relatedEntityId || '',
-          relatedInvoiceId: data.relatedInvoiceId || null,
-          date: paymentDate,
+          id: docSnapshot.id, type: data.type || 'customer', 
+          relatedEntityName: data.relatedEntityName || 'N/A', relatedEntityId: data.relatedEntityId || '',
+          relatedInvoiceId: data.relatedInvoiceId || null, date: paymentDate,
           isoDate: typeof data.isoDate === 'string' ? data.isoDate : (data.isoDate instanceof Timestamp ? data.isoDate.toDate().toISOString().split('T')[0] : new Date().toISOString().split('T')[0]),
-          amountPaid: data.amountPaid || data.amount || 0, // data.amount for backward compatibility
+          amountPaid: data.amountPaid || data.amount || 0, 
           displayAmountPaid: formatCurrency(data.amountPaid || data.amount || 0),
-          originalInvoiceAmount: data.originalInvoiceAmount || null,
-          method: data.method || 'Other',
-          transactionId: data.transactionId || null,
-          status: data.status || 'Pending',
-          notes: data.notes || null,
-          createdAt: data.createdAt,
-          updatedAt: data.updatedAt,
+          originalInvoiceAmount: data.originalInvoiceAmount || null, method: data.method || 'Other',
+          transactionId: data.transactionId || null, status: data.status || 'Pending',
+          notes: data.notes || null, createdAt: data.createdAt, updatedAt: data.updatedAt,
         } as PaymentRecord;
       });
       setAllPayments(fetchedPayments);
@@ -138,9 +124,8 @@ export default function PaymentsPage() {
        if (error.code === 'failed-precondition') {
         toast({
             title: "Database Index Required",
-            description: `A query for payments failed. Please create the required Firestore index for 'payments' (orderBy 'isoDate' descending). Check your browser's developer console for a Firebase link to create it.`,
-            variant: "destructive",
-            duration: 15000,
+            description: `A query for payments failed. Please create the required Firestore index (likely on 'payments' collection: isoDate DESC). Check your browser's developer console for a Firebase link.`,
+            variant: "destructive", duration: 15000,
         });
       } else {
         toast({ title: "Database Error", description: `Could not load payment records: ${error.message}`, variant: "destructive" });
@@ -150,9 +135,7 @@ export default function PaymentsPage() {
     }
   }, [toast]);
 
-  useEffect(() => {
-    fetchPayments();
-  }, [fetchPayments]);
+  useEffect(() => { fetchPayments(); }, [fetchPayments]);
 
   useEffect(() => {
     if (isFormDialogOpen) {
@@ -160,15 +143,16 @@ export default function PaymentsPage() {
         form.reset({
           ...editingPayment,
           isoDate: editingPayment.isoDate ? editingPayment.isoDate.split('T')[0] : new Date().toISOString().split('T')[0],
-          relatedInvoiceId: editingPayment.relatedInvoiceId || "",
-          transactionId: editingPayment.transactionId || "",
-          notes: editingPayment.notes || "",
-          originalInvoiceAmount: editingPayment.originalInvoiceAmount || undefined,
+          relatedInvoiceId: editingPayment.relatedInvoiceId || null,
+          transactionId: editingPayment.transactionId || null,
+          notes: editingPayment.notes || null,
+          originalInvoiceAmount: editingPayment.originalInvoiceAmount || null,
         });
       } else {
         form.reset({ 
           type: "customer", isoDate: new Date().toISOString().split('T')[0], status: "Completed", method: "Cash", 
-          relatedEntityName: "", relatedEntityId: "", relatedInvoiceId: "", amountPaid: 0, transactionId: "", notes: "", originalInvoiceAmount: undefined,
+          relatedEntityName: "", relatedEntityId: "", amountPaid: 0, 
+          relatedInvoiceId: null, transactionId: null, notes: null, originalInvoiceAmount: null,
         });
       }
     }
@@ -177,13 +161,9 @@ export default function PaymentsPage() {
   const handleFormSubmit = async (values: PaymentFormValues) => {
     try {
       const dataToSave = {
-        ...values,
+        ...values, // Zod schema already transforms empty strings to null for optional fields
         displayAmountPaid: formatCurrency(values.amountPaid),
         updatedAt: serverTimestamp(),
-        relatedInvoiceId: values.relatedInvoiceId || null,
-        transactionId: values.transactionId || null,
-        notes: values.notes || null,
-        originalInvoiceAmount: values.originalInvoiceAmount || null,
       };
 
       if (editingPayment) { 
@@ -194,10 +174,7 @@ export default function PaymentsPage() {
         await addDoc(collection(db, "payments"), {...dataToSave, createdAt: serverTimestamp()});
         toast({ title: "Payment Added", description: "New payment record added successfully." });
       }
-      fetchPayments(); 
-      setIsFormDialogOpen(false); 
-      setEditingPayment(null); 
-      form.reset(); 
+      fetchPayments(); setIsFormDialogOpen(false); setEditingPayment(null); form.reset(); 
     } catch (error: any) {
       console.error("Error saving payment: ", error);
       toast({ title: "Save Error", description: `Could not save payment record: ${error.message}`, variant: "destructive" });
@@ -321,7 +298,7 @@ export default function PaymentsPage() {
               <FormField control={form.control} name="isoDate" render={({ field }) => (<FormItem><FormLabel>Payment Date</FormLabel><FormControl><Input type="date" {...field} /></FormControl><FormMessage /></FormItem>)} />
               <FormField control={form.control} name="amountPaid" render={({ field }) => (<FormItem><FormLabel>Amount Paid (₹)</FormLabel><FormControl><Input type="number" step="0.01" placeholder="e.g., 1000.00" {...field} onChange={e => field.onChange(parseFloat(e.target.value) || 0)} /></FormControl><FormMessage /></FormItem>)} />
               {form.watch("status") === "Partial" && form.watch("type") === "customer" && (
-                <FormField control={form.control} name="originalInvoiceAmount" render={({ field }) => (<FormItem><FormLabel>Original Invoice Amount (₹) (Optional)</FormLabel><FormControl><Input type="number" step="0.01" placeholder="e.g., 2000.00" {...field} onChange={e => field.onChange(parseFloat(e.target.value) || undefined)} /></FormControl><FormMessage /></FormItem>)} />
+                <FormField control={form.control} name="originalInvoiceAmount" render={({ field }) => (<FormItem><FormLabel>Original Invoice Amount (₹) (Optional)</FormLabel><FormControl><Input type="number" step="0.01" placeholder="e.g., 2000.00" {...field} onChange={e => field.onChange(e.target.value ? parseFloat(e.target.value) : null)} /></FormControl><FormMessage /></FormItem>)} />
               )}
               <FormField control={form.control} name="method" render={({ field }) => (
                 <FormItem><FormLabel>Payment Method</FormLabel>
@@ -336,9 +313,7 @@ export default function PaymentsPage() {
                 <FormItem><FormLabel>Payment Status</FormLabel>
                   <Select onValueChange={(value) => {
                       field.onChange(value);
-                      if (value !== "Partial") {
-                          form.setValue("originalInvoiceAmount", undefined); // Clear if not partial
-                      }
+                      if (value !== "Partial") { form.setValue("originalInvoiceAmount", null); }
                   }} value={field.value}>
                     <FormControl><SelectTrigger><SelectValue placeholder="Select payment status" /></SelectTrigger></FormControl>
                     <SelectContent>{PAYMENT_STATUSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
@@ -359,8 +334,8 @@ export default function PaymentsPage() {
 
       <Tabs defaultValue="customer_payments" className="w-full">
         <TabsList className="grid w-full grid-cols-1 sm:grid-cols-2 md:w-auto md:max-w-lg mb-4">
-          <TabsTrigger value="customer_payments">Customer Payments (Received)</TabsTrigger>
-          <TabsTrigger value="supplier_payments">Supplier Payments (Made)</TabsTrigger>
+          <TabsTrigger value="customer_payments" className="whitespace-nowrap px-3">Customer Payments</TabsTrigger>
+          <TabsTrigger value="supplier_payments" className="whitespace-nowrap px-3">Supplier Payments</TabsTrigger>
         </TabsList>
         <TabsContent value="customer_payments">
           <Card className="shadow-lg rounded-xl">
@@ -396,4 +371,3 @@ export default function PaymentsPage() {
     </>
   );
 }
-

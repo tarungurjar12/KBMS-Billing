@@ -3,7 +3,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { PageHeader } from "@/components/page-header";
-import { LayoutDashboard, ClipboardPlus, Users, PackageSearch, ReceiptText, TrendingUp, AlertTriangle } from "lucide-react";
+import { LayoutDashboard, ClipboardPlus, Users, PackageSearch, ReceiptText, TrendingUp, AlertTriangle, AlertCircle, Activity } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { useEffect, useState, useCallback } from "react";
@@ -56,6 +56,11 @@ export default function StoreManagerDashboardPage() {
     return () => unsubscribe();
   }, []);
 
+  // Firestore Index Required: 'invoices' (createdBy ASC, isoDate ASC)
+  // Firestore Index Required: 'customers' (createdBy ASC, createdAt ASC)
+  // Firestore Index Required: 'invoices' (createdBy ASC, status ASC)
+  // Firestore Index Required: 'issueReports' (reportedByUid ASC, status ASC)
+  // Firestore Index Required: 'invoices' (createdBy ASC, createdAt DESC)
   const fetchManagerDashboardData = useCallback(async () => {
     if (!currentUser) {
       setMetrics(prevMetrics => prevMetrics.map(m => ({ ...m, isLoading: false, value: "N/A" })));
@@ -78,23 +83,46 @@ export default function StoreManagerDashboardPage() {
     const weekEndTimestamp = Timestamp.fromDate(endOfWeek(today, { weekStartsOn: 1 }));
 
     try {
-      const todaysBillsQuery = query(collection(db, "invoices"), where("createdBy", "==", currentUser.uid), where("isoDate", ">=", todayStartISO), where("isoDate", "<=", todayEndISO));
+      // Query for today's bills created by the current user
+      const todaysBillsQuery = query(collection(db, "invoices"), 
+        where("createdBy", "==", currentUser.uid), 
+        where("isoDate", ">=", todayStartISO), 
+        where("isoDate", "<=", todayEndISO)
+      );
       const todaysBillsSnapshot = await getCountFromServer(todaysBillsQuery);
       updateMetricState("Today's Bills Generated", { value: todaysBillsSnapshot.data().count.toString() });
 
-      const customersAddedQuery = query(collection(db, "customers"), where("createdBy", "==", currentUser.uid), where("createdAt", ">=", weekStartTimestamp), where("createdAt", "<=", weekEndTimestamp));
+      // Query for customers added this week by the current user
+      const customersAddedQuery = query(collection(db, "customers"), 
+        where("createdBy", "==", currentUser.uid), 
+        where("createdAt", ">=", weekStartTimestamp), 
+        where("createdAt", "<=", weekEndTimestamp)
+      );
       const customersAddedSnapshot = await getCountFromServer(customersAddedQuery);
       updateMetricState("Customers Added This Week", { value: customersAddedSnapshot.data().count.toString() });
 
-      const pendingBillsQuery = query(collection(db, "invoices"), where("createdBy", "==", currentUser.uid), where("status", "==", "Pending"));
+      // Query for pending bills created by the current user
+      const pendingBillsQuery = query(collection(db, "invoices"), 
+        where("createdBy", "==", currentUser.uid), 
+        where("status", "==", "Pending")
+      );
       const pendingBillsSnapshot = await getCountFromServer(pendingBillsQuery);
       updateMetricState("Pending Bills (Yours)", {value: pendingBillsSnapshot.data().count.toString()});
 
-      const reportedIssuesQuery = query(collection(db, "issueReports"), where("reportedByUid", "==", currentUser.uid), where("status", "==", "New"));
+      // Query for reported issues by the current user that are still 'New'
+      const reportedIssuesQuery = query(collection(db, "issueReports"), 
+        where("reportedByUid", "==", currentUser.uid), 
+        where("status", "==", "New")
+      );
       const reportedIssuesSnapshot = await getCountFromServer(reportedIssuesQuery);
       updateMetricState("Reported Product Issues", {value: reportedIssuesSnapshot.data().count.toString()});
 
-      const recentActivityQuery = query(collection(db, "invoices"), where("createdBy", "==", currentUser.uid), orderBy("createdAt", "desc"), limit(3));
+      // Query for recent activity (invoices created by user)
+      const recentActivityQuery = query(collection(db, "invoices"), 
+        where("createdBy", "==", currentUser.uid), 
+        orderBy("createdAt", "desc"), 
+        limit(3)
+      );
       const activitySnapshot = await getDocs(recentActivityQuery);
       const activities = activitySnapshot.docs.map(doc => {
         const data = doc.data();
@@ -108,7 +136,7 @@ export default function StoreManagerDashboardPage() {
       if (error.code === 'failed-precondition') {
         toast({
             title: "Database Index Required",
-            description: `One or more queries for your dashboard data failed. Please create the required Firestore index. Check your browser's developer console for a Firebase error message.`,
+            description: `One or more queries for your dashboard data failed. Please create the required Firestore index. Check your browser's developer console for a Firebase error message that includes a link to create the needed index.`,
             variant: "destructive",
             duration: 20000,
         });
@@ -120,7 +148,7 @@ export default function StoreManagerDashboardPage() {
     } finally {
         setMetrics(prevMetrics => prevMetrics.map(m => ({...m, isLoading: false})));
     }
-  }, [currentUser, toast]);
+  }, [currentUser, toast]); // Dependencies: currentUser, toast (stable)
 
   useEffect(() => { if (currentUser) { fetchManagerDashboardData(); } }, [currentUser, fetchManagerDashboardData]);
 
@@ -155,9 +183,9 @@ export default function StoreManagerDashboardPage() {
                 <Link href={action.href} key={action.label} passHref legacyBehavior>
                     <Button variant="outline" className="w-full h-auto justify-start p-4 text-left flex items-start gap-3 hover:bg-accent/10 transition-colors group">
                         <action.icon className="h-7 w-7 text-primary mt-1 transition-transform group-hover:scale-110 shrink-0" />
-                        <div className="flex-1 min-w-0"> {/* Helps with text wrapping */}
+                        <div className="flex-1 min-w-0"> 
                             <span className="text-base font-medium text-foreground block">{action.label}</span>
-                            <p className="text-xs text-muted-foreground whitespace-normal">{action.description}</p>
+                            <p className="text-xs text-muted-foreground whitespace-normal break-words">{action.description}</p>
                         </div>
                     </Button>
                 </Link>
@@ -174,7 +202,8 @@ export default function StoreManagerDashboardPage() {
           </CardHeader>
           <CardContent>
              {metrics.some(m => m.isLoading) && recentActivity.length === 0 ? (
-                <div className="h-48 flex items-center justify-center bg-muted/30 rounded-md border border-dashed">
+                <div className="h-48 flex flex-col items-center justify-center bg-muted/30 rounded-md border border-dashed">
+                    <Activity className="h-10 w-10 text-muted-foreground animate-spin mb-2" />
                     <p className="text-muted-foreground">Loading recent activity...</p>
                 </div>
              ) : recentActivity.length > 0 ? (
@@ -186,8 +215,10 @@ export default function StoreManagerDashboardPage() {
                     ))}
                 </ul>
              ) : ( 
-                <div className="h-48 flex items-center justify-center bg-muted/30 rounded-md border border-dashed">
-                    <p className="text-muted-foreground">No recent activity to display.</p>
+                <div className="h-48 flex flex-col items-center justify-center bg-muted/30 rounded-md border border-dashed">
+                    <AlertCircle className="h-10 w-10 text-muted-foreground mb-2" />
+                    <p className="text-muted-foreground font-semibold">No Recent Activity</p>
+                    <p className="text-sm text-muted-foreground">You haven&apos;t performed any actions recently.</p>
                 </div>
              )}
           </CardContent>

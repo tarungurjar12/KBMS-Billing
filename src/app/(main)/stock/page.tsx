@@ -17,6 +17,7 @@ import { z } from "zod";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { collection, getDocs, doc, updateDoc, query, orderBy, serverTimestamp, addDoc, Timestamp, runTransaction } from 'firebase/firestore'; 
+import type { DocumentSnapshot, DocumentData } from 'firebase/firestore';
 import { db, auth } from '@/lib/firebase/firebaseConfig'; 
 import type { Product } from './../products/page'; 
 
@@ -30,17 +31,13 @@ import type { Product } from './../products/page';
  * Data is fetched from and saved to Firebase Firestore.
  */
 
-/**
- * Interface extending Product for stock-specific display, including calculated stock status.
- */
 export interface StockItem extends Product { 
   status: "In Stock" | "Low Stock" | "Out of Stock";
 }
 
-// Zod schema for stock update form validation
 const stockUpdateSchema = z.object({
-  productId: z.string(), // Hidden field, populated programmatically
-  currentStock: z.number(), // For display and reference in validation
+  productId: z.string(), 
+  currentStock: z.number(), 
   adjustmentType: z.enum(["set", "add", "subtract"]).default("set"),
   adjustmentValue: z.preprocess(
     (val) => parseInt(String(val), 10), 
@@ -59,27 +56,15 @@ const stockUpdateSchema = z.object({
     }
     return true;
 }, {
-    message: "Invalid adjustment: 'Subtract' cannot exceed current stock or be non-positive. 'Set' cannot be negative. 'Add' must be positive.",
+    message: "Invalid adjustment: 'Subtract' must be positive and not exceed current stock. 'Set' cannot be negative. 'Add' must be positive.",
     path: ["adjustmentValue"], 
 });
 
 type StockUpdateFormValues = z.infer<typeof stockUpdateSchema>;
 
-/**
- * Formats a number as an Indian Rupee string for display.
- * @param {number} num - The number to format.
- * @returns {string} A string representing the currency.
- */
 const formatCurrency = (num: number): string => `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
 const LOW_STOCK_THRESHOLD = 50; 
 
-/**
- * StockPage component.
- * Provides UI and logic for Admin to view and manually update product stock levels in Firestore.
- * Logs stock movements for traceability.
- * @returns {JSX.Element} The rendered stock page.
- */
 export default function StockPage() {
   const [stockList, setStockList] = useState<StockItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -88,48 +73,33 @@ export default function StockPage() {
   const [productToUpdateStock, setProductToUpdateStock] = useState<StockItem | null>(null);
   const { toast } = useToast();
 
-  // React Hook Form setup for the stock update dialog
   const form = useForm<StockUpdateFormValues>({
     resolver: zodResolver(stockUpdateSchema),
     defaultValues: { productId: "", currentStock: 0, adjustmentType: "set", adjustmentValue: 0, notes: "" },
   });
 
-  /**
-   * Determines the stock status string based on quantity and threshold.
-   * @param {number} stock - The current stock quantity.
-   * @returns {StockItem['status']} The stock status string.
-   */
   const getStatus = useCallback((stock: number): StockItem['status'] => {
     if (stock <= 0) return "Out of Stock";
     if (stock < LOW_STOCK_THRESHOLD) return "Low Stock"; 
     return "In Stock";
   }, []); 
   
-  /**
-   * Fetches product stock data from Firestore's 'products' collection.
-   * Orders products by name and calculates stock status.
-   */
+  // Firestore Index Required: 'products' collection, orderBy 'name' (ASC)
   const fetchStock = useCallback(async () => {
     setIsLoading(true);
     try {
-      // Firestore Index Required: 'products' collection, orderBy 'name' (ASC)
       const q = query(collection(db, "products"), orderBy("name", "asc"));
       const querySnapshot = await getDocs(q);
       const fetchedStockItems = querySnapshot.docs.map(docSnapshot => {
         const data = docSnapshot.data();
         return {
-          id: docSnapshot.id,
-          name: data.name,
-          sku: data.sku,
-          stock: data.stock || 0,
-          status: getStatus(data.stock || 0),
+          id: docSnapshot.id, name: data.name, sku: data.sku,
+          stock: data.stock || 0, status: getStatus(data.stock || 0),
           imageUrl: data.imageUrl || `https://placehold.co/40x40.png?text=${encodeURIComponent(data.name.substring(0,2).toUpperCase())}`,
           dataAiHint: data.dataAiHint || "product item",
           unitOfMeasure: data.unitOfMeasure || "pcs",
-          numericPrice: data.numericPrice || 0,
-          price: formatCurrency(data.numericPrice || 0),
-          category: data.category || "Other",
-          description: data.description || "",
+          numericPrice: data.numericPrice || 0, price: formatCurrency(data.numericPrice || 0),
+          category: data.category || "Other", description: data.description || "",
         } as StockItem;
       });
       setStockList(fetchedStockItems);
@@ -138,9 +108,8 @@ export default function StockPage() {
       if (error.code === 'failed-precondition') {
          toast({
             title: "Database Index Required",
-            description: `A query for products (stock) failed. Please create the required Firestore index for 'products' collection (orderBy 'name' ascending). Check your browser's developer console for a Firebase link to create it, or visit the Firestore indexes page in your Firebase console.`,
-            variant: "destructive",
-            duration: 15000,
+            description: `A query for products (stock) failed. Please create the required Firestore index for 'products' collection (orderBy 'name' ascending). Check your browser's developer console for a Firebase link to create it.`,
+            variant: "destructive", duration: 15000,
         });
       } else {
         toast({ title: "Database Error", description: "Could not load stock data. Please try again.", variant: "destructive" });
@@ -150,45 +119,26 @@ export default function StockPage() {
     }
   }, [toast, getStatus]);
 
-  useEffect(() => {
-    fetchStock();
-  }, [fetchStock]);
+  useEffect(() => { fetchStock(); }, [fetchStock]);
 
-  /**
-   * Handles changes in the search input field.
-   * @param {React.ChangeEvent<HTMLInputElement>} event - The input change event.
-   */
   const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setSearchTerm(event.target.value.toLowerCase());
   };
 
-  // Filter stock items based on the search term (name or SKU)
   const filteredStockItems = stockList.filter(item =>
     item.name.toLowerCase().includes(searchTerm) ||
     item.sku.toLowerCase().includes(searchTerm)
   );
   
-  /**
-   * Opens the stock update dialog and pre-fills form with selected product's data.
-   * @param {StockItem} item - The stock item to update.
-   */
   const openUpdateStockDialog = (item: StockItem) => {
     setProductToUpdateStock(item);
     form.reset({ 
-        productId: item.id,
-        currentStock: item.stock, 
-        adjustmentType: "set", 
-        adjustmentValue: item.stock, 
-        notes: "",
+        productId: item.id, currentStock: item.stock, 
+        adjustmentType: "set", adjustmentValue: item.stock, notes: "",
     });
     setIsUpdateStockDialogOpen(true);
   };
 
-  /**
-   * Handles submission of the stock update form.
-   * Updates the product's stock in Firestore and creates a stock movement log entry.
-   * @param {StockUpdateFormValues} values - The validated form values.
-   */
   const handleUpdateStockSubmit = async (values: StockUpdateFormValues) => {
     if (!productToUpdateStock) return;
     const currentUser = auth.currentUser;
@@ -208,21 +158,29 @@ export default function StockPage() {
     if (finalStock < 0) finalStock = 0; 
 
     try {
-      const productRef = doc(db, "products", productToUpdateStock.id);
-      
       await runTransaction(db, async (transaction) => {
+        // --- READ PHASE ---
+        const productRef = doc(db, "products", productToUpdateStock.id);
+        const productSnap = await transaction.get(productRef);
+        if (!productSnap.exists()) {
+            throw new Error(`Product "${productToUpdateStock.name}" (ID: ${productToUpdateStock.id}) not found during transaction.`);
+        }
+        // Re-calculate finalStock based on fresh data if needed, though `productToUpdateStock.stock` should be recent.
+        // For this simpler manual update, we'll trust the `productToUpdateStock.stock` from the page load.
+
+        // --- WRITE PHASE ---
         transaction.update(productRef, { 
           stock: finalStock,
           updatedAt: serverTimestamp(), 
         });
 
-        const stockMovementLogRef = collection(db, "stockMovements");
-        transaction.set(doc(stockMovementLogRef), {
+        const stockMovementLogRef = doc(collection(db, "stockMovements")); // Use doc() to get a new ref
+        transaction.set(stockMovementLogRef, {
           productId: productToUpdateStock.id,
           productName: productToUpdateStock.name,
           sku: productToUpdateStock.sku,
-          previousStock: productToUpdateStock.stock,
-          newStock: finalStock,
+          previousStock: productToUpdateStock.stock, // Stock before this specific adjustment
+          newStock: finalStock, // Stock after this specific adjustment
           adjustmentType: values.adjustmentType,
           adjustmentValue: values.adjustmentValue,
           notes: values.notes || "Manual stock adjustment", 
@@ -232,7 +190,7 @@ export default function StockPage() {
         });
       });
 
-      toast({ title: "Stock Updated Successfully", description: `Stock for ${productToUpdateStock.name} updated to ${finalStock}. A log entry was created.` });
+      toast({ title: "Stock Updated Successfully", description: `Stock for ${productToUpdateStock.name} updated to ${finalStock}. Log entry created.` });
       fetchStock(); 
       setIsUpdateStockDialogOpen(false); 
       setProductToUpdateStock(null);
@@ -264,13 +222,8 @@ export default function StockPage() {
       </Card>
 
       <Dialog open={isUpdateStockDialogOpen} onOpenChange={(isOpen) => { 
-          if(!isOpen) { 
-            setIsUpdateStockDialogOpen(false); 
-            setProductToUpdateStock(null); 
-            form.reset(); 
-          } else {
-            setIsUpdateStockDialogOpen(isOpen);
-          }
+          if(!isOpen) { setIsUpdateStockDialogOpen(false); setProductToUpdateStock(null); form.reset(); } 
+          else { setIsUpdateStockDialogOpen(isOpen); }
       }}>
         <DialogContent className="sm:max-w-[480px]">
           <DialogHeader>
@@ -316,7 +269,7 @@ export default function StockPage() {
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div><CardTitle className="font-headline text-foreground">Current Stock Levels</CardTitle><CardDescription>Real-time inventory status from Firestore.</CardDescription></div>
             <div className="relative w-full sm:w-64">
-              <PackageSearch className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" /><Input type="search" placeholder="Search by name or SKU..." className="pl-8" onChange={handleSearchChange} value={searchTerm}/>
+              <PackageSearch className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" /><Input type="search" placeholder="Search by name or SKU..." className="pl-8 h-10" onChange={handleSearchChange} value={searchTerm}/>
             </div>
           </div>
         </CardHeader>
@@ -334,11 +287,8 @@ export default function StockPage() {
                   <TableRow key={item.id}>
                     <TableCell>
                       <Image 
-                          src={item.imageUrl} 
-                          alt={item.name} 
-                          width={40} height={40} 
-                          className="rounded-md object-cover border" 
-                          data-ai-hint={item.dataAiHint}
+                          src={item.imageUrl} alt={item.name} width={40} height={40} 
+                          className="rounded-md object-cover border" data-ai-hint={item.dataAiHint}
                           onError={(e) => { e.currentTarget.src = `https://placehold.co/40x40.png?text=${encodeURIComponent(item.name.substring(0,2).toUpperCase())}`; }} 
                       />
                     </TableCell>
@@ -353,9 +303,7 @@ export default function StockPage() {
                           item.status === "In Stock" ? "bg-accent text-accent-foreground" : 
                           item.status === "Low Stock" ? "bg-yellow-400 text-yellow-900 dark:bg-yellow-600 dark:text-yellow-100 border-yellow-500" : ""
                         }
-                      >
-                        {item.status}
-                      </Badge>
+                      >{item.status}</Badge>
                     </TableCell>
                     <TableCell className="text-right">
                       <Button variant="outline" size="sm" onClick={() => openUpdateStockDialog(item)}>
