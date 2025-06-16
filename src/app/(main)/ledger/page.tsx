@@ -28,7 +28,6 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from '@/components/ui/badge';
 import type { PaymentRecord, PAYMENT_METHODS as PAYMENT_METHODS_PAYMENT_PAGE, PAYMENT_STATUSES as PAYMENT_STATUSES_PAYMENT_PAGE } from './../payments/page';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 
 /**
@@ -73,9 +72,9 @@ export interface LedgerEntry {
   createdBy: string;
   createdAt: Timestamp;
   updatedAt?: Timestamp;
-  originalTransactionAmount: number; // For partial payments, this is the grandTotal
-  amountPaidNow: number; // For partial, actual amount paid; for paid, it's grandTotal; for pending, it's 0
-  remainingAmount: number; // Calculated
+  originalTransactionAmount: number; 
+  amountPaidNow: number; 
+  remainingAmount: number; 
   associatedPaymentRecordId?: string | null; 
 }
 
@@ -102,7 +101,7 @@ const baseLedgerEntrySchema = z.object({
     (val) => String(val).trim() === "" ? undefined : parseFloat(String(val).replace(/[^0-9.]+/g, "")),
     z.number({ invalid_type_error: "Amount paid must be a valid number." }).positive({ message: "Amount paid must be positive if paying." }).optional()
   ),
-  notes: z.string().optional().transform(val => (val === undefined || val.trim() === "") ? null : val.trim()),
+  notes: z.string().optional(), // Made notes truly optional in Zod; conversion to null happens in submit handler
 });
 
 const ledgerEntrySchema = baseLedgerEntrySchema.superRefine((data, ctx) => {
@@ -114,14 +113,14 @@ const ledgerEntrySchema = baseLedgerEntrySchema.superRefine((data, ctx) => {
     });
   }
 
-  const subTotal = data.items.reduce((sum, item) => sum + item.totalPrice, 0);
+  const subTotal = data.items.reduce((sum, item) => sum + ((item.quantity || 0) * (item.unitPrice || 0)), 0);
   const grandTotal = subTotal * (data.applyGst ? (1 + GST_RATE) : 1);
 
   if (data.paymentStatus === "partial") {
     if (data.amountPaidNow === undefined || data.amountPaidNow <= 0) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Amount paid now is required for partial payments and must be positive.", path: ["amountPaidNow"] });
     }
-    if (data.amountPaidNow && data.amountPaidNow >= grandTotal) {
+    if (data.amountPaidNow && data.amountPaidNow >= grandTotal && grandTotal > 0) { // Added grandTotal > 0 check to avoid error on 0 total
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "For partial payment, amount paid must be less than the grand total.", path: ["amountPaidNow"] });
     }
   }
@@ -178,7 +177,8 @@ export default function DailyLedgerPage() {
       items: [], applyGst: false,
       paymentStatus: 'paid', paymentMethod: 'Cash',
       amountPaidNow: undefined,
-      notes: null, entityId: null,
+      notes: "", // Initialize with empty string for controlled component behavior
+      entityId: null,
     },
   });
   const { fields, append, remove, update } = useFieldArray({ control: form.control, name: "items" });
@@ -238,34 +238,32 @@ export default function DailyLedgerPage() {
   useEffect(() => { fetchData(selectedDate); }, [selectedDate, fetchData]);
   
   useEffect(() => { 
-    if (!isLedgerFormOpen) { // Reset date in form only when dialog closes or selectedDate changes externally
-        if (!editingLedgerEntry) { // If not editing, always use current selectedDate
+    if (!isLedgerFormOpen) { 
+        if (!editingLedgerEntry) { 
              form.setValue("date", selectedDate);
         }
-        // If editing, form.reset in the openLedgerFormOpen effect handles the date
     }
   }, [selectedDate, form, isLedgerFormOpen, editingLedgerEntry]);
 
-  // Effect to reset form when dialog opens or editingLedgerEntry changes
   useEffect(() => {
     if (isLedgerFormOpen) {
       if (editingLedgerEntry) {
          form.reset({
-            date: editingLedgerEntry.date, // Use existing date when editing
+            date: editingLedgerEntry.date, 
             type: editingLedgerEntry.type,
             entityType: editingLedgerEntry.entityType,
             entityId: editingLedgerEntry.entityId,
             entityName: editingLedgerEntry.entityName,
-            items: editingLedgerEntry.items.map(item => ({...item})), // Deep copy items
+            items: editingLedgerEntry.items.map(item => ({...item})), 
             applyGst: editingLedgerEntry.gstApplied,
             paymentStatus: editingLedgerEntry.paymentStatus,
             paymentMethod: editingLedgerEntry.paymentMethod,
             amountPaidNow: editingLedgerEntry.paymentStatus === 'partial' ? editingLedgerEntry.amountPaidNow : undefined,
-            notes: editingLedgerEntry.notes,
+            notes: editingLedgerEntry.notes || "",
         });
       } else {
         form.reset({
-            date: selectedDate, // Use current page date for new entries
+            date: selectedDate, 
             type: 'sale', 
             entityType: 'customer', 
             entityName: '',
@@ -274,7 +272,7 @@ export default function DailyLedgerPage() {
             paymentStatus: 'paid', 
             paymentMethod: 'Cash',
             amountPaidNow: undefined,
-            notes: null, 
+            notes: "", 
             entityId: null,
         });
       }
@@ -284,13 +282,12 @@ export default function DailyLedgerPage() {
 
   const transactionTypeWatcher = form.watch("type");
   useEffect(() => {
-    // Only auto-set defaults if creating a new entry (not editing) and type changes
     if (!editingLedgerEntry && form.formState.isDirty && form.getFieldState("type").isDirty) { 
         if (transactionTypeWatcher === 'sale') {
             form.setValue("entityType", 'customer', { shouldDirty: true });
             form.setValue("paymentStatus", 'paid', { shouldDirty: true }); 
             form.setValue("paymentMethod", 'Cash', { shouldDirty: true });
-        } else { // purchase
+        } else { 
             form.setValue("entityType", 'seller', { shouldDirty: true });
             form.setValue("paymentStatus", 'pending', { shouldDirty: true }); 
             form.setValue("paymentMethod", null, { shouldDirty: true });
@@ -314,17 +311,16 @@ export default function DailyLedgerPage() {
         } else if (entityTypeWatcher === "unknown_seller") {
             form.setValue("entityId", null, { shouldDirty: true });
             form.setValue("entityName", "Unknown Seller", { shouldDirty: true });
-            form.setValue("paymentStatus", "paid", { shouldDirty: true }); // Default to paid for unknown sellers too for simplicity
+            form.setValue("paymentStatus", "paid", { shouldDirty: true }); 
             form.setValue("paymentMethod", "Cash", { shouldDirty: true });
         } else if ((form.getValues("entityName") === "Unknown Customer" || form.getValues("entityName") === "Unknown Seller") &&
                 (entityTypeWatcher === "customer" || entityTypeWatcher === "seller")) {
-            // If changing from "Unknown X" back to a normal type, clear name and reset payment status
             form.setValue("entityName", "", { shouldDirty: true });
-            form.setValue("entityId", null, { shouldDirty: true }); // Also clear entityId
+            form.setValue("entityId", null, { shouldDirty: true }); 
             if(form.getValues("type") === 'sale') {
                 form.setValue("paymentStatus", "paid", { shouldDirty: true });
                 form.setValue("paymentMethod", "Cash", { shouldDirty: true });
-            } else { // purchase
+            } else { 
                 form.setValue("paymentStatus", "pending", { shouldDirty: true });
                 form.setValue("paymentMethod", null, { shouldDirty: true });
             }
@@ -341,7 +337,6 @@ export default function DailyLedgerPage() {
         if (!shouldShowPaymentMethod) {
             form.setValue("paymentMethod", null, { shouldDirty: true });
         } else if (shouldShowPaymentMethod && !form.getValues("paymentMethod")) {
-             // Only set default payment method if it's currently null and should be shown
             if(form.getValues("type") === 'sale' || entityTypeWatcher === "unknown_seller" || entityTypeWatcher === "unknown_customer") {
                 form.setValue("paymentMethod", 'Cash', { shouldDirty: true });
             }
@@ -385,7 +380,6 @@ export default function DailyLedgerPage() {
         newQuantity = productDetails.stock;
     }
     form.setValue(`items.${index}.quantity`, newQuantity, { shouldDirty: true });
-    // No need to call update here, form.setValue on a field array item should trigger re-render and recalculations if needed
   };
 
   const handleItemPriceChange = (index: number, unitPriceStr: string) => {
@@ -398,17 +392,15 @@ export default function DailyLedgerPage() {
     form.setValue(`items.${index}.unitPrice`, unitPrice, { shouldDirty: true });
   };
 
-  // Re-calculate totals whenever items, their quantities, or prices change
   useEffect(() => {
     const subscription = form.watch((value, { name, type }) => {
         if (name?.startsWith("items")) {
-            const updatedItems = form.getValues("items").map(item => ({
-                ...item,
-                totalPrice: (item.quantity || 0) * (item.unitPrice || 0)
-            }));
-            // Check if a direct update is necessary or if react-hook-form handles it
-            // For explicit control or complex dependencies, you might update here.
-            // This re-calculation is mostly for display; Zod will use latest values on submit.
+            form.getValues("items").forEach((item, index) => {
+                const newTotal = (item.quantity || 0) * (item.unitPrice || 0);
+                if (item.totalPrice !== newTotal) {
+                    form.setValue(`items.${index}.totalPrice`, newTotal, { shouldDirty: true });
+                }
+            });
         }
     });
     return () => subscription.unsubscribe();
@@ -437,29 +429,35 @@ export default function DailyLedgerPage() {
     const currentUser = auth.currentUser;
     if (!currentUser) { toast({ title: "Authentication Error", description: "You must be logged in.", variant: "destructive" }); return; }
 
-    const subTotal = data.items.reduce((sum, item) => sum + ((item.quantity || 0) * (item.unitPrice || 0)), 0);
-    const taxAmount = data.applyGst ? subTotal * GST_RATE : 0;
+    const processedData = {
+        ...data,
+        notes: (data.notes === undefined || data.notes.trim() === "") ? null : data.notes.trim(),
+        // entityId and paymentMethod are already correctly transformed to null by Zod if applicable
+    };
+
+    const subTotal = processedData.items.reduce((sum, item) => sum + ((item.quantity || 0) * (item.unitPrice || 0)), 0);
+    const taxAmount = processedData.applyGst ? subTotal * GST_RATE : 0;
     const grandTotal = subTotal + taxAmount;
 
     let amountPaidForEntry: number;
     let remainingAmountForEntry: number;
 
-    if (data.paymentStatus === 'paid') {
+    if (processedData.paymentStatus === 'paid') {
         amountPaidForEntry = grandTotal;
         remainingAmountForEntry = 0;
-    } else if (data.paymentStatus === 'partial') {
-        amountPaidForEntry = data.amountPaidNow || 0; // Zod ensures amountPaidNow is positive for partial
+    } else if (processedData.paymentStatus === 'partial') {
+        amountPaidForEntry = processedData.amountPaidNow || 0; 
         remainingAmountForEntry = grandTotal - amountPaidForEntry;
-    } else { // pending
+    } else { 
         amountPaidForEntry = 0;
         remainingAmountForEntry = grandTotal;
     }
 
     const ledgerDataForSave = {
-      date: data.date, type: data.type, entityType: data.entityType,
-      entityId: data.entityId, // Already null if not set, due to Zod transform
-      entityName: data.entityName, 
-      items: data.items.map(item => ({ // Ensure items are well-formed
+      date: processedData.date, type: processedData.type, entityType: processedData.entityType,
+      entityId: processedData.entityId, 
+      entityName: processedData.entityName, 
+      items: processedData.items.map(item => ({ 
           productId: item.productId,
           productName: item.productName,
           quantity: item.quantity || 0,
@@ -467,13 +465,13 @@ export default function DailyLedgerPage() {
           totalPrice: (item.quantity || 0) * (item.unitPrice || 0),
           unitOfMeasure: item.unitOfMeasure,
       })),
-      subTotal, gstApplied: data.applyGst, taxAmount, grandTotal,
-      paymentMethod: (data.paymentStatus === 'paid' || data.paymentStatus === 'partial') ? (data.paymentMethod) : null, // Already null if not set from Zod
-      paymentStatus: data.paymentStatus,
+      subTotal, gstApplied: processedData.applyGst, taxAmount, grandTotal,
+      paymentMethod: (processedData.paymentStatus === 'paid' || processedData.paymentStatus === 'partial') ? (processedData.paymentMethod) : null, 
+      paymentStatus: processedData.paymentStatus,
       originalTransactionAmount: grandTotal,
       amountPaidNow: amountPaidForEntry,
       remainingAmount: remainingAmountForEntry,
-      notes: data.notes, // Already null if not set from Zod
+      notes: processedData.notes, 
       createdBy: editingLedgerEntry ? editingLedgerEntry.createdBy : currentUser.uid, 
       updatedAt: serverTimestamp(),
     };
@@ -491,7 +489,6 @@ export default function DailyLedgerPage() {
           originalLedgerEntryData = originalLedgerSnap.data() as LedgerEntry;
           originalAssociatedPaymentRecordId = originalLedgerEntryData.associatedPaymentRecordId || null;
 
-          // Revert stock from original items
           for (const item of originalLedgerEntryData.items) {
             const productRef = doc(db, "products", item.productId);
             const productSnap = await transaction.get(productRef);
@@ -515,7 +512,6 @@ export default function DailyLedgerPage() {
           ledgerDocRef = doc(collection(db, "ledgerEntries"));
         }
 
-        // Apply stock changes for new/edited items
         for (const item of ledgerDataForSave.items) {
           const productRef = doc(db, "products", item.productId);
           const productSnap = await transaction.get(productRef);
@@ -526,7 +522,7 @@ export default function DailyLedgerPage() {
           if (ledgerDataForSave.type === 'sale' && newStock < 0) {
             throw new Error(`Insufficient stock for ${item.productName}. Available: ${currentDbStock}, Requested: ${item.quantity}.`);
           }
-          if (newStock < 0 && ledgerDataForSave.type === 'sale') newStock = 0; // Prevent negative stock on sale, purchase can increase from negative (if manually set)
+          if (newStock < 0 && ledgerDataForSave.type === 'sale') newStock = 0; 
           
           transaction.update(productRef, { stock: newStock, updatedAt: serverTimestamp() });
           
@@ -542,7 +538,6 @@ export default function DailyLedgerPage() {
           });
         }
 
-        // Delete old associated payment record if it exists (on edit)
         if (editingLedgerEntry && originalAssociatedPaymentRecordId) {
             const oldPaymentRef = doc(db, "payments", originalAssociatedPaymentRecordId);
             transaction.delete(oldPaymentRef);
@@ -556,14 +551,14 @@ export default function DailyLedgerPage() {
             type: ledgerDataForSave.type === 'sale' ? 'customer' : 'supplier',
             relatedEntityName: ledgerDataForSave.entityName,
             relatedEntityId: ledgerDataForSave.entityId || `unknown-${ledgerDataForSave.entityType}-${Date.now()}`,
-            relatedInvoiceId: null, // Ledger entries don't directly link to invoices in this model
+            relatedInvoiceId: null, 
             date: format(parseISO(ledgerDataForSave.date), "MMM dd, yyyy"),
             isoDate: ledgerDataForSave.date,
             amountPaid: amountPaidForEntry,
-            originalInvoiceAmount: grandTotal, // The ledger's grand total is the "original" for this payment context
+            originalInvoiceAmount: grandTotal, 
             remainingBalanceOnInvoice: remainingAmountForEntry,
             method: ledgerDataForSave.paymentMethod as typeof PAYMENT_METHODS_PAYMENT_PAGE[number] | null,
-            transactionId: null, // Not collected in ledger form
+            transactionId: null, 
             status: ledgerDataForSave.paymentStatus === 'paid' ? 'Completed' : 'Partial' as typeof PAYMENT_STATUSES_PAYMENT_PAGE[number],
             notes: `Payment for Ledger Entry: ${ledgerDocRef.id}. ${ledgerDataForSave.notes || ''}`.trim(),
             ledgerEntryId: ledgerDocRef.id,
@@ -587,7 +582,7 @@ export default function DailyLedgerPage() {
 
       });
       toast({ title: editingLedgerEntry ? "Ledger Entry Updated" : "Ledger Entry Saved", description: "Transaction recorded, stock updated, and payment record handled." });
-      form.reset({ date: selectedDate, type: 'sale', entityType: 'customer', entityName: '', items: [], applyGst: false, paymentStatus: 'paid', paymentMethod: 'Cash', amountPaidNow: undefined, notes: null, entityId: null });
+      form.reset({ date: selectedDate, type: 'sale', entityType: 'customer', entityName: '', items: [], applyGst: false, paymentStatus: 'paid', paymentMethod: 'Cash', amountPaidNow: undefined, notes: "", entityId: null });
       setIsLedgerFormOpen(false);
       setEditingLedgerEntry(null);
       fetchData(selectedDate);
@@ -629,7 +624,6 @@ export default function DailyLedgerPage() {
         return;
     }
     setEditingLedgerEntry(entry);
-    // Form reset is handled by the useEffect watching isLedgerFormOpen and editingLedgerEntry
     setIsLedgerFormOpen(true);
   };
 
@@ -654,7 +648,6 @@ export default function DailyLedgerPage() {
             if (!ledgerSnap.exists()) throw new Error("Ledger entry not found for deletion.");
             const entryData = ledgerSnap.data() as LedgerEntry;
 
-            // Revert stock
             for (const item of entryData.items) {
                 const productRef = doc(db, "products", item.productId);
                 const productSnap = await transaction.get(productRef);
@@ -675,7 +668,6 @@ export default function DailyLedgerPage() {
                 });
             }
 
-            // Delete associated payment record if it exists
             if (entryData.associatedPaymentRecordId) {
                 const paymentRef = doc(db, "payments", entryData.associatedPaymentRecordId);
                 transaction.delete(paymentRef);
@@ -734,7 +726,6 @@ export default function DailyLedgerPage() {
         actions={
             <Button onClick={() => {
                 setEditingLedgerEntry(null);
-                // Resetting form values is handled by useEffect when isLedgerFormOpen changes
                 setIsLedgerFormOpen(true);
             }}>
                 <PlusCircle className="mr-2 h-4 w-4" /> Add New Ledger Entry
@@ -744,9 +735,9 @@ export default function DailyLedgerPage() {
 
       <Dialog open={isLedgerFormOpen} onOpenChange={(isOpen) => {
           if (!isOpen) { 
-            form.reset(); // Always reset form on close
             setProductSearchTerm(''); 
             setEditingLedgerEntry(null); 
+             // Form reset is handled by useEffect watching isLedgerFormOpen & editingLedgerEntry
           }
           setIsLedgerFormOpen(isOpen);
       }}>
@@ -787,7 +778,7 @@ export default function DailyLedgerPage() {
                           <FormItem><FormLabel>{form.getValues("type") === 'sale' ? 'Select Customer' : 'Select Seller'}</FormLabel>
                               <Select
                                   onValueChange={(value) => {
-                                      field.onChange(value || null); // Pass null if value is undefined/empty
+                                      field.onChange(value || null); 
                                       const selectedEntity = (form.getValues("type") === 'sale' ? customers : sellers).find(e => e.id === value);
                                       form.setValue("entityName", selectedEntity?.name || "");
                                   }}
