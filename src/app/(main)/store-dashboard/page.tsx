@@ -10,7 +10,7 @@ import { useEffect, useState, useCallback } from "react";
 import { collection, getDocs, query, where, limit, orderBy, Timestamp, getCountFromServer } from 'firebase/firestore';
 import { db, auth } from '@/lib/firebase/firebaseConfig';
 import type { User as FirebaseUser } from "firebase/auth";
-import { format, startOfWeek, endOfWeek, startOfDay, endOfDay } from 'date-fns'; 
+import { format, startOfWeek, endOfWeek, startOfDay, endOfDay, parseISO } from 'date-fns';
 import { useToast } from "@/hooks/use-toast";
 
 /**
@@ -23,7 +23,7 @@ interface Metric {
   icon: React.ElementType;
   description?: string;
   dataAiHint?: string;
-  link?: string; 
+  link?: string;
   isLoading: boolean;
 }
 
@@ -48,7 +48,7 @@ export default function StoreManagerDashboardPage() {
     { title: "Today's Bills Generated", value: "0", icon: ReceiptText, description: "Bills created by you today.", dataAiHint: "invoice document", isLoading: true, link: "/billing?filter=today&manager=me" },
     { title: "Customers Added This Week", value: "0", icon: Users, description: "New customers registered by you this week.", dataAiHint: "people team", isLoading: true, link: "/customers"},
     { title: "Pending Bills (Yours)", value: "0", icon: ReceiptText, description: "Your bills awaiting payment.", dataAiHint: "payment money", isLoading: true, link: "/billing?status=Pending&manager=me"},
-    { title: "Reported Product Issues", value: "0", icon: AlertTriangle, description: "Issues you've reported (active).", dataAiHint: "alert inventory", isLoading: true, link: "/view-products-stock" }, 
+    { title: "Reported Product Issues", value: "0", icon: AlertTriangle, description: "Issues you've reported (active).", dataAiHint: "alert inventory", isLoading: true, link: "/view-products-stock" },
   ]);
 
   useEffect(() => {
@@ -56,23 +56,20 @@ export default function StoreManagerDashboardPage() {
     return () => unsubscribe();
   }, []);
 
-  // Firestore Index Required: 'invoices' (createdBy ASC, isoDate ASC)
-  // Firestore Index Required: 'customers' (createdBy ASC, createdAt ASC)
-  // Firestore Index Required: 'invoices' (createdBy ASC, status ASC)
-  // Firestore Index Required: 'issueReports' (reportedByUid ASC, status ASC)
-  // Firestore Index Required: 'invoices' (createdBy ASC, createdAt DESC)
+
   const fetchManagerDashboardData = useCallback(async () => {
     if (!currentUser) {
       setMetrics(prevMetrics => prevMetrics.map(m => ({ ...m, isLoading: false, value: "N/A" })));
+      setRecentActivity([]);
       return;
     }
 
     const updateMetricState = (title: string, newValue: Partial<Metric>) => {
-      setMetrics(prevMetrics => 
+      setMetrics(prevMetrics =>
         prevMetrics.map(m => m.title === title ? { ...m, ...newValue, isLoading: false } : m)
       );
     };
-    
+
     setMetrics(prevMetrics => prevMetrics.map(m => ({ ...m, isLoading: true })));
     setRecentActivity([]);
 
@@ -83,50 +80,57 @@ export default function StoreManagerDashboardPage() {
     const weekEndTimestamp = Timestamp.fromDate(endOfWeek(today, { weekStartsOn: 1 }));
 
     try {
-      // Query for today's bills created by the current user
-      const todaysBillsQuery = query(collection(db, "invoices"), 
-        where("createdBy", "==", currentUser.uid), 
-        where("isoDate", ">=", todayStartISO), 
+      // Firestore Index Required: 'invoices' (createdBy ASC, isoDate ASC)
+      const todaysBillsQuery = query(collection(db, "invoices"),
+        where("createdBy", "==", currentUser.uid),
+        where("isoDate", ">=", todayStartISO),
         where("isoDate", "<=", todayEndISO)
       );
       const todaysBillsSnapshot = await getCountFromServer(todaysBillsQuery);
       updateMetricState("Today's Bills Generated", { value: todaysBillsSnapshot.data().count.toString() });
 
-      // Query for customers added this week by the current user
-      const customersAddedQuery = query(collection(db, "customers"), 
-        where("createdBy", "==", currentUser.uid), 
-        where("createdAt", ">=", weekStartTimestamp), 
+      // Firestore Index Required: 'customers' (createdBy ASC, createdAt ASC)
+      const customersAddedQuery = query(collection(db, "customers"),
+        where("createdBy", "==", currentUser.uid),
+        where("createdAt", ">=", weekStartTimestamp),
         where("createdAt", "<=", weekEndTimestamp)
       );
       const customersAddedSnapshot = await getCountFromServer(customersAddedQuery);
       updateMetricState("Customers Added This Week", { value: customersAddedSnapshot.data().count.toString() });
 
-      // Query for pending bills created by the current user
-      const pendingBillsQuery = query(collection(db, "invoices"), 
-        where("createdBy", "==", currentUser.uid), 
+      // Firestore Index Required: 'invoices' (createdBy ASC, status ASC)
+      const pendingBillsQuery = query(collection(db, "invoices"),
+        where("createdBy", "==", currentUser.uid),
         where("status", "==", "Pending")
       );
       const pendingBillsSnapshot = await getCountFromServer(pendingBillsQuery);
       updateMetricState("Pending Bills (Yours)", {value: pendingBillsSnapshot.data().count.toString()});
 
-      // Query for reported issues by the current user that are still 'New'
-      const reportedIssuesQuery = query(collection(db, "issueReports"), 
-        where("reportedByUid", "==", currentUser.uid), 
-        where("status", "==", "New")
+      // Firestore Index Required: 'issueReports' (reportedByUid ASC, status ASC)
+      const reportedIssuesQuery = query(collection(db, "issueReports"),
+        where("reportedByUid", "==", currentUser.uid),
+        where("status", "==", "New") // Assuming 'New' is an active status for reported issues
       );
       const reportedIssuesSnapshot = await getCountFromServer(reportedIssuesQuery);
       updateMetricState("Reported Product Issues", {value: reportedIssuesSnapshot.data().count.toString()});
 
-      // Query for recent activity (invoices created by user)
-      const recentActivityQuery = query(collection(db, "invoices"), 
-        where("createdBy", "==", currentUser.uid), 
-        orderBy("createdAt", "desc"), 
+      // Firestore Index Required: 'invoices' (createdBy ASC, createdAt DESC) - For recent activity
+      const recentActivityQuery = query(collection(db, "invoices"),
+        where("createdBy", "==", currentUser.uid),
+        orderBy("createdAt", "desc"),
         limit(3)
       );
       const activitySnapshot = await getDocs(recentActivityQuery);
       const activities = activitySnapshot.docs.map(doc => {
         const data = doc.data();
-        const dateFormatted = data.createdAt instanceof Timestamp ? format(data.createdAt.toDate(), "MMM dd, HH:mm") : (data.isoDate ? format(new Date(data.isoDate), "MMM dd, HH:mm") : "Recently");
+        let dateFormatted = "Recently";
+        if (data.createdAt instanceof Timestamp) {
+            dateFormatted = format(data.createdAt.toDate(), "MMM dd, HH:mm");
+        } else if (typeof data.isoDate === 'string') {
+            try {
+                dateFormatted = format(parseISO(data.isoDate), "MMM dd, HH:mm");
+            } catch (e) { /* ignore date parse error, use default */ }
+        }
         return `${dateFormatted}: Bill ${data.invoiceNumber || 'N/A'} created for ${data.customerName || 'Unknown Customer'}.`;
       });
       setRecentActivity(activities);
@@ -136,19 +140,19 @@ export default function StoreManagerDashboardPage() {
       if (error.code === 'failed-precondition') {
         toast({
             title: "Database Index Required",
-            description: `One or more queries for your dashboard data failed. Please create the required Firestore index. Check your browser's developer console for a Firebase error message that includes a link to create the needed index.`,
-            variant: "destructive",
-            duration: 20000,
+            description: `Dashboard data query failed. A Firestore index is needed. Check browser console for link.`,
+            variant: "destructive", duration: 20000,
         });
       } else {
         toast({ title: "Dashboard Load Error", description: "Could not load some dashboard metrics.", variant: "destructive"});
       }
+      // Ensure all metrics are marked as not loading even if an error occurs
       setMetrics(prevMetrics => prevMetrics.map(m => ({ ...m, value: m.isLoading ? "Error" : m.value, isLoading: false })));
-      setRecentActivity(["Failed to load recent activity due to an error."]);
+      if (recentActivity.length === 0) setRecentActivity(["Failed to load recent activity."]);
     } finally {
         setMetrics(prevMetrics => prevMetrics.map(m => ({...m, isLoading: false})));
     }
-  }, [currentUser, toast]); // Dependencies: currentUser, toast (stable)
+  }, [currentUser, toast]); // Removed `recentActivity` and `metrics` from deps
 
   useEffect(() => { if (currentUser) { fetchManagerDashboardData(); } }, [currentUser, fetchManagerDashboardData]);
 
@@ -171,7 +175,7 @@ export default function StoreManagerDashboardPage() {
           </Card>
         ))}
       </div>
-      
+
       <div className="mt-8">
         <Card className="shadow-lg rounded-xl">
           <CardHeader>
@@ -181,10 +185,10 @@ export default function StoreManagerDashboardPage() {
           <CardContent className="grid gap-4 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
             {quickActions.map((action) => (
                 <Link href={action.href} key={action.label} passHref legacyBehavior>
-                    <Button variant="outline" className="w-full h-auto justify-start p-4 text-left flex items-start gap-3 hover:bg-accent/10 transition-colors group">
+                    <Button variant="outline" className="w-full h-auto justify-start p-3 text-left flex items-start gap-3 hover:bg-accent/10 transition-colors group">
                         <action.icon className="h-7 w-7 text-primary mt-1 transition-transform group-hover:scale-110 shrink-0" />
-                        <div className="flex-1 min-w-0"> 
-                            <span className="text-base font-medium text-foreground block">{action.label}</span>
+                         <div className="flex-1 min-w-0">
+                            <span className="font-medium text-foreground block whitespace-normal break-words">{action.label}</span>
                             <p className="text-xs text-muted-foreground whitespace-normal break-words">{action.description}</p>
                         </div>
                     </Button>
@@ -201,7 +205,12 @@ export default function StoreManagerDashboardPage() {
              <CardDescription>Latest interactions and tasks performed by you.</CardDescription>
           </CardHeader>
           <CardContent>
-             {metrics.some(m => m.isLoading) && recentActivity.length === 0 ? (
+             {metrics.some(m => m.isLoading) && recentActivity.length === 0 && !currentUser ? ( // Show loading if user not yet determined
+                <div className="h-48 flex flex-col items-center justify-center bg-muted/30 rounded-md border border-dashed">
+                    <Activity className="h-10 w-10 text-muted-foreground animate-spin mb-2" />
+                    <p className="text-muted-foreground">Loading data...</p>
+                </div>
+             ) : metrics.some(m => m.isLoading) && recentActivity.length === 0 && currentUser ? ( // Show loading if user determined but data still fetching
                 <div className="h-48 flex flex-col items-center justify-center bg-muted/30 rounded-md border border-dashed">
                     <Activity className="h-10 w-10 text-muted-foreground animate-spin mb-2" />
                     <p className="text-muted-foreground">Loading recent activity...</p>
@@ -214,11 +223,11 @@ export default function StoreManagerDashboardPage() {
                         </li>
                     ))}
                 </ul>
-             ) : ( 
+             ) : (
                 <div className="h-48 flex flex-col items-center justify-center bg-muted/30 rounded-md border border-dashed">
                     <AlertCircle className="h-10 w-10 text-muted-foreground mb-2" />
                     <p className="text-muted-foreground font-semibold">No Recent Activity</p>
-                    <p className="text-sm text-muted-foreground">You haven&apos;t performed any actions recently.</p>
+                    <p className="text-sm text-muted-foreground">You haven&apos;t performed any actions recently, or data is still loading.</p>
                 </div>
              )}
           </CardContent>

@@ -1,16 +1,17 @@
 
-"use client"; 
+"use client";
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { PageHeader } from "@/components/page-header";
 import { DollarSign, Users, FileText, PackageMinus, LayoutDashboard, Package, BarChart3, TrendingUp, AlertCircle, Activity, UserCog } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { collection, getDocs, query, where, limit, orderBy, Timestamp, getCountFromServer } from 'firebase/firestore'; 
+import { collection, getDocs, query, where, limit, orderBy, Timestamp, getCountFromServer } from 'firebase/firestore';
 import { db } from '@/lib/firebase/firebaseConfig';
 import { useEffect, useState, useCallback } from 'react';
-import { format } from 'date-fns';
+import { format, startOfDay, endOfDay } from 'date-fns';
 import { useToast } from "@/hooks/use-toast";
+import type { PaymentRecord } from './payments/page'; // For accurate revenue calculation
 
 /**
  * @fileOverview Admin Dashboard page for the KBMS Billing application.
@@ -21,107 +22,121 @@ import { useToast } from "@/hooks/use-toast";
 interface DashboardMetric {
   title: string;
   value: string;
-  change?: string; 
+  change?: string;
   icon: React.ElementType;
-  dataAiHint?: string; 
-  link?: string; 
+  dataAiHint?: string;
+  link?: string;
   isLoading: boolean;
 }
 
 const quickActions = [
-    { label: "Create New Invoice", href: "/create-bill", icon: FileText, description: "Generate a new GST-compliant invoice for a customer." },
-    { label: "Add New Customer", href: "/customers?addNew=true", icon: Users, description: "Register a new customer profile directly." },
-    { label: "Manage Products", href: "/products", icon: Package, description: "Update product database, prices, and inventory details." },
-    { label: "Daily Ledger", href: "/ledger", icon: BarChart3, description: "View and manage daily sales and purchase transactions." },
+    { label: "Create New Invoice", href: "/create-bill", icon: FileText, description: "Generate a new GST-compliant invoice." },
+    { label: "Add New Customer", href: "/customers?addNew=true", icon: Users, description: "Register a new customer profile." },
+    { label: "Manage Products", href: "/products", icon: Package, description: "Update product database and inventory." },
+    { label: "Daily Ledger", href: "/ledger", icon: BarChart3, description: "View and manage daily transactions." },
 ];
 
 export default function AdminDashboardPage() {
   const { toast } = useToast();
   const [metrics, setMetrics] = useState<DashboardMetric[]>([
-    { title: "Total Revenue (Paid Invoices Sample)", value: "₹0.00", icon: DollarSign, dataAiHint: "finance money", isLoading: true, link: "/billing?status=Paid" },
+    { title: "Total Revenue (from Payments)", value: "₹0.00", icon: DollarSign, dataAiHint: "finance money", isLoading: true, link: "/payments?type=customer&status=Completed" },
     { title: "Active Customers", value: "0", icon: Users, dataAiHint: "people team", isLoading: true, link: "/customers" },
     { title: "Pending Invoices", value: "0", icon: FileText, dataAiHint: "document paper", isLoading: true, link: "/billing?status=Pending" },
     { title: "Low Stock Items", value: "0", icon: PackageMinus, dataAiHint: "box inventory alert", isLoading: true, link: "/stock?filter=low" },
   ]);
-  const [recentSales, setRecentSales] = useState<any[]>([]); 
+  const [recentSales, setRecentSales] = useState<any[]>([]);
   const [isLoadingSalesChart, setIsLoadingSalesChart] = useState(true);
 
-  const LOW_STOCK_THRESHOLD = 50; 
+  const LOW_STOCK_THRESHOLD = 50;
+  const formatCurrency = (num: number): string => `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-  // Firestore Index Required: 'invoices' (status ASC, isoDate DESC) for Paid Invoices Sample
-  // Firestore Index Required: 'products' (stock ASC) - usually covered by single field index, but if combined with other filters/orders, might need composite.
+
   const fetchDashboardData = useCallback(async () => {
     const updateMetricState = (title: string, newValue: Partial<DashboardMetric>) => {
-      setMetrics(prevMetrics => 
+      setMetrics(prevMetrics =>
         prevMetrics.map(m => m.title === title ? { ...m, ...newValue, isLoading: false } : m)
       );
     };
-    
+
     setMetrics(prevMetrics => prevMetrics.map(m => ({ ...m, isLoading: true })));
     setIsLoadingSalesChart(true);
 
     try {
+      // Active Customers
       const customersCol = collection(db, "customers");
       const customersSnapshot = await getCountFromServer(customersCol);
       updateMetricState("Active Customers", { value: customersSnapshot.data().count.toString() });
 
+      // Pending Invoices & Value
+      // Firestore Index Required: 'invoices' (status ASC) - usually auto-created or simple. If combined with orderBy, then composite.
       const pendingInvoicesQuery = query(collection(db, "invoices"), where("status", "==", "Pending"));
       const pendingInvoicesSnapshot = await getDocs(pendingInvoicesQuery);
       let totalPendingRevenue = 0;
       pendingInvoicesSnapshot.forEach(doc => { totalPendingRevenue += doc.data().totalAmount || 0; });
-      updateMetricState("Pending Invoices", { 
+      updateMetricState("Pending Invoices", {
         value: pendingInvoicesSnapshot.size.toString(),
-        change: `Total Value: ₹${totalPendingRevenue.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`
+        change: `Total Value: ${formatCurrency(totalPendingRevenue)}`
       });
 
+      // Low Stock Items
+      // Firestore Index Required: 'products' (stock ASC) if only this filter. If combined, composite.
       const lowStockQuery = query(collection(db, "products"), where("stock", "<", LOW_STOCK_THRESHOLD), where("stock", ">", 0));
       const lowStockSnapshot = await getCountFromServer(lowStockQuery);
       updateMetricState("Low Stock Items", { value: lowStockSnapshot.data().count.toString() });
-      
-      // Query for 'Paid' invoices, ordered by 'isoDate' descending
-      const paidInvoicesQuery = query(collection(db, "invoices"), where("status", "==", "Paid"), orderBy("isoDate", "desc"), limit(100)); 
-      const paidInvoicesSnapshot = await getDocs(paidInvoicesQuery);
-      let totalPaidRevenue = 0;
-      paidInvoicesSnapshot.forEach(doc => { totalPaidRevenue += doc.data().totalAmount || 0; });
-      updateMetricState("Total Revenue (Paid Invoices Sample)", { value: `₹${totalPaidRevenue.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`});
 
-      // Query for recent sales for the chart
+      // Total Revenue from Payments
+      // Firestore Index Required: 'payments' (type ASC, status ASC) -> or (type ASC, status ASC, amountPaid ASC/DESC for sorting/summing if done server-side)
+      // Client-side sum is fine for moderate data.
+      const paymentsQuery = query(collection(db, "payments"),
+        where("type", "==", "customer"),
+        where("status", "in", ["Completed", "Received", "Partial"]) // Include Partial as some amount is received
+      );
+      const paymentsSnapshot = await getDocs(paymentsQuery);
+      let totalRevenueFromPayments = 0;
+      paymentsSnapshot.forEach(doc => {
+        const payment = doc.data() as PaymentRecord;
+        totalRevenueFromPayments += payment.amountPaid || 0;
+      });
+      updateMetricState("Total Revenue (from Payments)", { value: formatCurrency(totalRevenueFromPayments) });
+
+
+      // Recent Sales Chart (from Invoices still, can be changed to Payments if preferred)
+      // Firestore Index Required: 'invoices' (status ASC, isoDate DESC)
       const recentSalesQuery = query(collection(db, "invoices"), where("status", "==", "Paid"), orderBy("isoDate", "desc"), limit(5));
       const recentSalesSnapshot = await getDocs(recentSalesQuery);
       const salesData = recentSalesSnapshot.docs.map(doc => {
         const data = doc.data();
         let formattedDate = "Invalid Date";
         try {
-          if (data.isoDate) { 
-            const dateObj = (data.isoDate instanceof Timestamp) ? data.isoDate.toDate() : new Date(data.isoDate);
+          if (data.isoDate) {
+            const dateObj = (data.isoDate instanceof Timestamp) ? data.isoDate.toDate() : parseISO(data.isoDate);
             formattedDate = format(dateObj, "MMM dd");
           }
         } catch (e) { console.warn("Error formatting date for recent sales chart item:", data.isoDate, e); }
         return { name: formattedDate, uv: data.totalAmount || 0, invoice: data.invoiceNumber || "N/A", customer: data.customerName || "N/A" };
       });
-      setRecentSales(salesData.reverse()); 
-      
+      setRecentSales(salesData.reverse());
+
     } catch (error: any) {
       console.error("Error fetching dashboard data: ", error);
       if (error.code === 'failed-precondition') {
         toast({
             title: "Database Index Required",
-            description: `A query for dashboard data failed. Please create the required Firestore index. Check your browser's developer console for a Firebase error message that includes a link to create the required index.`,
-            variant: "destructive",
-            duration: 20000,
+            description: `A query for dashboard data failed. Please create the required Firestore index. Check browser console for link.`,
+            variant: "destructive", duration: 20000,
         });
       } else {
         toast({ title: "Dashboard Load Error", description: "Could not load some dashboard metrics. Please try again later.", variant: "destructive" });
       }
-      // Ensure all metrics are marked as not loading even if an error occurs
       setMetrics(prevMetrics => prevMetrics.map(m => ({ ...m, value: m.isLoading ? "Error" : m.value, isLoading: false })));
     } finally {
-      setMetrics(prevMetrics => prevMetrics.map(m => ({...m, isLoading: false})));
+      // Ensure all metrics are marked as not loading, even if some specific ones failed.
+       setMetrics(prevMetrics => prevMetrics.map(m => ({...m, isLoading: false})));
       setIsLoadingSalesChart(false);
     }
-  }, [toast]); // Dependency: toast (stable)
+  }, [toast]);
 
-  useEffect(() => { fetchDashboardData(); }, [fetchDashboardData]); 
+  useEffect(() => { fetchDashboardData(); }, [fetchDashboardData]);
 
   return (
     <>
@@ -156,7 +171,7 @@ export default function AdminDashboardPage() {
                  </div>
             ) : recentSales.length > 0 ? (
               <div className="h-64 flex items-center justify-center bg-muted/20 dark:bg-muted/10 rounded-md border border-dashed">
-                <p className="text-muted-foreground p-4 text-center">Sales chart data loaded ({recentSales.length} entries). Actual chart component to be implemented here.</p>
+                <p className="text-muted-foreground p-4 text-center">Sales chart data loaded ({recentSales.length} entries). Actual chart component to be implemented here using Recharts or similar.</p>
               </div>
             ) : (
               <div className="h-64 flex flex-col items-center justify-center bg-muted/30 rounded-md border border-dashed">
@@ -177,8 +192,8 @@ export default function AdminDashboardPage() {
                 <Link href={action.href} key={action.label} passHref legacyBehavior>
                     <Button variant="outline" className="w-full h-auto justify-start p-3 text-left flex items-start gap-3 hover:bg-accent/10 transition-colors group">
                         <action.icon className="h-6 w-6 text-primary mt-1 transition-transform group-hover:scale-110 shrink-0" />
-                        <div className="flex-1 min-w-0"> 
-                            <span className="font-medium text-foreground block">{action.label}</span>
+                        <div className="flex-1 min-w-0">
+                            <span className="font-medium text-foreground block whitespace-normal break-words">{action.label}</span>
                             <p className="text-xs text-muted-foreground whitespace-normal break-words">{action.description}</p>
                         </div>
                     </Button>
@@ -188,7 +203,7 @@ export default function AdminDashboardPage() {
                 <Button variant="outline" className="w-full h-auto justify-start p-3 text-left flex items-start gap-3 hover:bg-accent/10 transition-colors group">
                     <UserCog className="h-6 w-6 text-primary mt-1 transition-transform group-hover:scale-110 shrink-0" />
                     <div className="flex-1 min-w-0">
-                        <span className="font-medium text-foreground">Manage Staff</span>
+                        <span className="font-medium text-foreground block whitespace-normal break-words">Manage Staff</span>
                         <p className="text-xs text-muted-foreground whitespace-normal break-words">Administer Store Manager accounts and permissions.</p>
                     </div>
                 </Button>
