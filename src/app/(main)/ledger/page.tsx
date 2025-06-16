@@ -14,7 +14,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDes
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { BookOpen, PlusCircle, Trash2, Search, Users, Truck, XCircle, Filter, FileWarning } from 'lucide-react'; // Added FileWarning
+import { BookOpen, PlusCircle, Trash2, Search, Users, Truck, XCircle, Filter, FileWarning } from 'lucide-react'; 
 import { useToast } from "@/hooks/use-toast";
 import { collection, getDocs, addDoc, serverTimestamp, query, orderBy, where, doc, runTransaction, Timestamp } from 'firebase/firestore';
 import type { DocumentSnapshot, DocumentData } from 'firebase/firestore';
@@ -33,6 +33,7 @@ import { Badge } from '@/components/ui/badge';
  * Supports "Unknown Customer" for cash sales and "Unknown Seller" for cash purchases.
  * Integrates with product stock, updating Firestore.
  * Price editing for ledger items is admin-only. Optional GST application.
+ * Payment method is conditionally displayed based on payment status.
  * Data is fetched from and saved to Firebase Firestore.
  */
 
@@ -44,6 +45,9 @@ export interface LedgerItem {
   totalPrice: number; 
   unitOfMeasure: string;
 }
+
+const PAYMENT_METHODS_LEDGER = ["Cash", "UPI", "Card", "Bank Transfer", "Credit", "Other"] as const;
+const PAYMENT_STATUSES_LEDGER = ['paid', 'pending', 'partial'] as const;
 
 export interface LedgerEntry {
   id?: string; 
@@ -57,8 +61,8 @@ export interface LedgerEntry {
   gstApplied: boolean; 
   taxAmount: number; 
   grandTotal: number; 
-  paymentMethod: string | null; 
-  paymentStatus: 'paid' | 'pending' | 'partial' | null; 
+  paymentMethod: typeof PAYMENT_METHODS_LEDGER[number] | null; 
+  paymentStatus: typeof PAYMENT_STATUSES_LEDGER[number] | null; 
   notes: string | null; 
   createdBy: string; 
   createdAt: Timestamp; 
@@ -74,18 +78,29 @@ const ledgerItemSchema = z.object({
   unitOfMeasure: z.string(),
 });
 
-const ledgerEntrySchema = z.object({
+const baseLedgerEntrySchema = z.object({
   date: z.string().refine(val => !isNaN(parseISO(val).valueOf()), { message: "A valid date is required." }),
   type: z.enum(['sale', 'purchase'], { required_error: "Transaction type is required." }),
   entityType: z.enum(['customer', 'seller', 'unknown_customer', 'unknown_seller'], { required_error: "Entity type is required." }),
-  entityId: z.string().optional(),
+  entityId: z.string().nullable().optional(),
   entityName: z.string().min(1, "Entity name is required."),
   items: z.array(ledgerItemSchema).min(1, "At least one item must be added to the ledger."),
   applyGst: z.boolean().default(false),
-  paymentMethod: z.string().optional().transform(val => val === "" ? null : val),
-  paymentStatus: z.enum(['paid', 'pending', 'partial']).optional().transform(val => val === "" ? null : val) as z.ZodOptional<z.ZodEnum<['paid', 'pending', 'partial']>>,
-  notes: z.string().optional().transform(val => val === "" ? null : val),
+  paymentMethod: z.enum(PAYMENT_METHODS_LEDGER).nullable().optional().transform(val => val === "" ? null : val),
+  paymentStatus: z.enum(PAYMENT_STATUSES_LEDGER).nullable().optional().transform(val => val === "" ? null : val),
+  notes: z.string().nullable().optional().transform(val => val === "" ? null : val),
 });
+
+const ledgerEntrySchema = baseLedgerEntrySchema.superRefine((data, ctx) => {
+  if ((data.paymentStatus === "paid" || data.paymentStatus === "partial") && !data.paymentMethod) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Payment method is required for Paid or Partial status.",
+      path: ["paymentMethod"],
+    });
+  }
+});
+
 type LedgerFormValues = z.infer<typeof ledgerEntrySchema>;
 
 const newCustomerSellerSchema = z.object({ name: z.string().min(2, "Name requires at least 2 chars."), phone: z.string().min(10, "Phone requires at least 10 digits.") });
@@ -130,7 +145,9 @@ export default function DailyLedgerPage() {
     resolver: zodResolver(ledgerEntrySchema),
     defaultValues: {
       date: selectedDate, type: 'sale', entityType: 'customer', entityName: '',
-      items: [], applyGst: false, paymentStatus: 'paid', paymentMethod: 'Cash', notes: null,
+      items: [], applyGst: false, 
+      paymentStatus: 'paid', paymentMethod: 'Cash', 
+      notes: null, entityId: null,
     },
   });
   const { fields, append, remove, update } = useFieldArray({ control: form.control, name: "items" });
@@ -156,7 +173,17 @@ export default function DailyLedgerPage() {
         const data = d.data();
         return { id: d.id, ...data, displayPrice: formatCurrency(data.numericPrice || 0) } as Product;
       }));
-      setLedgerEntries(entrySnap.docs.map(d => ({ id: d.id, ...d.data() } as LedgerEntry)));
+      setLedgerEntries(entrySnap.docs.map(d => {
+        const data = d.data();
+        return { 
+            id: d.id, 
+            ...data,
+            paymentMethod: data.paymentMethod || null, // Ensure null if not present
+            paymentStatus: data.paymentStatus || null,
+            notes: data.notes || null,
+            entityId: data.entityId || null
+        } as LedgerEntry;
+      }));
 
     } catch (error: any) {
       console.error("Error fetching data for ledger:", error);
@@ -180,39 +207,65 @@ export default function DailyLedgerPage() {
 
   const transactionTypeWatcher = form.watch("type");
   useEffect(() => {
-    form.setValue("entityType", transactionTypeWatcher === 'sale' ? 'customer' : 'seller');
-    form.setValue("entityId", undefined);
+    if (transactionTypeWatcher === 'sale') {
+      form.setValue("entityType", 'customer');
+      form.setValue("paymentStatus", 'paid');
+      form.setValue("paymentMethod", 'Cash');
+    } else { // purchase
+      form.setValue("entityType", 'seller');
+      form.setValue("paymentStatus", 'pending'); // Default to pending for purchase
+      form.setValue("paymentMethod", null); // Method hidden for pending
+    }
+    form.setValue("entityId", null);
     form.setValue("entityName", "");
-    form.setValue("paymentStatus", transactionTypeWatcher === 'sale' ? "paid" : "pending");
   }, [transactionTypeWatcher, form]);
 
   const entityTypeWatcher = form.watch("entityType");
   useEffect(() => {
     if (entityTypeWatcher === "unknown_customer") {
-      form.setValue("entityId", undefined); 
+      form.setValue("entityId", null); 
       form.setValue("entityName", "Unknown Customer"); 
       form.setValue("paymentStatus", "paid"); 
+      form.setValue("paymentMethod", "Cash");
     } else if (entityTypeWatcher === "unknown_seller") {
-      form.setValue("entityId", undefined);
+      form.setValue("entityId", null);
       form.setValue("entityName", "Unknown Seller");
-      form.setValue("paymentStatus", "paid");
+      form.setValue("paymentStatus", "paid"); // Cash purchases often paid immediately
+      form.setValue("paymentMethod", "Cash");
     } else if ((form.getValues("entityName") === "Unknown Customer" || form.getValues("entityName") === "Unknown Seller") && 
                (entityTypeWatcher === "customer" || entityTypeWatcher === "seller")) {
          form.setValue("entityName", ""); 
+         // Reset payment status based on type if coming from unknown
+         if(form.getValues("type") === 'sale') form.setValue("paymentStatus", "paid");
+         else form.setValue("paymentStatus", "pending");
     }
   }, [entityTypeWatcher, form]);
+
+  const paymentStatusWatcher = form.watch("paymentStatus");
+  const shouldShowPaymentMethod = paymentStatusWatcher === "paid" || paymentStatusWatcher === "partial";
+
+  useEffect(() => {
+    if (!shouldShowPaymentMethod) {
+      form.setValue("paymentMethod", null); 
+    } else if (shouldShowPaymentMethod && !form.getValues("paymentMethod")) {
+        // If method becomes visible and is null, set a default like 'Cash'
+        // (unless it was intentionally set to null before becoming visible, which is less likely)
+        if(form.getValues("type") === 'sale') form.setValue("paymentMethod", 'Cash'); 
+    }
+  }, [shouldShowPaymentMethod, form]);
+
 
   const handleAddProductToLedger = (product: Product) => {
     const existingItemIndex = fields.findIndex(item => item.productId === product.id);
     if (existingItemIndex > -1) { 
         const currentItem = fields[existingItemIndex];
-        if (form.getValues("type") === 'sale' && currentItem.quantity + 1 > product.stock) {
+        if (form.getValues("type") === 'sale' && product.stock > 0 && currentItem.quantity + 1 > product.stock) {
             toast({ title: "Stock Alert", description: `Cannot add more ${product.name}. Max available: ${product.stock}`, variant: "destructive"});
             return;
         }
         update(existingItemIndex, { ...currentItem, quantity: currentItem.quantity + 1, totalPrice: (currentItem.quantity + 1) * currentItem.unitPrice });
     } else { 
-        if (form.getValues("type") === 'sale' && 1 > product.stock) {
+        if (form.getValues("type") === 'sale' && product.stock <= 0) {
              toast({ title: "Out of Stock", description: `${product.name} is out of stock.`, variant: "destructive"}); return;
         }
         append({ productId: product.id, productName: product.name, quantity: 1, unitPrice: product.numericPrice, totalPrice: product.numericPrice, unitOfMeasure: product.unitOfMeasure });
@@ -259,13 +312,14 @@ export default function DailyLedgerPage() {
       date: data.date, type: data.type, entityType: data.entityType,
       entityId: data.entityId || null, entityName: data.entityName, items: data.items,
       subTotal, gstApplied: data.applyGst, taxAmount, grandTotal,
-      paymentMethod: data.paymentMethod || null, paymentStatus: data.paymentStatus || null,
-      notes: data.notes || null, createdBy: currentUser.uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+      paymentMethod: data.paymentMethod || null, 
+      paymentStatus: data.paymentStatus || null,
+      notes: data.notes || null, 
+      createdBy: currentUser.uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
     };
 
     try {
       await runTransaction(db, async (transaction) => {
-        // --- READ PHASE ---
         const productSnapshots = new Map<string, DocumentSnapshot<DocumentData>>();
         for (const item of data.items) {
           const productRef = doc(db, "products", item.productId);
@@ -274,7 +328,6 @@ export default function DailyLedgerPage() {
           productSnapshots.set(item.productId, productSnap);
         }
 
-        // --- CALCULATION & LOGIC PHASE (No Firestore reads/writes here) ---
         const productUpdates: { ref: any, newStock: number }[] = [];
         for (const item of data.items) {
           const productSnap = productSnapshots.get(item.productId)!;
@@ -284,11 +337,10 @@ export default function DailyLedgerPage() {
           if (data.type === 'sale' && newStock < 0) {
             throw new Error(`Insufficient stock for ${item.productName}. Available: ${currentStock}, Requested: ${item.quantity}.`);
           }
-          if (newStock < 0) newStock = 0; // Should not happen if above check is effective
+          if (newStock < 0) newStock = 0;
           productUpdates.push({ ref: productSnap.ref, newStock });
         }
         
-        // --- WRITE PHASE ---
         const newLedgerRef = doc(collection(db, "ledgerEntries"));
         transaction.set(newLedgerRef, ledgerEntryData);
 
@@ -297,7 +349,7 @@ export default function DailyLedgerPage() {
         }
       });
       toast({ title: "Ledger Entry Saved", description: "Transaction recorded and stock levels updated." });
-      form.reset({ date: selectedDate, type: 'sale', entityType: 'customer', entityName: '', items: [], applyGst: false, paymentStatus: 'paid', paymentMethod: 'Cash', notes: null });
+      form.reset({ date: selectedDate, type: 'sale', entityType: 'customer', entityName: '', items: [], applyGst: false, paymentStatus: 'paid', paymentMethod: 'Cash', notes: null, entityId: null });
       setIsLedgerFormOpen(false);
       fetchData(selectedDate); 
       setProductSearchTerm(''); 
@@ -355,9 +407,12 @@ export default function DailyLedgerPage() {
         const matchesItems = entry.items.some(item =>
             item.productName.toLowerCase().includes(searchTermLower) ||
             item.quantity.toString().includes(searchTermLower) ||
-            item.unitPrice.toString().includes(searchTermLower)
+            formatCurrency(item.unitPrice).toLowerCase().includes(searchTermLower) || 
+            formatCurrency(item.totalPrice).toLowerCase().includes(searchTermLower)
         );
-        return matchesEntity || matchesItems;
+        const matchesNotes = entry.notes ? entry.notes.toLowerCase().includes(searchTermLower) : false;
+        const matchesPaymentMethod = entry.paymentMethod ? entry.paymentMethod.toLowerCase().includes(searchTermLower) : false;
+        return matchesEntity || matchesItems || matchesNotes || matchesPaymentMethod;
     });
 
   if (isLoading && !customers.length && !products.length && !sellers.length && !ledgerEntries.length) { 
@@ -372,7 +427,7 @@ export default function DailyLedgerPage() {
         icon={BookOpen} 
         actions={
             <Button onClick={() => { 
-                form.reset({ date: selectedDate, type: 'sale', entityType: 'customer', entityName: '', items: [], applyGst: false, paymentStatus: 'paid', paymentMethod: 'Cash', notes: null });
+                form.reset({ date: selectedDate, type: 'sale', entityType: 'customer', entityName: '', items: [], applyGst: false, paymentStatus: 'paid', paymentMethod: 'Cash', notes: null, entityId: null });
                 setIsLedgerFormOpen(true); 
             }}>
                 <PlusCircle className="mr-2 h-4 w-4" /> Add New Ledger Entry
@@ -381,7 +436,7 @@ export default function DailyLedgerPage() {
       />
 
       <Dialog open={isLedgerFormOpen} onOpenChange={(isOpen) => {
-          if (!isOpen) { form.reset(); setProductSearchTerm(''); } // Reset search on close
+          if (!isOpen) { form.reset(); setProductSearchTerm(''); } 
           setIsLedgerFormOpen(isOpen);
       }}>
         <DialogContent className="sm:max-w-2xl">
@@ -507,34 +562,33 @@ export default function DailyLedgerPage() {
 
                 <div className="pt-4 border-t space-y-3">
                    <div className="flex justify-between"><span className="text-muted-foreground">Subtotal:</span><span className="font-medium">{formatCurrency(currentSubtotal)}</span></div>
-                   {form.watch("applyGst") && <div className="flex justify-between"><span className="text-muted-foreground">Tax (GST {GST_RATE*100}%):</span><span className="font-medium">{formatCurrency(currentTax)}</span></div>}
+                   {applyGstWatcher && <div className="flex justify-between"><span className="text-muted-foreground">Tax (GST {GST_RATE*100}%):</span><span className="font-medium">{formatCurrency(currentTax)}</span></div>}
                    <div className="flex justify-between text-lg font-bold"><span >Grand Total:</span><span>{formatCurrency(currentGrandTotal)}</span></div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                   <FormField control={form.control} name="paymentMethod" render={({ field }) => (
-                      <FormItem><FormLabel>Payment Method</FormLabel>
-                          <Select onValueChange={field.onChange} value={field.value ?? ""}>
-                              <FormControl><SelectTrigger><SelectValue placeholder="Select method" /></SelectTrigger></FormControl>
-                              <SelectContent>
-                                  <SelectItem value="Cash">Cash</SelectItem><SelectItem value="UPI">UPI</SelectItem>
-                                  <SelectItem value="Card">Card</SelectItem><SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
-                                  <SelectItem value="Credit">Credit (Pay Later)</SelectItem><SelectItem value="Other">Other</SelectItem>
-                              </SelectContent>
-                          </Select><FormMessage />
-                      </FormItem>)} />
                   <FormField control={form.control} name="paymentStatus" render={({ field }) => (
                       <FormItem><FormLabel>Payment Status</FormLabel>
                           <Select onValueChange={field.onChange} value={field.value ?? ""}>
                               <FormControl><SelectTrigger><SelectValue placeholder="Select status" /></SelectTrigger></FormControl>
                               <SelectContent>
-                                  <SelectItem value="paid">Paid</SelectItem><SelectItem value="pending">Pending</SelectItem>
-                                  <SelectItem value="partial">Partial</SelectItem>
+                                  {PAYMENT_STATUSES_LEDGER.map(s => <SelectItem key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</SelectItem>)}
                               </SelectContent>
                           </Select><FormMessage />
                       </FormItem>)} />
+                  {shouldShowPaymentMethod && (
+                    <FormField control={form.control} name="paymentMethod" render={({ field }) => (
+                        <FormItem><FormLabel>Payment Method</FormLabel>
+                            <Select onValueChange={field.onChange} value={field.value ?? ""}>
+                                <FormControl><SelectTrigger><SelectValue placeholder="Select method" /></SelectTrigger></FormControl>
+                                <SelectContent>
+                                    {PAYMENT_METHODS_LEDGER.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}
+                                </SelectContent>
+                            </Select><FormMessage />
+                        </FormItem>)} />
+                  )}
                 </div>
-                <FormField control={form.control} name="notes" render={({ field }) => (<FormItem><FormLabel>Notes (Optional)</FormLabel><FormControl><Input placeholder="Any specific notes for this transaction..." {...field} /></FormControl><FormMessage /></FormItem>)} />
+                <FormField control={form.control} name="notes" render={({ field }) => (<FormItem><FormLabel>Notes (Optional)</FormLabel><FormControl><Input placeholder="Any specific notes for this transaction..." {...field} value={field.value ?? ""} /></FormControl><FormMessage /></FormItem>)} />
               </CardContent>
               <DialogFooter className="pt-4 sticky bottom-0 bg-background pb-2 border-t -mx-6 px-6">
                 <DialogClose asChild><Button type="button" variant="outline">Cancel</Button></DialogClose>
@@ -601,7 +655,7 @@ export default function DailyLedgerPage() {
                         : `There are no ledger entries recorded for ${format(parseISO(selectedDate), "MMMM dd, yyyy")}.`
                     }
                 </p>
-                 <Button onClick={() => { form.reset({ date: selectedDate, type: 'sale', entityType: 'customer', entityName: '', items: [], applyGst: false, paymentStatus: 'paid', paymentMethod: 'Cash', notes: null }); setIsLedgerFormOpen(true); }} className="mt-4">
+                 <Button onClick={() => { form.reset({ date: selectedDate, type: 'sale', entityType: 'customer', entityName: '', items: [], applyGst: false, paymentStatus: 'paid', paymentMethod: 'Cash', notes: null, entityId: null }); setIsLedgerFormOpen(true); }} className="mt-4">
                     <PlusCircle className="mr-2 h-4 w-4" /> Add First Entry for this Date
                 </Button>
             </div>
@@ -628,7 +682,10 @@ export default function DailyLedgerPage() {
                       <TableCell className="text-right">{formatCurrency(entry.subTotal)}</TableCell>
                       <TableCell className="text-right">{entry.gstApplied ? formatCurrency(entry.taxAmount) : "N/A"}</TableCell>
                       <TableCell className="text-right font-semibold">{formatCurrency(entry.grandTotal)}</TableCell>
-                      <TableCell className="capitalize">{entry.paymentStatus || "N/A"} {entry.paymentMethod ? `(${entry.paymentMethod})` : ''}</TableCell>
+                      <TableCell className="capitalize">
+                        {entry.paymentStatus ? entry.paymentStatus.charAt(0).toUpperCase() + entry.paymentStatus.slice(1) : "N/A"}
+                        {entry.paymentMethod ? ` (${entry.paymentMethod})` : ''}
+                      </TableCell>
                       <TableCell className="text-xs max-w-[150px] truncate" title={entry.notes || undefined}>{entry.notes || "N/A"}</TableCell>
                     </TableRow>
                   ))}
@@ -641,3 +698,4 @@ export default function DailyLedgerPage() {
     </>
   );
 }
+
