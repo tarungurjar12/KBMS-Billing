@@ -223,7 +223,6 @@ export default function DailyLedgerPage() {
             notes: data.notes || null,
             entityId: data.entityId || null,
             originalTransactionAmount: data.originalTransactionAmount || data.grandTotal || 0,
-            // Ensure amountPaidNow from DB is treated as number, default for UI if undefined
             amountPaidNow: typeof data.amountPaidNow === 'number' ? data.amountPaidNow : (data.paymentStatus === 'paid' ? data.grandTotal : 0),
             remainingAmount: typeof data.remainingAmount === 'number' ? data.remainingAmount : (data.grandTotal - (typeof data.amountPaidNow === 'number' ? data.amountPaidNow : (data.paymentStatus === 'paid' ? data.grandTotal : 0))),
             associatedPaymentRecordId: data.associatedPaymentRecordId || null,
@@ -358,7 +357,6 @@ export default function DailyLedgerPage() {
             form.setValue("amountPaidNow", undefined, { shouldDirty: true });
             form.clearErrors("amountPaidNow"); 
         } else {
-           // If becoming partial and amountPaidNow is undefined, trigger validation or set a default if appropriate
            if(form.getValues("amountPaidNow") === undefined && form.getFieldState("amountPaidNow").isDirty) {
               form.trigger("amountPaidNow");
            }
@@ -428,18 +426,18 @@ export default function DailyLedgerPage() {
 
   const itemsWatcher = form.watch("items");
   const applyGstWatcher = form.watch("applyGst");
-  const amountPaidNowWatcher = form.watch("amountPaidNow"); // This is the form value
+  const amountPaidNowWatcher = form.watch("amountPaidNow");
 
   const currentSubtotal = itemsWatcher.reduce((acc, item) => acc + ((item.quantity || 0) * (item.unitPrice || 0)), 0);
   const currentTax = applyGstWatcher ? currentSubtotal * GST_RATE : 0;
   const currentGrandTotal = currentSubtotal + currentTax;
   
-  let currentAmountPaidNowForDisplay: number; // For display in summary
+  let currentAmountPaidNowForDisplay: number;
   if (paymentStatusWatcher === 'paid') {
     currentAmountPaidNowForDisplay = currentGrandTotal;
   } else if (paymentStatusWatcher === 'partial') {
-    currentAmountPaidNowForDisplay = amountPaidNowWatcher || 0; // Use form value or 0
-  } else { // pending
+    currentAmountPaidNowForDisplay = amountPaidNowWatcher || 0;
+  } else { 
     currentAmountPaidNowForDisplay = 0;
   }
   
@@ -464,7 +462,7 @@ export default function DailyLedgerPage() {
         amountPaidForSave = data.amountPaidNow || 0; 
         remainingAmountForSave = grandTotal - amountPaidForSave;
         if (remainingAmountForSave < 0) remainingAmountForSave = 0;
-    } else { // 'pending'
+    } else { 
         amountPaidForSave = 0;
         remainingAmountForSave = grandTotal;
     }
@@ -487,7 +485,7 @@ export default function DailyLedgerPage() {
       originalTransactionAmount: grandTotal,
       amountPaidNow: amountPaidForSave,
       remainingAmount: remainingAmountForSave,
-      notes: data.notes, // Zod transform ensures this is string or null
+      notes: data.notes, 
       createdBy: editingLedgerEntry ? editingLedgerEntry.createdBy : currentUser.uid, 
       updatedAt: serverTimestamp(),
     };
@@ -520,7 +518,7 @@ export default function DailyLedgerPage() {
                 previousStock: currentDbStock, newStock: revertedStock,
                 adjustmentType: 'revert_ledger_edit', adjustmentValue: stockChange,
                 notes: `Stock reverted due to edit of ledger entry ${editingLedgerEntry.id}`,
-                timestamp: serverTimestamp(), adjustedByUid: currentUser.uid, adjustedByEmail: currentUser.email,
+                timestamp: serverTimestamp(), adjustedByUid: currentUser.uid, adjustedByEmail: currentUser.email || "N/A",
                 ledgerEntryId: editingLedgerEntry.id,
             });
           }
@@ -549,7 +547,7 @@ export default function DailyLedgerPage() {
               adjustmentType: ledgerDataForSave.type === 'sale' ? 'sale_ledger_entry' : 'purchase_ledger_entry',
               adjustmentValue: ledgerDataForSave.type === 'sale' ? -item.quantity : item.quantity,
               notes: `Stock ${editingLedgerEntry ? 'updated by edit of' : 'adjusted by'} ledger entry ${ledgerDocRef.id}`,
-              timestamp: serverTimestamp(), adjustedByUid: currentUser.uid, adjustedByEmail: currentUser.email,
+              timestamp: serverTimestamp(), adjustedByUid: currentUser.uid, adjustedByEmail: currentUser.email || "N/A",
               ledgerEntryId: ledgerDocRef.id,
           });
         }
@@ -679,7 +677,7 @@ export default function DailyLedgerPage() {
                     previousStock: currentDbStock, newStock: revertedStock,
                     adjustmentType: 'revert_ledger_delete', adjustmentValue: stockChange,
                     notes: `Stock reverted due to deletion of ledger entry ${ledgerEntryToDelete.id}`,
-                    timestamp: serverTimestamp(), adjustedByUid: currentUser.uid, adjustedByEmail: currentUser.email,
+                    timestamp: serverTimestamp(), adjustedByUid: currentUser.uid, adjustedByEmail: currentUser.email || "N/A",
                     ledgerEntryId: ledgerEntryToDelete.id,
                 });
             }
@@ -753,6 +751,7 @@ export default function DailyLedgerPage() {
           if (!isOpen) { 
             setProductSearchTerm(''); 
             setEditingLedgerEntry(null); 
+            form.reset({ date: selectedDate, type: 'sale', entityType: 'customer', entityName: '', items: [], applyGst: false, paymentStatus: 'paid', paymentMethod: 'Cash', amountPaidNow: undefined, notes: null, entityId: null });
           }
           setIsLedgerFormOpen(isOpen);
       }}>
@@ -1070,8 +1069,3 @@ export default function DailyLedgerPage() {
     </>
   );
 }
-
-
-    
-
-    

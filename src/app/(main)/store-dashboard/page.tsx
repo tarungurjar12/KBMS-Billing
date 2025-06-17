@@ -80,7 +80,6 @@ export default function StoreManagerDashboardPage() {
     const weekEndTimestamp = Timestamp.fromDate(endOfWeek(today, { weekStartsOn: 1 }));
 
     try {
-      // Firestore Index Required: 'invoices' (createdBy ASC, isoDate ASC)
       const todaysBillsQuery = query(collection(db, "invoices"),
         where("createdBy", "==", currentUser.uid),
         where("isoDate", ">=", todayStartISO),
@@ -89,7 +88,6 @@ export default function StoreManagerDashboardPage() {
       const todaysBillsSnapshot = await getCountFromServer(todaysBillsQuery);
       updateMetricState("Today's Bills Generated", { value: todaysBillsSnapshot.data().count.toString() });
 
-      // Firestore Index Required: 'customers' (createdBy ASC, createdAt ASC)
       const customersAddedQuery = query(collection(db, "customers"),
         where("createdBy", "==", currentUser.uid),
         where("createdAt", ">=", weekStartTimestamp),
@@ -98,7 +96,6 @@ export default function StoreManagerDashboardPage() {
       const customersAddedSnapshot = await getCountFromServer(customersAddedQuery);
       updateMetricState("Customers Added This Week", { value: customersAddedSnapshot.data().count.toString() });
 
-      // Firestore Index Required: 'invoices' (createdBy ASC, status ASC)
       const pendingBillsQuery = query(collection(db, "invoices"),
         where("createdBy", "==", currentUser.uid),
         where("status", "==", "Pending")
@@ -106,15 +103,13 @@ export default function StoreManagerDashboardPage() {
       const pendingBillsSnapshot = await getCountFromServer(pendingBillsQuery);
       updateMetricState("Pending Bills (Yours)", {value: pendingBillsSnapshot.data().count.toString()});
 
-      // Firestore Index Required: 'issueReports' (reportedByUid ASC, status ASC)
       const reportedIssuesQuery = query(collection(db, "issueReports"),
         where("reportedByUid", "==", currentUser.uid),
-        where("status", "==", "New") // Assuming 'New' is an active status for reported issues
+        where("status", "==", "New") 
       );
       const reportedIssuesSnapshot = await getCountFromServer(reportedIssuesQuery);
       updateMetricState("Reported Product Issues", {value: reportedIssuesSnapshot.data().count.toString()});
 
-      // Firestore Index Required: 'invoices' (createdBy ASC, createdAt DESC) - For recent activity
       const recentActivityQuery = query(collection(db, "invoices"),
         where("createdBy", "==", currentUser.uid),
         orderBy("createdAt", "desc"),
@@ -140,19 +135,18 @@ export default function StoreManagerDashboardPage() {
       if (error.code === 'failed-precondition') {
         toast({
             title: "Database Index Required",
-            description: `Dashboard data query failed. A Firestore index is needed. Check browser console for link.`,
+            description: `Dashboard data query failed. A Firestore index is needed (likely involving 'createdBy' field on 'invoices' or 'customers'). Check browser console for a link to create it.`,
             variant: "destructive", duration: 20000,
         });
       } else {
-        toast({ title: "Dashboard Load Error", description: "Could not load some dashboard metrics.", variant: "destructive"});
+        toast({ title: "Dashboard Load Error", description: "Could not load some dashboard metrics. Please ensure all necessary Firestore indexes are created.", variant: "destructive"});
       }
-      // Ensure all metrics are marked as not loading even if an error occurs
       setMetrics(prevMetrics => prevMetrics.map(m => ({ ...m, value: m.isLoading ? "Error" : m.value, isLoading: false })));
       if (recentActivity.length === 0) setRecentActivity(["Failed to load recent activity."]);
     } finally {
         setMetrics(prevMetrics => prevMetrics.map(m => ({...m, isLoading: false})));
     }
-  }, [currentUser, toast]); // Removed `recentActivity` and `metrics` from deps
+  }, [currentUser, toast]);
 
   useEffect(() => { if (currentUser) { fetchManagerDashboardData(); } }, [currentUser, fetchManagerDashboardData]);
 
@@ -187,7 +181,7 @@ export default function StoreManagerDashboardPage() {
                 <Link href={action.href} key={action.label} passHref legacyBehavior>
                     <Button variant="outline" className="w-full h-auto justify-start p-3 text-left flex items-start gap-3 hover:bg-accent/10 transition-colors group">
                         <action.icon className="h-7 w-7 text-primary mt-1 transition-transform group-hover:scale-110 shrink-0" />
-                         <div className="flex-1 min-w-0">
+                         <div className="flex-1 min-w-0"> {/* Ensure this div allows content to shrink and wrap */}
                             <span className="font-medium text-foreground block whitespace-normal break-words">{action.label}</span>
                             <p className="text-xs text-muted-foreground whitespace-normal break-words">{action.description}</p>
                         </div>
@@ -205,12 +199,12 @@ export default function StoreManagerDashboardPage() {
              <CardDescription>Latest interactions and tasks performed by you.</CardDescription>
           </CardHeader>
           <CardContent>
-             {metrics.some(m => m.isLoading) && recentActivity.length === 0 && !currentUser ? ( // Show loading if user not yet determined
+             {metrics.some(m => m.isLoading) && recentActivity.length === 0 && !currentUser ? ( 
                 <div className="h-48 flex flex-col items-center justify-center bg-muted/30 rounded-md border border-dashed">
                     <Activity className="h-10 w-10 text-muted-foreground animate-spin mb-2" />
                     <p className="text-muted-foreground">Loading data...</p>
                 </div>
-             ) : metrics.some(m => m.isLoading) && recentActivity.length === 0 && currentUser ? ( // Show loading if user determined but data still fetching
+             ) : metrics.some(m => m.isLoading) && recentActivity.length === 0 && currentUser ? ( 
                 <div className="h-48 flex flex-col items-center justify-center bg-muted/30 rounded-md border border-dashed">
                     <Activity className="h-10 w-10 text-muted-foreground animate-spin mb-2" />
                     <p className="text-muted-foreground">Loading recent activity...</p>

@@ -36,23 +36,21 @@ export interface Product {
   id: string; // Firestore document ID
   name: string;
   sku: string; // Stock Keeping Unit
-  description?: string; // Optional product description
-  price: string; // Formatted display string for price, e.g., "₹2,080.00"
-  numericPrice: number; // Numeric price for calculations and form input
-  stock: number; // Current stock quantity
-  category: string; // Product category
-  unitOfMeasure: string; // Unit of measure (e.g., pcs, kg, meter)
-  imageUrl: string; // URL for product image (placeholder or actual)
-  dataAiHint: string; // Keywords for AI-assisted image searching or placeholder generation
-  createdAt?: Timestamp; // Firestore Timestamp of creation
-  updatedAt?: Timestamp; // Firestore Timestamp of last update
+  description?: string | null; 
+  price: string; 
+  numericPrice: number; 
+  stock: number; 
+  category: string; 
+  unitOfMeasure: string; 
+  imageUrl: string; 
+  dataAiHint: string; 
+  createdAt?: Timestamp; 
+  updatedAt?: Timestamp; 
 }
 
-// Predefined lists for form dropdowns
 const PRODUCT_CATEGORIES = ["Widgets", "Gizmos", "Doodads", "Thingamajigs", "Electronics", "Stationery", "Software", "Apparel", "Home Goods", "Building Materials", "Pipes & Fittings", "Cement", "Bricks", "Steel Bars", "Hardware", "Tools", "Paint", "Other"];
 const UNITS_OF_MEASURE = ["pcs", "kg", "meter", "sq ft", "liter", "box", "bag", "set", "dozen", "ton", "bundle", "unit", "pair", "roll", "nos"];
 
-// Zod schema for product form validation
 const productSchema = z.object({
   name: z.string().min(3, { message: "Product name must be at least 3 characters." }),
   sku: z.string().min(3, { message: "SKU must be at least 3 characters." }).regex(/^[a-zA-Z0-9-]+$/, { message: "SKU can only contain letters, numbers, and hyphens."}),
@@ -72,19 +70,8 @@ const productSchema = z.object({
 
 type ProductFormValues = z.infer<typeof productSchema>;
 
-/**
- * Formats a number as an Indian Rupee string.
- * @param {number} num - The number to format.
- * @returns {string} A string representing the currency, e.g., "₹1,234.56".
- */
 const formatCurrency = (num: number): string => `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-/**
- * ProductsPage component.
- * Provides UI and logic for Admin to manage product data in Firestore.
- * Handles CRUD operations, dialogs for add/edit, and form validation.
- * @returns {JSX.Element} The rendered products page.
- */
 export default function ProductsPage() {
   const [productList, setProductList] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -95,19 +82,14 @@ export default function ProductsPage() {
 
   const { toast } = useToast();
 
-  // React Hook Form setup
   const form = useForm<ProductFormValues>({
     resolver: zodResolver(productSchema),
     defaultValues: { name: "", sku: "", category: PRODUCT_CATEGORIES[0] || "", unitOfMeasure: UNITS_OF_MEASURE[0] || "pcs", numericPrice: 0, stock: 0, dataAiHint: "", description: "" },
   });
 
-  /**
-   * Fetches product list from Firestore, ordered by name.
-   */
   const fetchProducts = useCallback(async () => {
     setIsLoading(true);
     try {
-      // Firestore Index Required: 'products' collection, orderBy 'name' (ASC)
       const q = query(collection(db, "products"), orderBy("name", "asc"));
       const querySnapshot = await getDocs(q);
       const fetchedProducts = querySnapshot.docs.map(docSnapshot => {
@@ -116,14 +98,14 @@ export default function ProductsPage() {
              id: docSnapshot.id, 
              name: data.name,
              sku: data.sku,
-             description: data.description || "",
+             description: data.description || null,
              numericPrice: data.numericPrice || 0,
              price: formatCurrency(data.numericPrice || 0),
              stock: data.stock || 0,
              category: data.category || "Other",
              unitOfMeasure: data.unitOfMeasure || "pcs",
              imageUrl: data.imageUrl || `https://placehold.co/60x60.png?text=${encodeURIComponent(data.name.substring(0,2).toUpperCase())}`,
-             dataAiHint: data.dataAiHint || "product item", // Ensure a default AI hint
+             dataAiHint: data.dataAiHint || "product item", 
              createdAt: data.createdAt,
              updatedAt: data.updatedAt,
          } as Product;
@@ -150,7 +132,6 @@ export default function ProductsPage() {
     fetchProducts();
   }, [fetchProducts]);
 
-  // Resets form when dialog opens for add/edit
   useEffect(() => {
     if (isFormDialogOpen) {
       if (editingProduct) {
@@ -170,29 +151,26 @@ export default function ProductsPage() {
     }
   }, [editingProduct, isFormDialogOpen, form]);
 
-  /**
-   * Handles submission of the product form (for both add and edit).
-   * @param {ProductFormValues} values - The validated form values.
-   */
   const handleFormSubmit = async (values: ProductFormValues) => {
     try {
-      const productData = { 
+      const productDataToSave = { 
          ...values, 
+         description: (values.description === undefined || values.description.trim() === "") ? null : values.description.trim(),
          imageUrl: `https://placehold.co/100x100.png?text=${encodeURIComponent(values.name.substring(0,2).toUpperCase())}`, 
       };
 
       if (editingProduct) { 
         const productRef = doc(db, "products", editingProduct.id);
-        await updateDoc(productRef, {...productData, updatedAt: serverTimestamp()});
+        await updateDoc(productRef, {...productDataToSave, updatedAt: serverTimestamp()});
         toast({ title: "Product Updated", description: `Product "${values.name}" has been updated successfully.` });
       } else { 
-        await addDoc(collection(db, "products"), {...productData, createdAt: serverTimestamp(), updatedAt: serverTimestamp()});
+        await addDoc(collection(db, "products"), {...productDataToSave, createdAt: serverTimestamp(), updatedAt: serverTimestamp()});
         toast({ title: "Product Added", description: `New product "${values.name}" has been added successfully.` });
       }
       fetchProducts(); 
       setIsFormDialogOpen(false); 
       setEditingProduct(null); 
-      form.reset(); // Explicitly reset form
+      form.reset(); 
     } catch (error: any) {
       console.error("Error saving product: ", error);
       toast({ title: "Save Error", description: `Failed to save product: ${error.message}`, variant: "destructive" });
@@ -356,7 +334,7 @@ export default function ProductsPage() {
             </Table>
           ) : (
              <div className="flex flex-col items-center justify-center py-10 text-center">
-                <FileWarning className="h-16 w-16 text-muted-foreground mb-4" /> {/* Changed icon */}
+                <FileWarning className="h-16 w-16 text-muted-foreground mb-4" />
                 <p className="text-xl font-semibold text-muted-foreground">No Products Found</p>
                 <p className="text-sm text-muted-foreground mb-6">Get started by adding your first product to the database.</p>
                 <Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add New Product</Button>

@@ -6,12 +6,12 @@ import { PageHeader } from "@/components/page-header";
 import { DollarSign, Users, FileText, PackageMinus, LayoutDashboard, Package, BarChart3, TrendingUp, AlertCircle, Activity, UserCog } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { collection, getDocs, query, where, limit, orderBy, Timestamp, getCountFromServer } from 'firebase/firestore';
+import { collection, getDocs, query, where, limit, orderBy, Timestamp, getCountFromServer, parseDate } from 'firebase/firestore';
 import { db } from '@/lib/firebase/firebaseConfig';
 import { useEffect, useState, useCallback } from 'react';
-import { format, startOfDay, endOfDay } from 'date-fns';
+import { format, startOfDay, endOfDay, parseISO } from 'date-fns';
 import { useToast } from "@/hooks/use-toast";
-import type { PaymentRecord } from './payments/page'; // For accurate revenue calculation
+import type { PaymentRecord } from './payments/page'; 
 
 /**
  * @fileOverview Admin Dashboard page for the KBMS Billing application.
@@ -62,13 +62,10 @@ export default function AdminDashboardPage() {
     setIsLoadingSalesChart(true);
 
     try {
-      // Active Customers
       const customersCol = collection(db, "customers");
       const customersSnapshot = await getCountFromServer(customersCol);
       updateMetricState("Active Customers", { value: customersSnapshot.data().count.toString() });
 
-      // Pending Invoices & Value
-      // Firestore Index Required: 'invoices' (status ASC) - usually auto-created or simple. If combined with orderBy, then composite.
       const pendingInvoicesQuery = query(collection(db, "invoices"), where("status", "==", "Pending"));
       const pendingInvoicesSnapshot = await getDocs(pendingInvoicesQuery);
       let totalPendingRevenue = 0;
@@ -78,18 +75,13 @@ export default function AdminDashboardPage() {
         change: `Total Value: ${formatCurrency(totalPendingRevenue)}`
       });
 
-      // Low Stock Items
-      // Firestore Index Required: 'products' (stock ASC) if only this filter. If combined, composite.
       const lowStockQuery = query(collection(db, "products"), where("stock", "<", LOW_STOCK_THRESHOLD), where("stock", ">", 0));
       const lowStockSnapshot = await getCountFromServer(lowStockQuery);
       updateMetricState("Low Stock Items", { value: lowStockSnapshot.data().count.toString() });
 
-      // Total Revenue from Payments
-      // Firestore Index Required: 'payments' (type ASC, status ASC) -> or (type ASC, status ASC, amountPaid ASC/DESC for sorting/summing if done server-side)
-      // Client-side sum is fine for moderate data.
       const paymentsQuery = query(collection(db, "payments"),
         where("type", "==", "customer"),
-        where("status", "in", ["Completed", "Received", "Partial"]) // Include Partial as some amount is received
+        where("status", "in", ["Completed", "Received", "Partial"]) 
       );
       const paymentsSnapshot = await getDocs(paymentsQuery);
       let totalRevenueFromPayments = 0;
@@ -100,8 +92,6 @@ export default function AdminDashboardPage() {
       updateMetricState("Total Revenue (from Payments)", { value: formatCurrency(totalRevenueFromPayments) });
 
 
-      // Recent Sales Chart (from Invoices still, can be changed to Payments if preferred)
-      // Firestore Index Required: 'invoices' (status ASC, isoDate DESC)
       const recentSalesQuery = query(collection(db, "invoices"), where("status", "==", "Paid"), orderBy("isoDate", "desc"), limit(5));
       const recentSalesSnapshot = await getDocs(recentSalesQuery);
       const salesData = recentSalesSnapshot.docs.map(doc => {
@@ -122,7 +112,7 @@ export default function AdminDashboardPage() {
       if (error.code === 'failed-precondition') {
         toast({
             title: "Database Index Required",
-            description: `A query for dashboard data failed. Please create the required Firestore index. Check browser console for link.`,
+            description: `A query for dashboard data failed. Please create the required Firestore index. Check browser console for link. (Likely for 'payments' or 'invoices' collection).`,
             variant: "destructive", duration: 20000,
         });
       } else {
@@ -130,7 +120,6 @@ export default function AdminDashboardPage() {
       }
       setMetrics(prevMetrics => prevMetrics.map(m => ({ ...m, value: m.isLoading ? "Error" : m.value, isLoading: false })));
     } finally {
-      // Ensure all metrics are marked as not loading, even if some specific ones failed.
        setMetrics(prevMetrics => prevMetrics.map(m => ({...m, isLoading: false})));
       setIsLoadingSalesChart(false);
     }
@@ -192,7 +181,7 @@ export default function AdminDashboardPage() {
                 <Link href={action.href} key={action.label} passHref legacyBehavior>
                     <Button variant="outline" className="w-full h-auto justify-start p-3 text-left flex items-start gap-3 hover:bg-accent/10 transition-colors group">
                         <action.icon className="h-6 w-6 text-primary mt-1 transition-transform group-hover:scale-110 shrink-0" />
-                        <div className="flex-1 min-w-0">
+                        <div className="flex-1 min-w-0"> {/* Ensure this div allows content to shrink and wrap */}
                             <span className="font-medium text-foreground block whitespace-normal break-words">{action.label}</span>
                             <p className="text-xs text-muted-foreground whitespace-normal break-words">{action.description}</p>
                         </div>

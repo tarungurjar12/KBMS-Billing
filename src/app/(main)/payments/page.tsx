@@ -41,17 +41,17 @@ export interface PaymentRecord {
   relatedInvoiceId: string | null;
   date: string; // Formatted for display
   isoDate: string; // ISO string for storing and sorting
-  amountPaid: number; // The amount of THIS payment transaction
+  amountPaid: number; 
   displayAmountPaid: string;
-  originalInvoiceAmount: number | null; // Original total of the invoice/ledger this payment is for (useful for partial)
-  remainingBalanceOnInvoice: number | null; // Calculated, if originalInvoiceAmount and amountPaid are present
+  originalInvoiceAmount: number | null; 
+  remainingBalanceOnInvoice: number | null; 
   method: typeof PAYMENT_METHODS[number] | null;
   transactionId: string | null;
   status: typeof PAYMENT_STATUSES[number];
   notes: string | null;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
-  ledgerEntryId?: string | null; // Link back to a ledger entry if created from one
+  ledgerEntryId?: string | null; 
 }
 
 interface PaymentMetric {
@@ -62,7 +62,6 @@ interface PaymentMetric {
 }
 
 
-// Base schema without conditional method requirement
 const paymentRecordBaseSchema = z.object({
   type: z.enum(PAYMENT_TYPES, { required_error: "Payment type is required." }),
   relatedEntityName: z.string().min(1, "Entity name is required."),
@@ -84,7 +83,6 @@ const paymentRecordBaseSchema = z.object({
   ledgerEntryId: z.string().nullable().optional().transform(val => (val === undefined || String(val).trim() === "") ? null : String(val).trim()),
 });
 
-// Refined schema to make 'method' required for specific statuses
 const paymentRecordSchema = paymentRecordBaseSchema.superRefine((data, ctx) => {
   if ((data.status === "Completed" || data.status === "Partial" || data.status === "Received") && !data.method) {
     ctx.addIssue({
@@ -146,20 +144,19 @@ export default function PaymentsPage() {
 
 
   useEffect(() => {
-    if (form.formState.isDirty || editingPayment) { // Only run on dirty form or when editing
+    if (form.formState.isDirty || editingPayment) { 
         if (!shouldShowPaymentMethod) {
             form.setValue("method", null, { shouldDirty: true });
         } else if (shouldShowPaymentMethod && !form.getValues("method")) {
-            form.setValue("method", "Cash", { shouldDirty: true }); // Default if shown and empty
+            form.setValue("method", "Cash", { shouldDirty: true }); 
         }
     }
-  }, [shouldShowPaymentMethod, form, editingPayment]);
+  }, [shouldShowPaymentMethod, paymentStatusWatcher, form, editingPayment]);
 
   const fetchPaymentsAndMetrics = useCallback(async () => {
     setIsLoading(true);
     setIsLoadingMetrics(true);
     try {
-      // Firestore Index Required: payments collection, isoDate (DESC)
       const q = query(collection(db, "payments"), orderBy("isoDate", "desc"));
       const querySnapshot = await getDocs(q);
       const fetchedPayments = querySnapshot.docs.map(docSnapshot => {
@@ -196,17 +193,14 @@ export default function PaymentsPage() {
       });
       setAllPayments(fetchedPayments);
 
-      // Calculate Metrics
       const todayISOStart = startOfDay(new Date()).toISOString().split('T')[0];
-      const todayISOEnd = endOfDay(new Date()).toISOString().split('T')[0];
-
 
       let totalReceived = 0, totalPending = 0, totalSent = 0;
       let todayReceived = 0, todayPending = 0, todaySent = 0;
 
       fetchedPayments.forEach(p => {
         const paymentIsoDateOnly = p.isoDate.split('T')[0];
-        const isToday = paymentIsoDateOnly === todayISOStart; // Simpler date comparison
+        const isToday = paymentIsoDateOnly === todayISOStart; 
 
         if (p.type === 'customer') {
           if (p.status === 'Completed' || p.status === 'Received' || p.status === 'Partial') {
@@ -218,7 +212,7 @@ export default function PaymentsPage() {
             totalPending += pendingAmount;
             if (isToday) todayPending += pendingAmount;
           }
-        } else { // supplier
+        } else { 
           if (p.status === 'Completed' || p.status === 'Sent' || p.status === 'Partial') {
             totalSent += p.amountPaid;
             if (isToday) todaySent += p.amountPaid;
@@ -261,7 +255,6 @@ export default function PaymentsPage() {
         form.reset({
           ...editingPayment,
           isoDate: editingPayment.isoDate ? editingPayment.isoDate.split('T')[0] : new Date().toISOString().split('T')[0],
-          // The Zod schema transforms will handle null conversion for these from the editingPayment object
           method: editingPayment.method, 
           relatedInvoiceId: editingPayment.relatedInvoiceId,
           transactionId: editingPayment.transactionId,
@@ -284,33 +277,20 @@ export default function PaymentsPage() {
       let remainingBalance = null;
       if (values.status === 'Partial' && values.originalInvoiceAmount && values.amountPaid) {
         remainingBalance = values.originalInvoiceAmount - values.amountPaid;
-         if (remainingBalance < 0) remainingBalance = 0; // Ensure remaining balance is not negative
+         if (remainingBalance < 0) remainingBalance = 0; 
       }
-
-      // 'values' object is already transformed by Zod, so fields like notes, transactionId etc.,
-      // will be null if they were empty or undefined, due to the updated transforms.
-      const dataToSave: Partial<Omit<PaymentRecord, 'id' | 'date' | 'displayAmountPaid'>> & {updatedAt: any, displayAmountPaid: string, createdAt?: any, remainingBalanceOnInvoice?: number | null} = {
-        ...values, // Spread validated and transformed values
-        displayAmountPaid: formatCurrency(values.amountPaid),
-        remainingBalanceOnInvoice: remainingBalance,
+      
+      const dataToSave = {
+        ...values, 
         updatedAt: serverTimestamp(),
       };
       
-      // Remove id and date from dataToSave as they are part of PaymentRecord but not what we save directly
-      // (id is doc ID, date is derived from isoDate).
-      // Also, displayAmountPaid is for UI, not storage.
-      // The Omit in type helps, but ensure the object itself is clean.
-      delete (dataToSave as any).id;
-      delete (dataToSave as any).date;
-      
-
       if (editingPayment) {
         const paymentRef = doc(db, "payments", editingPayment.id);
         await updateDoc(paymentRef, dataToSave);
         toast({ title: "Payment Updated", description: "Payment record updated successfully." });
       } else {
-        dataToSave.createdAt = serverTimestamp();
-        await addDoc(collection(db, "payments"), dataToSave);
+        await addDoc(collection(db, "payments"), {...dataToSave, createdAt: serverTimestamp()});
         toast({ title: "Payment Added", description: "New payment record added successfully." });
       }
       fetchPaymentsAndMetrics(); setIsFormDialogOpen(false); setEditingPayment(null); form.reset();
@@ -387,11 +367,10 @@ export default function PaymentsPage() {
                 <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /><span className="sr-only">Actions for payment {payment.id}</span></Button></DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem onClick={() => openEditDialog(payment)}><Edit className="mr-2 h-4 w-4" /> Edit Record</DropdownMenuItem>
-                  {/* Ledger-originated payments might be non-deletable or have special handling */}
                   <DropdownMenuItem 
                     onClick={() => handleDeletePayment(payment.id, `${payment.relatedEntityName} - ${payment.displayAmountPaid}`)} 
                     className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground"
-                    disabled={!!payment.ledgerEntryId} // Example: Disable delete if linked to ledger
+                    disabled={!!payment.ledgerEntryId} 
                   >
                     <Trash2 className="mr-2 h-4 w-4" /> Delete Record
                   </DropdownMenuItem>
@@ -552,4 +531,3 @@ export default function PaymentsPage() {
     </>
   );
 }
-

@@ -34,13 +34,13 @@ import { useRouter } from 'next/navigation';
 export interface Seller {
   id: string; // Firestore document ID
   name: string; // Name of the seller/supplier company
-  contactPerson?: string; // Optional: Primary contact person at the seller
-  email?: string; // Optional: Seller's email address
-  phone: string; // Seller's phone number
-  address?: string; // Optional: Seller's physical address
-  gstin?: string; // Optional: Seller's GST Identification Number
-  bankDetails?: string; // Optional: Seller's bank account details
-  purchaseTerms?: string; // Optional: Agreed purchase terms
+  contactPerson?: string | null; 
+  email?: string | null; 
+  phone: string; 
+  address?: string | null; 
+  gstin?: string | null; 
+  bankDetails?: string | null; 
+  purchaseTerms?: string | null; 
   createdAt?: Timestamp; 
   updatedAt?: Timestamp; 
 }
@@ -52,7 +52,7 @@ const sellerSchema = z.object({
   email: z.string().email({ message: "Invalid email address." }).optional().or(z.literal('')), 
   phone: z.string().min(10, { message: "Phone number must be at least 10 digits." }).regex(/^\d+[\d\s-]*$/, { message: "Phone number must contain valid characters (digits, spaces, hyphens)."}),
   address: z.string().optional(),
-  gstin: z.string().optional().refine(val => !val || /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(val), {
+  gstin: z.string().optional().or(z.literal('')).refine(val => !val || /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(val), {
     message: "Invalid GSTIN format.", 
   }),
   bankDetails: z.string().optional(),
@@ -78,22 +78,32 @@ export default function ManageSellersPage() {
 
   const { toast } = useToast();
 
-  // React Hook Form setup
   const form = useForm<SellerFormValues>({
     resolver: zodResolver(sellerSchema),
     defaultValues: { name: "", contactPerson: "", email: "", phone: "", address: "", gstin: "", bankDetails: "", purchaseTerms: "" },
   });
 
-  /**
-   * Fetches seller list from Firestore, ordered by name.
-   */
   const fetchSellers = useCallback(async () => {
     setIsLoading(true);
     try {
-      // Firestore Index Required: 'sellers' collection, orderBy 'name' (ASC)
       const q = query(collection(db, "sellers"), orderBy("name", "asc"));
       const querySnapshot = await getDocs(q);
-      const fetchedSellers = querySnapshot.docs.map(docSnapshot => ({ id: docSnapshot.id, ...docSnapshot.data() } as Seller));
+      const fetchedSellers = querySnapshot.docs.map(docSnapshot => {
+          const data = docSnapshot.data();
+          return {
+             id: docSnapshot.id,
+             name: data.name,
+             contactPerson: data.contactPerson || null,
+             email: data.email || null,
+             phone: data.phone,
+             address: data.address || null,
+             gstin: data.gstin || null,
+             bankDetails: data.bankDetails || null,
+             purchaseTerms: data.purchaseTerms || null,
+             createdAt: data.createdAt,
+             updatedAt: data.updatedAt,
+          } as Seller;
+      });
       setSellers(fetchedSellers);
     } catch (error: any) {
       console.error("Error fetching sellers: ", error);
@@ -116,25 +126,38 @@ export default function ManageSellersPage() {
     fetchSellers();
   }, [fetchSellers]);
 
-  // Effect to reset form when editingSeller or dialog state changes
   useEffect(() => {
     if (isFormDialogOpen) {
       if (editingSeller) {
-        form.reset(editingSeller);
+        form.reset({
+            name: editingSeller.name,
+            contactPerson: editingSeller.contactPerson || "",
+            email: editingSeller.email || "",
+            phone: editingSeller.phone,
+            address: editingSeller.address || "",
+            gstin: editingSeller.gstin || "",
+            bankDetails: editingSeller.bankDetails || "",
+            purchaseTerms: editingSeller.purchaseTerms || "",
+        });
       } else { 
         form.reset({ name: "", contactPerson: "", email: "", phone: "", address: "", gstin: "", bankDetails: "", purchaseTerms: "" });
       }
     }
   }, [editingSeller, isFormDialogOpen, form]);
 
-  /**
-   * Handles submission of the seller form (for both add and edit).
-   * Saves or updates the seller data in Firestore.
-   * @param {SellerFormValues} values - The validated form values.
-   */
   const handleFormSubmit = async (values: SellerFormValues) => {
     try {
-      const dataToSave = { ...values, email: values.email || "" }; 
+      const dataToSave = {
+        name: values.name,
+        contactPerson: (values.contactPerson === undefined || values.contactPerson.trim() === "") ? null : values.contactPerson.trim(),
+        email: (values.email === undefined || values.email.trim() === "") ? null : values.email.trim(),
+        phone: values.phone,
+        address: (values.address === undefined || values.address.trim() === "") ? null : values.address.trim(),
+        gstin: (values.gstin === undefined || values.gstin.trim() === "") ? null : values.gstin.trim(),
+        bankDetails: (values.bankDetails === undefined || values.bankDetails.trim() === "") ? null : values.bankDetails.trim(),
+        purchaseTerms: (values.purchaseTerms === undefined || values.purchaseTerms.trim() === "") ? null : values.purchaseTerms.trim(),
+      };
+
       if (editingSeller) { 
         const sellerRef = doc(db, "sellers", editingSeller.id);
         await updateDoc(sellerRef, {...dataToSave, updatedAt: serverTimestamp()});

@@ -38,11 +38,11 @@ import { useRouter, useSearchParams } from 'next/navigation';
 export interface Customer {
   id: string; // Firestore document ID
   name: string;
-  email: string; 
+  email: string | null; 
   phone: string;
-  gstin?: string; 
+  gstin?: string | null; 
   totalSpent: string; // Placeholder, calculated or updated separately
-  address?: string; 
+  address?: string | null; 
   createdAt?: Timestamp; 
   createdBy?: string; // UID of the user who created the customer
   updatedAt?: Timestamp; 
@@ -102,7 +102,6 @@ export default function CustomersPage() {
   const fetchCustomers = useCallback(async () => {
     setIsLoading(true);
     try {
-      // Firestore Index Required: 'customers' collection, orderBy 'name' (ASC)
       const q = query(collection(db, "customers"), orderBy("name", "asc"));
       const querySnapshot = await getDocs(q);
       const fetchedCustomers = querySnapshot.docs.map(docSnapshot => {
@@ -110,10 +109,10 @@ export default function CustomersPage() {
           return { 
               id: docSnapshot.id,
               name: data.name,
-              email: data.email || "", 
+              email: data.email || null, 
               phone: data.phone,
-              gstin: data.gstin || "",
-              address: data.address || "",
+              gstin: data.gstin || null,
+              address: data.address || null,
               totalSpent: data.totalSpent || "₹0.00", 
               createdAt: data.createdAt,
               createdBy: data.createdBy,
@@ -143,25 +142,22 @@ export default function CustomersPage() {
     fetchCustomers();
   }, [fetchCustomers]);
 
-  // Handles 'addNew=true' query parameter to open the dialog on page load.
   useEffect(() => {
     if (searchParams.get('addNew') === 'true') {
-      setEditingCustomer(null); // Ensure it's an "add" operation
+      setEditingCustomer(null); 
       form.reset({ name: "", email: "", phone: "", gstin: "", address: "" });
       setIsFormDialogOpen(true);
-       // Remove query param after opening dialog to prevent re-triggering on future renders
       router.replace('/customers', { scroll: false });
     }
   }, [searchParams, router, form]);
 
 
-  // Resets form when dialog opens for add/edit.
   useEffect(() => {
     if (isFormDialogOpen) {
       if (editingCustomer) {
         form.reset({
           name: editingCustomer.name,
-          email: editingCustomer.email,
+          email: editingCustomer.email || "",
           phone: editingCustomer.phone,
           gstin: editingCustomer.gstin || "",
           address: editingCustomer.address || "",
@@ -178,22 +174,28 @@ export default function CustomersPage() {
         toast({ title: "Authentication Error", description: "You must be logged in to add or edit a customer.", variant: "destructive"});
         return;
     }
+
+    const dataToSave = {
+        name: values.name,
+        email: (values.email === undefined || values.email.trim() === "") ? null : values.email.trim(),
+        phone: values.phone,
+        gstin: (values.gstin === undefined || values.gstin.trim() === "") ? null : values.gstin.trim(),
+        address: (values.address === undefined || values.address.trim() === "") ? null : values.address.trim(),
+    };
+
     try {
       if (editingCustomer) {
         const customerRef = doc(db, "customers", editingCustomer.id);
-        const updatedData = { ...values, email: values.email || "", updatedAt: serverTimestamp() }; 
-        await updateDoc(customerRef, updatedData);
+        await updateDoc(customerRef, { ...dataToSave, updatedAt: serverTimestamp() });
         toast({ title: "Customer Updated", description: `${values.name} has been successfully updated.` });
       } else {
-        const newCustomerData = { 
-          ...values, 
-          email: values.email || "", 
+        await addDoc(collection(db, "customers"), { 
+          ...dataToSave, 
           totalSpent: "₹0.00", 
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
           createdBy: currentFirebaseUser.uid, 
-        };
-        await addDoc(collection(db, "customers"), newCustomerData);
+        });
         toast({ title: "Customer Added", description: `${values.name} has been successfully added.` });
       }
       fetchCustomers(); 
@@ -246,7 +248,6 @@ export default function CustomersPage() {
 
   const handleUpdatePaymentStatus = (customer: Customer) => {
     router.push(`/payments?type=customer&entityId=${customer.id}&entityName=${encodeURIComponent(customer.name)}`);
-    // Toast can be shown on the payments page after navigation based on params.
   };
 
   if (isLoading) {
@@ -274,7 +275,7 @@ export default function CustomersPage() {
             setIsFormDialogOpen(false);
             setEditingCustomer(null);
             form.reset(); 
-            if (searchParams.get('addNew') === 'true') { // Clean up URL if dialog was opened via query param
+            if (searchParams.get('addNew') === 'true') { 
                  router.replace('/customers', { scroll: false });
             }
           } else { 
