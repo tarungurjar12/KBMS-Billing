@@ -462,7 +462,7 @@ export default function DailyLedgerPage() {
         amountPaidForSave = data.amountPaidNow || 0; 
         remainingAmountForSave = grandTotal - amountPaidForSave;
         if (remainingAmountForSave < 0) remainingAmountForSave = 0;
-    } else { 
+    } else { // 'pending'
         amountPaidForSave = 0;
         remainingAmountForSave = grandTotal;
     }
@@ -531,7 +531,7 @@ export default function DailyLedgerPage() {
         const productStockUpdates: Array<{
             ref: DocumentReference;
             newStock: number;
-            previousStock: number; // Stock before this entire transaction's net effect
+            previousStock: number; 
             productName: string;
             sku: string;
             originalItemEffect: { quantity: number, type: 'sale' | 'purchase' } | null;
@@ -540,13 +540,13 @@ export default function DailyLedgerPage() {
 
         for (const productId of productIdsInvolved) {
             const productSnap = productSnapshots.get(productId)!;
-            if (!productSnap || !productSnap.exists()) { // Should not happen due to earlier check, but defensive
+            if (!productSnap || !productSnap.exists()) { 
                 throw new Error(`Product snapshot for ${productId} unexpectedly missing during calculation.`);
             }
             const currentDbStock = productSnap.data()!.stock as number;
             const productName = productSnap.data()!.name as string;
             const sku = productSnap.data()!.sku as string;
-            let calculatedNewStock = currentDbStock; // Start with stock as read from DB
+            let calculatedNewStock = currentDbStock; 
 
             const originalItem = originalLedgerEntryData?.items.find(i => i.productId === productId);
             const newItem = ledgerDataForSave.items.find(i => i.productId === productId);
@@ -554,21 +554,18 @@ export default function DailyLedgerPage() {
             let originalItemEffectLog = null;
             let newItemEffectLog = null;
 
-            // Step 1: If editing, calculate the stock that needs to be "returned" or "taken back"
-            // This effectively undoes the original transaction's impact on this product's stock.
             if (editingLedgerEntry && originalItem && originalLedgerEntryData) {
                 const quantityToRevert = originalLedgerEntryData.type === 'sale' 
-                    ? originalItem.quantity  // If original was a sale, add quantity back
-                    : -originalItem.quantity; // If original was a purchase, subtract quantity
+                    ? originalItem.quantity 
+                    : -originalItem.quantity; 
                 calculatedNewStock += quantityToRevert;
                 originalItemEffectLog = { quantity: originalItem.quantity, type: originalLedgerEntryData.type };
             }
 
-            // Step 2: Apply the stock change for the new/current item details
             if (newItem) {
                 const quantityToApply = ledgerDataForSave.type === 'sale'
-                    ? -newItem.quantity // If new is a sale, subtract quantity
-                    : newItem.quantity;  // If new is a purchase, add quantity
+                    ? -newItem.quantity 
+                    : newItem.quantity;  
                 calculatedNewStock += quantityToApply;
                 newItemEffectLog = { quantity: newItem.quantity, type: ledgerDataForSave.type };
             }
@@ -577,14 +574,13 @@ export default function DailyLedgerPage() {
                  throw new Error(`Insufficient stock for ${productName}. Final stock would be ${calculatedNewStock}.`);
             }
             
-            // Add to productStockUpdates if the stock level actually changes OR if it's a new entry with items
             if (calculatedNewStock !== currentDbStock || (!editingLedgerEntry && newItem)) {
-                 if (!productSnap.ref || !productSnap.ref.firestore) { // Check the ref from original snapshot
+                 if (!productSnap.ref || !productSnap.ref.firestore) { 
                     console.error("CRITICAL: Invalid product reference from original snapshot", productSnap.ref);
                     throw new Error(`Invalid product reference for ${productName} from original snapshot.`);
                 }
                 productStockUpdates.push({
-                    ref: productSnap.ref, // Use the ref from the original, valid snapshot
+                    ref: productSnap.ref, 
                     newStock: calculatedNewStock,
                     previousStock: currentDbStock,
                     productName,
@@ -604,9 +600,20 @@ export default function DailyLedgerPage() {
         }
         
         let newAssociatedPaymentRecordId: string | null = null;
-        if (ledgerDataForSave.paymentStatus === 'paid' || ledgerDataForSave.paymentStatus === 'partial') {
+        // Create a payment record for Paid, Partial, or Pending ledger statuses
+        if (ledgerDataForSave.paymentStatus === 'paid' || ledgerDataForSave.paymentStatus === 'partial' || ledgerDataForSave.paymentStatus === 'pending') {
           const paymentRecordRef = doc(collection(db, "payments"));
           newAssociatedPaymentRecordId = paymentRecordRef.id;
+          
+          let paymentStatusForRecord: typeof PAYMENT_STATUSES_PAYMENT_PAGE[number];
+          if (ledgerDataForSave.paymentStatus === 'paid') {
+            paymentStatusForRecord = ledgerDataForSave.type === 'sale' ? 'Received' : 'Sent'; // Or 'Completed'
+          } else if (ledgerDataForSave.paymentStatus === 'partial') {
+            paymentStatusForRecord = 'Partial';
+          } else { // pending
+            paymentStatusForRecord = 'Pending';
+          }
+
           const paymentData: Omit<PaymentRecord, 'id' | 'createdAt' | 'updatedAt' | 'displayAmountPaid'> & {createdAt: any, updatedAt?: any, ledgerEntryId: string} = {
             type: ledgerDataForSave.type === 'sale' ? 'customer' : 'supplier',
             relatedEntityName: ledgerDataForSave.entityName,
@@ -614,13 +621,13 @@ export default function DailyLedgerPage() {
             relatedInvoiceId: null, 
             date: format(parseISO(ledgerDataForSave.date), "MMM dd, yyyy"), 
             isoDate: ledgerDataForSave.date, 
-            amountPaid: amountPaidForSave,
+            amountPaid: amountPaidForSave, // This will be 0 for 'pending' status
             originalInvoiceAmount: grandTotal, 
-            remainingBalanceOnInvoice: remainingAmountForSave,
-            method: ledgerDataForSave.paymentMethod as typeof PAYMENT_METHODS_PAYMENT_PAGE[number] | null,
+            remainingBalanceOnInvoice: remainingAmountForSave, // This will be grandTotal for 'pending'
+            method: ledgerDataForSave.paymentStatus === 'pending' ? null : ledgerDataForSave.paymentMethod as typeof PAYMENT_METHODS_PAYMENT_PAGE[number] | null,
             transactionId: null, 
-            status: ledgerDataForSave.paymentStatus === 'paid' ? 'Completed' : 'Partial' as typeof PAYMENT_STATUSES_PAYMENT_PAGE[number],
-            notes: `Payment for Ledger Entry: ${ledgerDocRef.id}. ${ledgerDataForSave.notes || ''}`.trim(),
+            status: paymentStatusForRecord,
+            notes: `Payment record for Ledger Entry: ${ledgerDocRef.id}. ${ledgerDataForSave.notes || ''}`.trim(),
             ledgerEntryId: ledgerDocRef.id,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
