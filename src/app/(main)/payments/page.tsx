@@ -1,7 +1,7 @@
 
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -25,7 +25,7 @@ import { format, parseISO, startOfDay, endOfDay } from 'date-fns';
 
 /**
  * @fileOverview Page for Admin to manage Payment Records in Firestore.
- * Includes a dashboard section for payment summaries.
+ * Includes a dashboard section for payment summaries and nested tabs for filtering payments.
  */
 
 export const PAYMENT_METHODS = ["Cash", "UPI", "Card", "Bank Transfer", "ACH", "Check", "Other"] as const;
@@ -84,10 +84,10 @@ const paymentRecordBaseSchema = z.object({
 });
 
 const paymentRecordSchema = paymentRecordBaseSchema.superRefine((data, ctx) => {
-  if ((data.status === "Completed" || data.status === "Partial" || data.status === "Received") && !data.method) {
+  if ((data.status === "Completed" || data.status === "Partial" || data.status === "Received" || data.status === "Sent") && !data.method) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: "Payment method is required for Completed, Partial, or Received status.",
+      message: "Payment method is required for this status.",
       path: ["method"],
     });
   }
@@ -102,6 +102,7 @@ const paymentRecordSchema = paymentRecordBaseSchema.superRefine((data, ctx) => {
 
 
 type PaymentFormValues = z.infer<typeof paymentRecordSchema>;
+type StatusFilterType = 'all' | 'paid' | 'partial' | 'pending';
 
 const formatCurrency = (num: number): string => `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -120,6 +121,9 @@ export default function PaymentsPage() {
     { title: "Today's Pending", value: "₹0.00", icon: AlertCircle, isLoading: true },
     { title: "Today's Sent", value: "₹0.00", icon: TrendingUp, isLoading: true },
   ]);
+  const [activeMainTab, setActiveMainTab] = useState<'customer' | 'supplier'>('customer');
+  const [activeStatusFilter, setActiveStatusFilter] = useState<StatusFilterType>('all');
+
 
   const form = useForm<PaymentFormValues>({
     resolver: zodResolver(paymentRecordSchema),
@@ -136,7 +140,7 @@ export default function PaymentsPage() {
   const originalInvoiceAmountWatcher = form.watch("originalInvoiceAmount");
   const amountPaidWatcher = form.watch("amountPaid");
 
-  const shouldShowPaymentMethod = paymentStatusWatcher === "Completed" || paymentStatusWatcher === "Partial" || paymentStatusWatcher === "Received";
+  const shouldShowPaymentMethod = paymentStatusWatcher === "Completed" || paymentStatusWatcher === "Partial" || paymentStatusWatcher === "Received" || paymentStatusWatcher === "Sent";
   const isPartialPayment = paymentStatusWatcher === "Partial";
   const calculatedRemainingBalance = (originalInvoiceAmountWatcher && amountPaidWatcher && isPartialPayment)
     ? originalInvoiceAmountWatcher - amountPaidWatcher
@@ -274,11 +278,6 @@ export default function PaymentsPage() {
 
   const handleFormSubmit = async (values: PaymentFormValues) => {
     try {
-      let remainingBalance = null;
-      if (values.status === 'Partial' && values.originalInvoiceAmount && values.amountPaid) {
-        remainingBalance = values.originalInvoiceAmount - values.amountPaid;
-         if (remainingBalance < 0) remainingBalance = 0; 
-      }
       
       const dataToSave = {
         ...values, 
@@ -300,7 +299,7 @@ export default function PaymentsPage() {
     }
   };
 
-  const openAddDialog = () => { setEditingPayment(null); setIsFormDialogOpen(true); };
+  const openAddDialog = () => { setEditingPayment(null); form.setValue("type", activeMainTab); setIsFormDialogOpen(true); };
   const openEditDialog = (payment: PaymentRecord) => { setEditingPayment(payment); setIsFormDialogOpen(true); };
 
   const handleDeletePayment = async (paymentId: string, paymentDetails: string) => {
@@ -316,18 +315,33 @@ export default function PaymentsPage() {
 
   const getBadgeVariant = (status: PaymentRecord['status']): "default" | "secondary" | "destructive" | "outline" => {
     switch (status) {
-      case "Completed": case "Received": return "default";
-      case "Pending": case "Sent": return "secondary";
+      case "Completed": case "Received": case "Sent": return "default";
+      case "Pending": return "secondary";
       case "Failed": return "destructive";
       case "Partial": return "outline";
       default: return "secondary";
     }
   };
 
-  const customerPayments = allPayments.filter(p => p.type === "customer");
-  const supplierPayments = allPayments.filter(p => p.type === "supplier");
+  const displayedPayments = useMemo(() => {
+    let filteredByType = allPayments.filter(p => p.type === activeMainTab);
 
-  const renderPaymentTable = (payments: PaymentRecord[], type: "customer" | "supplier") => (
+    if (activeStatusFilter === 'paid') {
+        if (activeMainTab === 'customer') {
+            filteredByType = filteredByType.filter(p => p.status === 'Completed' || p.status === 'Received');
+        } else { // supplier
+            filteredByType = filteredByType.filter(p => p.status === 'Completed' || p.status === 'Sent');
+        }
+    } else if (activeStatusFilter === 'partial') {
+        filteredByType = filteredByType.filter(p => p.status === 'Partial');
+    } else if (activeStatusFilter === 'pending') {
+        filteredByType = filteredByType.filter(p => p.status === 'Pending' || p.status === 'Failed');
+    }
+    return filteredByType;
+  }, [allPayments, activeMainTab, activeStatusFilter]);
+
+
+  const renderPaymentTable = (paymentsToRender: PaymentRecord[], type: "customer" | "supplier") => (
     <div className="overflow-x-auto">
     <Table>
       <TableHeader><TableRow>
@@ -342,7 +356,7 @@ export default function PaymentsPage() {
           <TableHead className="text-right">Actions</TableHead>
       </TableRow></TableHeader>
       <TableBody>
-        {payments.map((payment) => (
+        {paymentsToRender.map((payment) => (
           <TableRow key={payment.id}>
             <TableCell>{payment.date}</TableCell>
             <TableCell>{payment.relatedEntityName}</TableCell>
@@ -355,9 +369,9 @@ export default function PaymentsPage() {
               <Badge
                 variant={getBadgeVariant(payment.status)}
                 className={
-                    (payment.status === "Completed" || payment.status === "Received") ? "bg-accent text-accent-foreground" :
+                    (payment.status === "Completed" || payment.status === "Received" || payment.status === "Sent") ? "bg-accent text-accent-foreground" :
                     payment.status === "Partial" ? "border-yellow-500 text-yellow-600 dark:border-yellow-400 dark:text-yellow-300 bg-transparent" :
-                    (payment.status === "Pending" || payment.status === "Sent") ? "border-blue-500 text-blue-600 dark:border-blue-400 dark:text-blue-300 bg-transparent" :
+                    (payment.status === "Pending" || payment.status === "Failed") ? "border-blue-500 text-blue-600 dark:border-blue-400 dark:text-blue-300 bg-transparent" : // Adjusted "Pending" & "Failed"
                     ""
                 }
               >{payment.status}</Badge>
@@ -384,6 +398,21 @@ export default function PaymentsPage() {
     </Table>
     </div>
   );
+  
+  const getEmptyStateMessage = () => {
+    const entityType = activeMainTab === 'customer' ? 'Customer' : 'Supplier';
+    if (activeStatusFilter === 'all') {
+        return `No ${entityType} Payments Recorded.`;
+    }
+    const statusText = activeStatusFilter.charAt(0).toUpperCase() + activeStatusFilter.slice(1);
+    return `No '${statusText}' ${entityType} Payments found.`;
+  };
+  
+  const getEmptyStateButtonText = () => {
+      const entityType = activeMainTab === 'customer' ? 'Customer' : 'Supplier';
+      return `Record First ${entityType} Payment`;
+  };
+
 
   return (
     <>
@@ -488,40 +517,65 @@ export default function PaymentsPage() {
         </DialogContent>
       </Dialog>
 
-      <Tabs defaultValue="customer_payments" className="w-full">
-        <TabsList className="grid w-full grid-cols-1 sm:w-auto sm:grid-cols-2 mb-4">
-          <TabsTrigger value="customer_payments" className="whitespace-nowrap px-3">Customer Payments</TabsTrigger>
-          <TabsTrigger value="supplier_payments" className="whitespace-nowrap px-3">Supplier Payments</TabsTrigger>
+      <Tabs 
+        value={activeMainTab} 
+        onValueChange={(value) => {
+            setActiveMainTab(value as 'customer' | 'supplier');
+            setActiveStatusFilter('all'); // Reset status filter when main tab changes
+        }} 
+        className="w-full"
+      >
+        <TabsList className="grid w-full grid-cols-2 sm:w-auto mb-4">
+          <TabsTrigger value="customer" className="whitespace-nowrap px-3">Customer Payments</TabsTrigger>
+          <TabsTrigger value="supplier" className="whitespace-nowrap px-3">Supplier Payments</TabsTrigger>
         </TabsList>
-        <TabsContent value="customer_payments">
+        
+        <TabsContent value="customer">
           <Card className="shadow-lg rounded-xl">
-            <CardHeader><CardTitle className="font-headline text-foreground">Customer Payment History</CardTitle><CardDescription>Records of payments received from customers, most recent first.</CardDescription></CardHeader>
+            <CardHeader><CardTitle className="font-headline text-foreground">Customer Payment History</CardTitle><CardDescription>Records of payments received from customers, filtered by status.</CardDescription></CardHeader>
             <CardContent>
-                {isLoading && customerPayments.length === 0 ? (
+                <Tabs defaultValue="all" onValueChange={(val) => setActiveStatusFilter(val as StatusFilterType)} className="mb-4" key={`${activeMainTab}-filter`}>
+                    <TabsList className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:grid-cols-4">
+                        <TabsTrigger value="all">All</TabsTrigger>
+                        <TabsTrigger value="paid">Paid</TabsTrigger>
+                        <TabsTrigger value="partial">Partial</TabsTrigger>
+                        <TabsTrigger value="pending">Pending</TabsTrigger>
+                    </TabsList>
+                </Tabs>
+                {isLoading && displayedPayments.length === 0 ? (
                      <div className="text-center py-10 text-muted-foreground"><Activity className="mx-auto h-12 w-12 mb-4 animate-spin" />Loading...</div>
-                ) : customerPayments.length > 0 ? renderPaymentTable(customerPayments, "customer") : (
+                ) : displayedPayments.length > 0 ? renderPaymentTable(displayedPayments, "customer") : (
                     <div className="flex flex-col items-center justify-center py-10 text-center">
                         <FileWarning className="h-16 w-16 text-muted-foreground mb-4" />
-                        <p className="text-xl font-semibold text-muted-foreground">No Customer Payments Recorded</p>
+                        <p className="text-xl font-semibold text-muted-foreground">{getEmptyStateMessage()}</p>
                         <p className="text-sm text-muted-foreground mb-6">Track payments received from your customers here.</p>
-                        <Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Record First Customer Payment</Button>
+                        <Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />{getEmptyStateButtonText()}</Button>
                     </div>
                 )}
             </CardContent>
           </Card>
         </TabsContent>
-        <TabsContent value="supplier_payments">
+
+        <TabsContent value="supplier">
           <Card className="shadow-lg rounded-xl">
-            <CardHeader><CardTitle className="font-headline text-foreground">Supplier Payment History</CardTitle><CardDescription>Records of payments made to suppliers/vendors, most recent first.</CardDescription></CardHeader>
+            <CardHeader><CardTitle className="font-headline text-foreground">Supplier Payment History</CardTitle><CardDescription>Records of payments made to suppliers/vendors, filtered by status.</CardDescription></CardHeader>
             <CardContent>
-                 {isLoading && supplierPayments.length === 0 ? (
+                 <Tabs defaultValue="all" onValueChange={(val) => setActiveStatusFilter(val as StatusFilterType)} className="mb-4" key={`${activeMainTab}-filter`}>
+                    <TabsList className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:grid-cols-4">
+                        <TabsTrigger value="all">All</TabsTrigger>
+                        <TabsTrigger value="paid">Paid/Sent</TabsTrigger>
+                        <TabsTrigger value="partial">Partial</TabsTrigger>
+                        <TabsTrigger value="pending">Pending/Failed</TabsTrigger>
+                    </TabsList>
+                </Tabs>
+                 {isLoading && displayedPayments.length === 0 ? (
                      <div className="text-center py-10 text-muted-foreground"><Activity className="mx-auto h-12 w-12 mb-4 animate-spin" />Loading...</div>
-                ) : supplierPayments.length > 0 ? renderPaymentTable(supplierPayments, "supplier") : (
+                ) : displayedPayments.length > 0 ? renderPaymentTable(displayedPayments, "supplier") : (
                     <div className="flex flex-col items-center justify-center py-10 text-center">
                         <FileWarning className="h-16 w-16 text-muted-foreground mb-4" />
-                        <p className="text-xl font-semibold text-muted-foreground">No Supplier Payments Recorded</p>
+                         <p className="text-xl font-semibold text-muted-foreground">{getEmptyStateMessage()}</p>
                         <p className="text-sm text-muted-foreground mb-6">Keep track of payments made to your suppliers.</p>
-                        <Button onClick={() => {form.setValue("type", "supplier"); openAddDialog();}}><PlusCircle className="mr-2 h-4 w-4" />Record First Supplier Payment</Button>
+                        <Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />{getEmptyStateButtonText()}</Button>
                     </div>
                 )}
             </CardContent>
@@ -531,3 +585,4 @@ export default function PaymentsPage() {
     </>
   );
 }
+
