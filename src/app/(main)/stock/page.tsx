@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/page-header";
-import { Boxes, PackageSearch, Edit, Info, FileWarning } from "lucide-react"; 
+import { Boxes, PackageSearch, Edit, Info, FileWarning } from "lucide-react";
 import Image from "next/image";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -16,10 +16,10 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
-import { collection, getDocs, doc, updateDoc, query, orderBy, serverTimestamp, addDoc, Timestamp, runTransaction } from 'firebase/firestore'; 
+import { collection, getDocs, doc, updateDoc, query, orderBy, serverTimestamp, addDoc, Timestamp, runTransaction } from 'firebase/firestore';
 import type { DocumentSnapshot, DocumentData } from 'firebase/firestore';
-import { db, auth } from '@/lib/firebase/firebaseConfig'; 
-import type { Product } from './../products/page'; 
+import { db, auth } from '@/lib/firebase/firebaseConfig';
+import type { Product } from './../products/page';
 
 /**
  * @fileOverview Page for Admin to manage Inventory Levels using Firestore.
@@ -31,39 +31,39 @@ import type { Product } from './../products/page';
  * Data is fetched from and saved to Firebase Firestore.
  */
 
-export interface StockItem extends Product { 
+export interface StockItem extends Product {
   status: "In Stock" | "Low Stock" | "Out of Stock";
 }
 
 const stockUpdateSchema = z.object({
-  productId: z.string().min(1, "Product ID is required for stock update."), 
-  currentStock: z.number(), 
+  productId: z.string({required_error: "Product ID is required."}).min(1, {message: "Product ID cannot be empty."}),
+  currentStock: z.number(),
   adjustmentType: z.enum(["set", "add", "subtract"]).default("set"),
   adjustmentValue: z.preprocess(
-    (val) => parseInt(String(val), 10), 
+    (val) => parseInt(String(val), 10),
     z.number({invalid_type_error: "Adjustment value must be a whole number."}).int()
   ),
   notes: z.string().min(5, {message: "Please provide a brief reason for this stock adjustment (min 5 characters)."})
-}).refine(data => { 
+}).refine(data => {
     if (data.adjustmentType === "subtract") {
-        return data.adjustmentValue <= data.currentStock && data.adjustmentValue > 0; 
+        return data.adjustmentValue <= data.currentStock && data.adjustmentValue > 0;
     }
     if (data.adjustmentType === "set") {
-        return data.adjustmentValue >= 0; 
+        return data.adjustmentValue >= 0;
     }
     if (data.adjustmentType === "add") {
-        return data.adjustmentValue > 0; 
+        return data.adjustmentValue > 0;
     }
     return true;
 }, {
     message: "Invalid adjustment: 'Subtract' must be positive and not exceed current stock. 'Set' cannot be negative. 'Add' must be positive.",
-    path: ["adjustmentValue"], 
+    path: ["adjustmentValue"],
 });
 
 type StockUpdateFormValues = z.infer<typeof stockUpdateSchema>;
 
 const formatCurrency = (num: number): string => `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const LOW_STOCK_THRESHOLD = 50; 
+const LOW_STOCK_THRESHOLD = 50;
 
 export default function StockPage() {
   const [stockList, setStockList] = useState<StockItem[]>([]);
@@ -80,10 +80,10 @@ export default function StockPage() {
 
   const getStatus = useCallback((stock: number): StockItem['status'] => {
     if (stock <= 0) return "Out of Stock";
-    if (stock < LOW_STOCK_THRESHOLD) return "Low Stock"; 
+    if (stock < LOW_STOCK_THRESHOLD) return "Low Stock";
     return "In Stock";
-  }, []); 
-  
+  }, []);
+
   const fetchStock = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -128,11 +128,11 @@ export default function StockPage() {
     item.name.toLowerCase().includes(searchTerm) ||
     item.sku.toLowerCase().includes(searchTerm)
   );
-  
+
   const openUpdateStockDialog = (item: StockItem) => {
     setProductToUpdateStock(item);
-    form.reset({ 
-        productId: item.id, currentStock: item.stock, 
+    form.reset({
+        productId: item.id, currentStock: item.stock,
         adjustmentType: "set", adjustmentValue: item.stock, notes: "",
     });
     setIsUpdateStockDialogOpen(true);
@@ -145,7 +145,6 @@ export default function StockPage() {
         return;
     }
 
-    // Use the productToUpdateStock state for original values, but ensure it matches the submitted productId
     if (!productToUpdateStock || productToUpdateStock.id !== values.productId) {
         toast({ title: "Data Error", description: "Product information mismatch. Please try again.", variant: "destructive"});
         return;
@@ -163,30 +162,30 @@ export default function StockPage() {
     } else { // subtract
         finalStock = originalStock - values.adjustmentValue;
     }
-    if (finalStock < 0) finalStock = 0; 
+    if (finalStock < 0) finalStock = 0;
 
     try {
       if (!db) {
         throw new Error("Firestore database instance is not available.");
       }
-      if (!values.productId) {
-        throw new Error("Product ID is missing in form values for stock update.");
-      }
+      // values.productId is guaranteed by Zod schema to be a non-empty string here
 
       await runTransaction(db, async (transaction) => {
-        const productRef = doc(db, "products", values.productId); // Use productId from form values
-        
-        // Optional: Re-read the product within the transaction to get the absolute latest stock
-        // const productSnap = await transaction.get(productRef);
-        // if (!productSnap.exists()) {
-        //     throw new Error(`Product "${productName}" (ID: ${values.productId}) not found during transaction.`);
-        // }
-        // const currentDbStock = productSnap.data()!.stock;
-        // Recalculate finalStock based on currentDbStock if needed, otherwise use originalStock for this manual adjustment context
+        if (!values.productId || typeof values.productId !== 'string' || values.productId.trim() === '') {
+            console.error("CRITICAL: Invalid productId in transaction despite Zod:", values.productId);
+            throw new Error(`Critical: Invalid Product ID in transaction: "${values.productId}".`);
+        }
 
-        transaction.update(productRef, { 
+        const productRef = doc(db, "products", values.productId);
+
+        if (!productRef || !productRef.firestore) { // Explicit check for valid DocumentReference
+            console.error("Invalid productRef created in transaction:", productRef, "for productId:", values.productId);
+            throw new Error("Failed to create a valid document reference for the product in the transaction.");
+        }
+
+        transaction.update(productRef, {
           stock: finalStock,
-          updatedAt: serverTimestamp(), 
+          updatedAt: serverTimestamp(),
         });
 
         const stockMovementLogRef = doc(collection(db, "stockMovements"));
@@ -194,11 +193,11 @@ export default function StockPage() {
           productId: values.productId,
           productName: productName,
           sku: productSku,
-          previousStock: originalStock, 
-          newStock: finalStock, 
+          previousStock: originalStock,
+          newStock: finalStock,
           adjustmentType: values.adjustmentType,
           adjustmentValue: values.adjustmentValue,
-          notes: values.notes || "Manual stock adjustment", 
+          notes: values.notes || "Manual stock adjustment",
           timestamp: serverTimestamp(),
           adjustedByUid: currentUser.uid,
           adjustedByEmail: currentUser.email || "N/A",
@@ -206,10 +205,10 @@ export default function StockPage() {
       });
 
       toast({ title: "Stock Updated Successfully", description: `Stock for ${productName} updated to ${finalStock}. Log entry created.` });
-      fetchStock(); 
-      setIsUpdateStockDialogOpen(false); 
+      fetchStock();
+      setIsUpdateStockDialogOpen(false);
       setProductToUpdateStock(null);
-      form.reset(); 
+      form.reset();
     } catch (error: any) {
       console.error("Error updating stock: ", error);
       toast({ title: "Stock Update Failed", description: `Failed to update stock: ${error.message || "Please try again."}`, variant: "destructive" });
@@ -236,8 +235,8 @@ export default function StockPage() {
         </CardContent>
       </Card>
 
-      <Dialog open={isUpdateStockDialogOpen} onOpenChange={(isOpen) => { 
-          if(!isOpen) { setIsUpdateStockDialogOpen(false); setProductToUpdateStock(null); form.reset(); } 
+      <Dialog open={isUpdateStockDialogOpen} onOpenChange={(isOpen) => {
+          if(!isOpen) { setIsUpdateStockDialogOpen(false); setProductToUpdateStock(null); form.reset(); }
           else { setIsUpdateStockDialogOpen(isOpen); }
       }}>
         <DialogContent className="sm:max-w-[480px]">
@@ -301,10 +300,10 @@ export default function StockPage() {
                 {filteredStockItems.map((item) => (
                   <TableRow key={item.id}>
                     <TableCell>
-                      <Image 
-                          src={item.imageUrl} alt={item.name} width={40} height={40} 
+                      <Image
+                          src={item.imageUrl} alt={item.name} width={40} height={40}
                           className="rounded-md object-cover border" data-ai-hint={item.dataAiHint}
-                          onError={(e) => { e.currentTarget.src = `https://placehold.co/40x40.png?text=${encodeURIComponent(item.name.substring(0,2).toUpperCase())}`; }} 
+                          onError={(e) => { e.currentTarget.src = `https://placehold.co/40x40.png?text=${encodeURIComponent(item.name.substring(0,2).toUpperCase())}`; }}
                       />
                     </TableCell>
                     <TableCell className="font-medium">{item.name}</TableCell>
@@ -312,10 +311,10 @@ export default function StockPage() {
                     <TableCell className="hidden lg:table-cell">{item.unitOfMeasure || 'N/A'}</TableCell>
                     <TableCell className="text-right font-semibold">{item.stock}</TableCell>
                     <TableCell className="text-center">
-                      <Badge 
+                      <Badge
                         variant={item.status === "In Stock" ? "default" : item.status === "Low Stock" ? "secondary" : "destructive"}
-                        className={ 
-                          item.status === "In Stock" ? "bg-accent text-accent-foreground" : 
+                        className={
+                          item.status === "In Stock" ? "bg-accent text-accent-foreground" :
                           item.status === "Low Stock" ? "bg-yellow-400 text-yellow-900 dark:bg-yellow-600 dark:text-yellow-100 border-yellow-500" : ""
                         }
                       >{item.status}</Badge>
@@ -344,3 +343,4 @@ export default function StockPage() {
   );
 }
 
+    
