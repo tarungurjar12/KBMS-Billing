@@ -16,7 +16,7 @@ import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { BookOpen, PlusCircle, Trash2, Search, Users, Truck, XCircle, Filter, FileWarning, Calculator, Edit, MoreHorizontal } from 'lucide-react';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { collection, getDocs, addDoc, serverTimestamp, query, orderBy, where, doc, runTransaction, Timestamp, deleteDoc, getDoc } from 'firebase/firestore';
 import type { DocumentSnapshot, DocumentData, DocumentReference } from 'firebase/firestore';
@@ -99,11 +99,21 @@ const baseLedgerEntrySchema = z.object({
   paymentStatus: z.enum(PAYMENT_STATUSES_LEDGER, { required_error: "Payment status is required."}),
   paymentMethod: z.enum(PAYMENT_METHODS_LEDGER).nullable().optional().transform(val => (val === undefined || val === "") ? null : val),
   amountPaidNow: z.preprocess(
-    (val) => String(val).trim() === "" ? undefined : parseFloat(String(val).replace(/[^0-9.]+/g, "")),
-    z.number({ invalid_type_error: "Amount paid must be a valid number." }).nonnegative({ message: "Amount paid cannot be negative." }).optional()
+    (val) => {
+      if (val === undefined || val === null || String(val).trim() === "") {
+        return undefined; 
+      }
+      const num = parseFloat(String(val).replace(/[^0-9.]+/g, ""));
+      return isNaN(num) ? undefined : num;
+    },
+    z.number({ invalid_type_error: "Amount paid now must be a valid number if provided." })
+      .nonnegative({ message: "Amount paid now cannot be negative if provided." })
+      .optional()
   ),
-  notes: z.string().optional(), 
+  notes: z.string().optional().transform(value => (value === undefined || value.trim() === "") ? null : value.trim()),
 });
+
+const GST_RATE = 0.18; 
 
 const ledgerEntrySchema = baseLedgerEntrySchema.superRefine((data, ctx) => {
   if ((data.paymentStatus === "paid" || data.paymentStatus === "partial") && !data.paymentMethod) {
@@ -132,7 +142,6 @@ type LedgerFormValues = z.infer<typeof ledgerEntrySchema>;
 const newCustomerSellerSchema = z.object({ name: z.string().min(2, "Name requires at least 2 chars."), phone: z.string().min(10, "Phone requires at least 10 digits.") });
 type NewCustomerSellerFormValues = z.infer<typeof newCustomerSellerSchema>;
 
-const GST_RATE = 0.18;
 
 const getCookie = (name: string): string | undefined => {
   if (typeof window === 'undefined') return undefined;
@@ -177,8 +186,8 @@ export default function DailyLedgerPage() {
       date: selectedDate, type: 'sale', entityType: 'customer', entityName: '',
       items: [], applyGst: false,
       paymentStatus: 'paid', paymentMethod: 'Cash',
-      amountPaidNow: undefined,
-      notes: "", 
+      amountPaidNow: undefined, 
+      notes: null, 
       entityId: null,
     },
   });
@@ -214,8 +223,9 @@ export default function DailyLedgerPage() {
             notes: data.notes || null,
             entityId: data.entityId || null,
             originalTransactionAmount: data.originalTransactionAmount || data.grandTotal || 0,
-            amountPaidNow: data.amountPaidNow === undefined ? (data.paymentStatus === 'paid' ? data.grandTotal : 0) : data.amountPaidNow,
-            remainingAmount: data.remainingAmount === undefined ? (data.grandTotal - (data.amountPaidNow === undefined ? (data.paymentStatus === 'paid' ? data.grandTotal : 0) : data.amountPaidNow)) : data.remainingAmount,
+            // Ensure amountPaidNow from DB is treated as number, default for UI if undefined
+            amountPaidNow: typeof data.amountPaidNow === 'number' ? data.amountPaidNow : (data.paymentStatus === 'paid' ? data.grandTotal : 0),
+            remainingAmount: typeof data.remainingAmount === 'number' ? data.remainingAmount : (data.grandTotal - (typeof data.amountPaidNow === 'number' ? data.amountPaidNow : (data.paymentStatus === 'paid' ? data.grandTotal : 0))),
             associatedPaymentRecordId: data.associatedPaymentRecordId || null,
         } as LedgerEntry;
       }));
@@ -260,7 +270,7 @@ export default function DailyLedgerPage() {
             paymentStatus: editingLedgerEntry.paymentStatus,
             paymentMethod: editingLedgerEntry.paymentMethod,
             amountPaidNow: editingLedgerEntry.paymentStatus === 'partial' ? editingLedgerEntry.amountPaidNow : undefined,
-            notes: editingLedgerEntry.notes || "",
+            notes: editingLedgerEntry.notes || null,
         });
       } else {
         form.reset({
@@ -273,7 +283,7 @@ export default function DailyLedgerPage() {
             paymentStatus: 'paid', 
             paymentMethod: 'Cash',
             amountPaidNow: undefined,
-            notes: "", 
+            notes: null, 
             entityId: null,
         });
       }
@@ -347,6 +357,11 @@ export default function DailyLedgerPage() {
         if (paymentStatusWatcher !== 'partial') {
             form.setValue("amountPaidNow", undefined, { shouldDirty: true });
             form.clearErrors("amountPaidNow"); 
+        } else {
+           // If becoming partial and amountPaidNow is undefined, trigger validation or set a default if appropriate
+           if(form.getValues("amountPaidNow") === undefined && form.getFieldState("amountPaidNow").isDirty) {
+              form.trigger("amountPaidNow");
+           }
         }
         form.clearErrors("paymentMethod"); 
     }
@@ -413,57 +428,52 @@ export default function DailyLedgerPage() {
 
   const itemsWatcher = form.watch("items");
   const applyGstWatcher = form.watch("applyGst");
-  const amountPaidNowWatcher = form.watch("amountPaidNow");
+  const amountPaidNowWatcher = form.watch("amountPaidNow"); // This is the form value
 
   const currentSubtotal = itemsWatcher.reduce((acc, item) => acc + ((item.quantity || 0) * (item.unitPrice || 0)), 0);
   const currentTax = applyGstWatcher ? currentSubtotal * GST_RATE : 0;
   const currentGrandTotal = currentSubtotal + currentTax;
   
-  let currentAmountPaidNow = 0;
+  let currentAmountPaidNowForDisplay: number; // For display in summary
   if (paymentStatusWatcher === 'paid') {
-    currentAmountPaidNow = currentGrandTotal;
+    currentAmountPaidNowForDisplay = currentGrandTotal;
   } else if (paymentStatusWatcher === 'partial') {
-    currentAmountPaidNow = amountPaidNowWatcher || 0;
+    currentAmountPaidNowForDisplay = amountPaidNowWatcher || 0; // Use form value or 0
+  } else { // pending
+    currentAmountPaidNowForDisplay = 0;
   }
   
-  const currentRemainingAmount = currentGrandTotal - currentAmountPaidNow;
+  const currentRemainingAmountForDisplay = currentGrandTotal - currentAmountPaidNowForDisplay;
 
 
   const onLedgerSubmit = async (data: LedgerFormValues) => {
     const currentUser = auth.currentUser;
     if (!currentUser) { toast({ title: "Authentication Error", description: "You must be logged in.", variant: "destructive" }); return; }
 
-    const processedData = {
-        ...data,
-        notes: (data.notes === undefined || data.notes.trim() === "") ? null : data.notes.trim(),
-        entityId: data.entityId, 
-        paymentMethod: data.paymentMethod, 
-    };
-
-    const subTotal = processedData.items.reduce((sum, item) => sum + ((item.quantity || 0) * (item.unitPrice || 0)), 0);
-    const taxAmount = processedData.applyGst ? subTotal * GST_RATE : 0;
+    const subTotal = data.items.reduce((sum, item) => sum + ((item.quantity || 0) * (item.unitPrice || 0)), 0);
+    const taxAmount = data.applyGst ? subTotal * GST_RATE : 0;
     const grandTotal = subTotal + taxAmount;
 
-    let amountPaidForEntry: number;
-    let remainingAmountForEntry: number;
+    let amountPaidForSave: number;
+    let remainingAmountForSave: number;
 
-    if (processedData.paymentStatus === 'paid') {
-        amountPaidForEntry = grandTotal;
-        remainingAmountForEntry = 0;
-    } else if (processedData.paymentStatus === 'partial') {
-        amountPaidForEntry = processedData.amountPaidNow || 0; 
-        remainingAmountForEntry = grandTotal - amountPaidForEntry;
-        if (remainingAmountForEntry < 0) remainingAmountForEntry = 0;
-    } else { 
-        amountPaidForEntry = 0;
-        remainingAmountForEntry = grandTotal;
+    if (data.paymentStatus === 'paid') {
+        amountPaidForSave = grandTotal;
+        remainingAmountForSave = 0;
+    } else if (data.paymentStatus === 'partial') {
+        amountPaidForSave = data.amountPaidNow || 0; 
+        remainingAmountForSave = grandTotal - amountPaidForSave;
+        if (remainingAmountForSave < 0) remainingAmountForSave = 0;
+    } else { // 'pending'
+        amountPaidForSave = 0;
+        remainingAmountForSave = grandTotal;
     }
 
     const ledgerDataForSave: Omit<LedgerEntry, 'id' | 'createdAt' | 'updatedAt' | 'associatedPaymentRecordId'> & { createdAt?: any, updatedAt: any, associatedPaymentRecordId?: string | null } = {
-      date: processedData.date, type: processedData.type, entityType: processedData.entityType,
-      entityId: processedData.entityId, 
-      entityName: processedData.entityName, 
-      items: processedData.items.map(item => ({ 
+      date: data.date, type: data.type, entityType: data.entityType,
+      entityId: data.entityId, 
+      entityName: data.entityName, 
+      items: data.items.map(item => ({ 
           productId: item.productId,
           productName: item.productName,
           quantity: item.quantity || 0,
@@ -471,13 +481,13 @@ export default function DailyLedgerPage() {
           totalPrice: (item.quantity || 0) * (item.unitPrice || 0),
           unitOfMeasure: item.unitOfMeasure,
       })),
-      subTotal, gstApplied: processedData.applyGst, taxAmount, grandTotal,
-      paymentMethod: (processedData.paymentStatus === 'paid' || processedData.paymentStatus === 'partial') ? (processedData.paymentMethod) : null, 
-      paymentStatus: processedData.paymentStatus,
+      subTotal, gstApplied: data.applyGst, taxAmount, grandTotal,
+      paymentMethod: (data.paymentStatus === 'paid' || data.paymentStatus === 'partial') ? (data.paymentMethod) : null, 
+      paymentStatus: data.paymentStatus,
       originalTransactionAmount: grandTotal,
-      amountPaidNow: amountPaidForEntry,
-      remainingAmount: remainingAmountForEntry,
-      notes: processedData.notes, 
+      amountPaidNow: amountPaidForSave,
+      remainingAmount: remainingAmountForSave,
+      notes: data.notes, // Zod transform ensures this is string or null
       createdBy: editingLedgerEntry ? editingLedgerEntry.createdBy : currentUser.uid, 
       updatedAt: serverTimestamp(),
     };
@@ -536,7 +546,7 @@ export default function DailyLedgerPage() {
           transaction.set(stockMovementLogRef, {
               productId: item.productId, productName: item.productName, sku: productSnap.data()!.sku,
               previousStock: currentDbStock, newStock: newStock,
-              adjustmentType: ledgerDataForSave.type === 'sale' ? 'sale_ledger_edit' : 'purchase_ledger_edit',
+              adjustmentType: ledgerDataForSave.type === 'sale' ? 'sale_ledger_entry' : 'purchase_ledger_entry',
               adjustmentValue: ledgerDataForSave.type === 'sale' ? -item.quantity : item.quantity,
               notes: `Stock ${editingLedgerEntry ? 'updated by edit of' : 'adjusted by'} ledger entry ${ledgerDocRef.id}`,
               timestamp: serverTimestamp(), adjustedByUid: currentUser.uid, adjustedByEmail: currentUser.email,
@@ -560,9 +570,9 @@ export default function DailyLedgerPage() {
             relatedInvoiceId: null, 
             date: format(parseISO(ledgerDataForSave.date), "MMM dd, yyyy"), 
             isoDate: ledgerDataForSave.date, 
-            amountPaid: amountPaidForEntry,
+            amountPaid: amountPaidForSave,
             originalInvoiceAmount: grandTotal, 
-            remainingBalanceOnInvoice: remainingAmountForEntry,
+            remainingBalanceOnInvoice: remainingAmountForSave,
             method: ledgerDataForSave.paymentMethod as typeof PAYMENT_METHODS_PAYMENT_PAGE[number] | null,
             transactionId: null, 
             status: ledgerDataForSave.paymentStatus === 'paid' ? 'Completed' : 'Partial' as typeof PAYMENT_STATUSES_PAYMENT_PAGE[number],
@@ -588,7 +598,7 @@ export default function DailyLedgerPage() {
 
       });
       toast({ title: editingLedgerEntry ? "Ledger Entry Updated" : "Ledger Entry Saved", description: "Transaction recorded, stock updated, and payment record handled." });
-      form.reset({ date: selectedDate, type: 'sale', entityType: 'customer', entityName: '', items: [], applyGst: false, paymentStatus: 'paid', paymentMethod: 'Cash', amountPaidNow: undefined, notes: "", entityId: null });
+      form.reset({ date: selectedDate, type: 'sale', entityType: 'customer', entityName: '', items: [], applyGst: false, paymentStatus: 'paid', paymentMethod: 'Cash', amountPaidNow: undefined, notes: null, entityId: null });
       setIsLedgerFormOpen(false);
       setEditingLedgerEntry(null);
       fetchData(selectedDate);
@@ -904,7 +914,7 @@ export default function DailyLedgerPage() {
                                 <FormControl><Input type="number" step="0.01" placeholder="e.g., 500.00" {...field} onChange={e => field.onChange(e.target.value ? parseFloat(e.target.value) : undefined)} value={field.value ?? ""} /></FormControl>
                                 <FormMessage />
                             </FormItem>)} />
-                        <FormItem><FormLabel className="text-sm">Remaining Amount</FormLabel><Input value={formatCurrency(currentRemainingAmount < 0 ? 0 : currentRemainingAmount)} readOnly className="bg-muted/50" /></FormItem>
+                        <FormItem><FormLabel className="text-sm">Remaining Amount</FormLabel><Input value={formatCurrency(currentRemainingAmountForDisplay < 0 ? 0 : currentRemainingAmountForDisplay)} readOnly className="bg-muted/50" /></FormItem>
                     </>
                 )}
 
@@ -1041,6 +1051,7 @@ export default function DailyLedgerPage() {
                               <DropdownMenuItem onClick={() => handleEditLedgerEntry(entry)}>
                                   <Edit className="mr-2 h-4 w-4" /> Edit Entry
                               </DropdownMenuItem>
+                              <DropdownMenuSeparator/>
                               <DropdownMenuItem onClick={() => openDeleteConfirmation(entry)} className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground">
                                   <Trash2 className="mr-2 h-4 w-4" /> Delete Entry
                               </DropdownMenuItem>
@@ -1060,5 +1071,7 @@ export default function DailyLedgerPage() {
   );
 }
 
+
+    
 
     
