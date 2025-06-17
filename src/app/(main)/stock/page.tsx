@@ -36,7 +36,7 @@ export interface StockItem extends Product {
 }
 
 const stockUpdateSchema = z.object({
-  productId: z.string(), 
+  productId: z.string().min(1, "Product ID is required for stock update."), 
   currentStock: z.number(), 
   adjustmentType: z.enum(["set", "add", "subtract"]).default("set"),
   adjustmentValue: z.preprocess(
@@ -84,7 +84,6 @@ export default function StockPage() {
     return "In Stock";
   }, []); 
   
-  // Firestore Index Required: 'products' collection, orderBy 'name' (ASC)
   const fetchStock = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -140,57 +139,73 @@ export default function StockPage() {
   };
 
   const handleUpdateStockSubmit = async (values: StockUpdateFormValues) => {
-    if (!productToUpdateStock) return;
     const currentUser = auth.currentUser;
     if (!currentUser) {
         toast({ title: "Authentication Error", description: "You must be logged in to update stock.", variant: "destructive"});
         return;
     }
 
+    // Use the productToUpdateStock state for original values, but ensure it matches the submitted productId
+    if (!productToUpdateStock || productToUpdateStock.id !== values.productId) {
+        toast({ title: "Data Error", description: "Product information mismatch. Please try again.", variant: "destructive"});
+        return;
+    }
+
+    const originalStock = productToUpdateStock.stock;
+    const productName = productToUpdateStock.name;
+    const productSku = productToUpdateStock.sku;
+
     let finalStock: number;
     if (values.adjustmentType === "set") {
         finalStock = values.adjustmentValue;
     } else if (values.adjustmentType === "add") {
-        finalStock = productToUpdateStock.stock + values.adjustmentValue;
+        finalStock = originalStock + values.adjustmentValue;
     } else { // subtract
-        finalStock = productToUpdateStock.stock - values.adjustmentValue;
+        finalStock = originalStock - values.adjustmentValue;
     }
     if (finalStock < 0) finalStock = 0; 
 
     try {
-      await runTransaction(db, async (transaction) => {
-        // --- READ PHASE ---
-        const productRef = doc(db, "products", productToUpdateStock.id);
-        const productSnap = await transaction.get(productRef);
-        if (!productSnap.exists()) {
-            throw new Error(`Product "${productToUpdateStock.name}" (ID: ${productToUpdateStock.id}) not found during transaction.`);
-        }
-        // Re-calculate finalStock based on fresh data if needed, though `productToUpdateStock.stock` should be recent.
-        // For this simpler manual update, we'll trust the `productToUpdateStock.stock` from the page load.
+      if (!db) {
+        throw new Error("Firestore database instance is not available.");
+      }
+      if (!values.productId) {
+        throw new Error("Product ID is missing in form values for stock update.");
+      }
 
-        // --- WRITE PHASE ---
+      await runTransaction(db, async (transaction) => {
+        const productRef = doc(db, "products", values.productId); // Use productId from form values
+        
+        // Optional: Re-read the product within the transaction to get the absolute latest stock
+        // const productSnap = await transaction.get(productRef);
+        // if (!productSnap.exists()) {
+        //     throw new Error(`Product "${productName}" (ID: ${values.productId}) not found during transaction.`);
+        // }
+        // const currentDbStock = productSnap.data()!.stock;
+        // Recalculate finalStock based on currentDbStock if needed, otherwise use originalStock for this manual adjustment context
+
         transaction.update(productRef, { 
           stock: finalStock,
           updatedAt: serverTimestamp(), 
         });
 
-        const stockMovementLogRef = doc(collection(db, "stockMovements")); // Use doc() to get a new ref
+        const stockMovementLogRef = doc(collection(db, "stockMovements"));
         transaction.set(stockMovementLogRef, {
-          productId: productToUpdateStock.id,
-          productName: productToUpdateStock.name,
-          sku: productToUpdateStock.sku,
-          previousStock: productToUpdateStock.stock, // Stock before this specific adjustment
-          newStock: finalStock, // Stock after this specific adjustment
+          productId: values.productId,
+          productName: productName,
+          sku: productSku,
+          previousStock: originalStock, 
+          newStock: finalStock, 
           adjustmentType: values.adjustmentType,
           adjustmentValue: values.adjustmentValue,
           notes: values.notes || "Manual stock adjustment", 
           timestamp: serverTimestamp(),
           adjustedByUid: currentUser.uid,
-          adjustedByEmail: currentUser.email,
+          adjustedByEmail: currentUser.email || "N/A",
         });
       });
 
-      toast({ title: "Stock Updated Successfully", description: `Stock for ${productToUpdateStock.name} updated to ${finalStock}. Log entry created.` });
+      toast({ title: "Stock Updated Successfully", description: `Stock for ${productName} updated to ${finalStock}. Log entry created.` });
       fetchStock(); 
       setIsUpdateStockDialogOpen(false); 
       setProductToUpdateStock(null);
@@ -328,3 +343,4 @@ export default function StockPage() {
     </>
   );
 }
+
