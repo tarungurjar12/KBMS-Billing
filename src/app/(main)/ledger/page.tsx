@@ -56,7 +56,7 @@ const PAYMENT_STATUSES_LEDGER = ['paid', 'pending', 'partial'] as const;
 
 export interface LedgerEntry {
   id: string; 
-  date: string; 
+  date: string; // ISO Date String
   type: 'sale' | 'purchase';
   entityType: 'customer' | 'seller' | 'unknown_customer' | 'unknown_seller';
   entityId: string | null;
@@ -99,9 +99,9 @@ const baseLedgerEntrySchema = z.object({
   paymentMethod: z.enum(PAYMENT_METHODS_LEDGER).nullable().optional().transform(val => (val === undefined || val === "") ? null : val),
   amountPaidNow: z.preprocess(
     (val) => String(val).trim() === "" ? undefined : parseFloat(String(val).replace(/[^0-9.]+/g, "")),
-    z.number({ invalid_type_error: "Amount paid must be a valid number." }).positive({ message: "Amount paid must be positive if paying." }).optional()
+    z.number({ invalid_type_error: "Amount paid must be a valid number." }).nonnegative({ message: "Amount paid cannot be negative." }).optional()
   ),
-  notes: z.string().optional(), // Made notes truly optional in Zod; conversion to null happens in submit handler
+  notes: z.string().optional(), 
 });
 
 const ledgerEntrySchema = baseLedgerEntrySchema.superRefine((data, ctx) => {
@@ -120,7 +120,7 @@ const ledgerEntrySchema = baseLedgerEntrySchema.superRefine((data, ctx) => {
     if (data.amountPaidNow === undefined || data.amountPaidNow <= 0) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Amount paid now is required for partial payments and must be positive.", path: ["amountPaidNow"] });
     }
-    if (data.amountPaidNow && data.amountPaidNow >= grandTotal && grandTotal > 0) { // Added grandTotal > 0 check to avoid error on 0 total
+    if (data.amountPaidNow && data.amountPaidNow >= grandTotal && grandTotal > 0) { 
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "For partial payment, amount paid must be less than the grand total.", path: ["amountPaidNow"] });
     }
   }
@@ -177,7 +177,7 @@ export default function DailyLedgerPage() {
       items: [], applyGst: false,
       paymentStatus: 'paid', paymentMethod: 'Cash',
       amountPaidNow: undefined,
-      notes: "", // Initialize with empty string for controlled component behavior
+      notes: "", 
       entityId: null,
     },
   });
@@ -190,6 +190,10 @@ export default function DailyLedgerPage() {
   const fetchData = useCallback(async (date: string) => {
     setIsLoading(true);
     try {
+      // Firestore Index Required: 'ledgerEntries' collection, date (ASC), createdAt (DESC)
+      // Firestore Index Required: 'customers' collection, name (ASC)
+      // Firestore Index Required: 'sellers' collection, name (ASC)
+      // Firestore Index Required: 'products' collection, name (ASC)
       const [custSnap, sellSnap, prodSnap, entrySnap] = await Promise.all([
         getDocs(query(collection(db, "customers"), orderBy("name"))),
         getDocs(query(collection(db, "sellers"), orderBy("name"))),
@@ -224,7 +228,7 @@ export default function DailyLedgerPage() {
       if (error.code === 'failed-precondition') {
         toast({
             title: "Database Index Required",
-            description: `A query for ledger data failed. Firestore index 'ledgerEntries' (date ASC, createdAt DESC) likely needed. Check console for exact link.`,
+            description: `A query for ledger data failed. Firestore index 'ledgerEntries' (date ASC, createdAt DESC) or other collection index likely needed. Check console for exact link.`,
             variant: "destructive", duration: 15000,
         });
       } else {
@@ -296,6 +300,7 @@ export default function DailyLedgerPage() {
         form.setValue("entityName", "", { shouldDirty: true });
         form.setValue("amountPaidNow", undefined, { shouldDirty: true });
         form.clearErrors("amountPaidNow");
+        form.clearErrors("paymentMethod");
     }
   }, [transactionTypeWatcher, form, editingLedgerEntry]);
 
@@ -325,6 +330,7 @@ export default function DailyLedgerPage() {
                 form.setValue("paymentMethod", null, { shouldDirty: true });
             }
         }
+        form.clearErrors("paymentMethod");
      }
   }, [entityTypeWatcher, form, editingLedgerEntry]);
 
@@ -345,6 +351,7 @@ export default function DailyLedgerPage() {
             form.setValue("amountPaidNow", undefined, { shouldDirty: true });
             form.clearErrors("amountPaidNow"); 
         }
+        form.clearErrors("paymentMethod"); // Re-validate method when status changes
     }
   }, [shouldShowPaymentMethod, paymentStatusWatcher, form, entityTypeWatcher, editingLedgerEntry]);
 
@@ -404,7 +411,7 @@ export default function DailyLedgerPage() {
         }
     });
     return () => subscription.unsubscribe();
-  }, [form, form.watch]);
+  }, [form]); // form.watch is stable, so form itself is the dependency
 
 
   const itemsWatcher = form.watch("items");
@@ -432,7 +439,8 @@ export default function DailyLedgerPage() {
     const processedData = {
         ...data,
         notes: (data.notes === undefined || data.notes.trim() === "") ? null : data.notes.trim(),
-        // entityId and paymentMethod are already correctly transformed to null by Zod if applicable
+        entityId: data.entityId, // Already null if transformed by Zod
+        paymentMethod: data.paymentMethod, // Already null if transformed by Zod or logic
     };
 
     const subTotal = processedData.items.reduce((sum, item) => sum + ((item.quantity || 0) * (item.unitPrice || 0)), 0);
@@ -448,12 +456,13 @@ export default function DailyLedgerPage() {
     } else if (processedData.paymentStatus === 'partial') {
         amountPaidForEntry = processedData.amountPaidNow || 0; 
         remainingAmountForEntry = grandTotal - amountPaidForEntry;
+        if (remainingAmountForEntry < 0) remainingAmountForEntry = 0;
     } else { 
         amountPaidForEntry = 0;
         remainingAmountForEntry = grandTotal;
     }
 
-    const ledgerDataForSave = {
+    const ledgerDataForSave: Omit<LedgerEntry, 'id' | 'createdAt' | 'updatedAt' | 'associatedPaymentRecordId'> & { createdAt?: any, updatedAt: any, associatedPaymentRecordId?: string | null } = {
       date: processedData.date, type: processedData.type, entityType: processedData.entityType,
       entityId: processedData.entityId, 
       entityName: processedData.entityName, 
@@ -489,15 +498,17 @@ export default function DailyLedgerPage() {
           originalLedgerEntryData = originalLedgerSnap.data() as LedgerEntry;
           originalAssociatedPaymentRecordId = originalLedgerEntryData.associatedPaymentRecordId || null;
 
+          // Revert stock from original items
           for (const item of originalLedgerEntryData.items) {
             const productRef = doc(db, "products", item.productId);
             const productSnap = await transaction.get(productRef);
             if (!productSnap.exists()) throw new Error(`Product ${item.productName} from original entry not found.`);
             const currentDbStock = productSnap.data()!.stock as number;
-            const stockChange = originalLedgerEntryData.type === 'sale' ? item.quantity : -item.quantity;
+            const stockChange = originalLedgerEntryData.type === 'sale' ? item.quantity : -item.quantity; // Add back for sale, subtract for purchase
             const revertedStock = currentDbStock + stockChange;
-            transaction.update(productRef, { stock: revertedStock });
+            transaction.update(productRef, { stock: revertedStock, updatedAt: serverTimestamp() });
             
+            // Log stock movement for revert
             const stockMovementLogRef = doc(collection(db, "stockMovements"));
             transaction.set(stockMovementLogRef, {
                 productId: item.productId, productName: item.productName, sku: productSnap.data()!.sku,
@@ -512,9 +523,10 @@ export default function DailyLedgerPage() {
           ledgerDocRef = doc(collection(db, "ledgerEntries"));
         }
 
+        // Apply stock changes for new/edited items
         for (const item of ledgerDataForSave.items) {
           const productRef = doc(db, "products", item.productId);
-          const productSnap = await transaction.get(productRef);
+          const productSnap = await transaction.get(productRef); // Re-read product for current stock
           if (!productSnap.exists()) throw new Error(`Product ${item.productName} (ID: ${item.productId}) not found.`);
           const currentDbStock = productSnap.data()!.stock as number;
           let newStock = ledgerDataForSave.type === 'sale' ? currentDbStock - item.quantity : currentDbStock + item.quantity;
@@ -526,18 +538,20 @@ export default function DailyLedgerPage() {
           
           transaction.update(productRef, { stock: newStock, updatedAt: serverTimestamp() });
           
+          // Log stock movement for new/edited items
           const stockMovementLogRef = doc(collection(db, "stockMovements"));
           transaction.set(stockMovementLogRef, {
               productId: item.productId, productName: item.productName, sku: productSnap.data()!.sku,
               previousStock: currentDbStock, newStock: newStock,
-              adjustmentType: ledgerDataForSave.type === 'sale' ? 'sale_ledger' : 'purchase_ledger',
+              adjustmentType: ledgerDataForSave.type === 'sale' ? 'sale_ledger_edit' : 'purchase_ledger_edit',
               adjustmentValue: ledgerDataForSave.type === 'sale' ? -item.quantity : item.quantity,
               notes: `Stock ${editingLedgerEntry ? 'updated by edit of' : 'adjusted by'} ledger entry ${ledgerDocRef.id}`,
               timestamp: serverTimestamp(), adjustedByUid: currentUser.uid, adjustedByEmail: currentUser.email,
               ledgerEntryId: ledgerDocRef.id,
           });
         }
-
+        
+        // Delete old payment record if it exists (for edits)
         if (editingLedgerEntry && originalAssociatedPaymentRecordId) {
             const oldPaymentRef = doc(db, "payments", originalAssociatedPaymentRecordId);
             transaction.delete(oldPaymentRef);
@@ -547,13 +561,14 @@ export default function DailyLedgerPage() {
         if (ledgerDataForSave.paymentStatus === 'paid' || ledgerDataForSave.paymentStatus === 'partial') {
           const paymentRecordRef = doc(collection(db, "payments"));
           newAssociatedPaymentRecordId = paymentRecordRef.id;
+          // Ensure PAYMENT_METHODS_PAYMENT_PAGE and PAYMENT_STATUSES_PAYMENT_PAGE are compatible
           const paymentData: Omit<PaymentRecord, 'id' | 'createdAt' | 'updatedAt' | 'displayAmountPaid'> & {createdAt: any, updatedAt?: any, ledgerEntryId: string} = {
             type: ledgerDataForSave.type === 'sale' ? 'customer' : 'supplier',
             relatedEntityName: ledgerDataForSave.entityName,
             relatedEntityId: ledgerDataForSave.entityId || `unknown-${ledgerDataForSave.entityType}-${Date.now()}`,
             relatedInvoiceId: null, 
-            date: format(parseISO(ledgerDataForSave.date), "MMM dd, yyyy"),
-            isoDate: ledgerDataForSave.date,
+            date: format(parseISO(ledgerDataForSave.date), "MMM dd, yyyy"), // Display date
+            isoDate: ledgerDataForSave.date, // ISO date for sorting/querying
             amountPaid: amountPaidForEntry,
             originalInvoiceAmount: grandTotal, 
             remainingBalanceOnInvoice: remainingAmountForEntry,
@@ -648,6 +663,7 @@ export default function DailyLedgerPage() {
             if (!ledgerSnap.exists()) throw new Error("Ledger entry not found for deletion.");
             const entryData = ledgerSnap.data() as LedgerEntry;
 
+            // Revert stock changes
             for (const item of entryData.items) {
                 const productRef = doc(db, "products", item.productId);
                 const productSnap = await transaction.get(productRef);
@@ -655,8 +671,9 @@ export default function DailyLedgerPage() {
                 const currentDbStock = productSnap.data()!.stock as number;
                 const stockChange = entryData.type === 'sale' ? item.quantity : -item.quantity; 
                 const revertedStock = currentDbStock + stockChange;
-                transaction.update(productRef, { stock: revertedStock });
+                transaction.update(productRef, { stock: revertedStock, updatedAt: serverTimestamp() });
 
+                // Log stock movement for revert
                 const stockMovementLogRef = doc(collection(db, "stockMovements"));
                 transaction.set(stockMovementLogRef, {
                     productId: item.productId, productName: item.productName, sku: productSnap.data()!.sku,
@@ -668,15 +685,17 @@ export default function DailyLedgerPage() {
                 });
             }
 
+            // Delete associated payment record if it exists
             if (entryData.associatedPaymentRecordId) {
                 const paymentRef = doc(db, "payments", entryData.associatedPaymentRecordId);
                 transaction.delete(paymentRef);
             }
 
+            // Delete the ledger entry itself
             transaction.delete(ledgerDocRef);
         });
         toast({ title: "Ledger Entry Deleted", description: `Entry ID ${ledgerEntryToDelete.id.substring(0,6)}... and associated records deleted.` });
-        fetchData(selectedDate);
+        fetchData(selectedDate); // Refresh data
     } catch (error: any) {
         console.error("Error deleting ledger entry:", error);
         toast({ title: "Deletion Error", description: error.message || "Failed to delete ledger entry.", variant: "destructive" });
@@ -737,7 +756,7 @@ export default function DailyLedgerPage() {
           if (!isOpen) { 
             setProductSearchTerm(''); 
             setEditingLedgerEntry(null); 
-             // Form reset is handled by useEffect watching isLedgerFormOpen & editingLedgerEntry
+            // Form reset is handled by useEffect watching isLedgerFormOpen & editingLedgerEntry
           }
           setIsLedgerFormOpen(isOpen);
       }}>

@@ -67,7 +67,7 @@ const paymentRecordBaseSchema = z.object({
   type: z.enum(PAYMENT_TYPES, { required_error: "Payment type is required." }),
   relatedEntityName: z.string().min(1, "Entity name is required."),
   relatedEntityId: z.string().min(1, "Entity ID is required."),
-  relatedInvoiceId: z.string().nullable().optional().transform(val => val === "" ? null : val),
+  relatedInvoiceId: z.string().nullable().optional().transform(val => (val === undefined || String(val).trim() === "") ? null : String(val).trim()),
   isoDate: z.string().refine((date) => !isNaN(parseISO(date).valueOf()), { message: "A valid payment date is required." }),
   amountPaid: z.preprocess(
     (val) => parseFloat(String(val).replace(/[^0-9.]+/g, "")),
@@ -77,11 +77,11 @@ const paymentRecordBaseSchema = z.object({
     (val) => (String(val || "").trim() === "" || String(val) === "0" ? null : parseFloat(String(val).replace(/[^0-9.]+/g, ""))),
     z.number().positive({ message: "Original amount must be positive if provided." }).nullable().optional()
   ),
-  method: z.enum(PAYMENT_METHODS).nullable().optional().transform(val => val === "" ? null : val),
-  transactionId: z.string().nullable().optional().transform(val => val === "" ? null : val),
+  method: z.enum(PAYMENT_METHODS).nullable().optional().transform(val => (val === undefined || val === "") ? null : val),
+  transactionId: z.string().nullable().optional().transform(val => (val === undefined || String(val).trim() === "") ? null : String(val).trim()),
   status: z.enum(PAYMENT_STATUSES, { required_error: "Payment status is required." }),
-  notes: z.string().nullable().optional().transform(val => val === "" ? null : val),
-  ledgerEntryId: z.string().nullable().optional(), // For internal linking
+  notes: z.string().nullable().optional().transform(val => (val === undefined || String(val).trim() === "") ? null : String(val).trim()),
+  ledgerEntryId: z.string().nullable().optional().transform(val => (val === undefined || String(val).trim() === "") ? null : String(val).trim()),
 });
 
 // Refined schema to make 'method' required for specific statuses
@@ -146,17 +146,20 @@ export default function PaymentsPage() {
 
 
   useEffect(() => {
-    if (!shouldShowPaymentMethod) {
-      form.setValue("method", null);
-    } else if (shouldShowPaymentMethod && !form.getValues("method")) {
-        form.setValue("method", "Cash"); // Default if shown and empty
+    if (form.formState.isDirty || editingPayment) { // Only run on dirty form or when editing
+        if (!shouldShowPaymentMethod) {
+            form.setValue("method", null, { shouldDirty: true });
+        } else if (shouldShowPaymentMethod && !form.getValues("method")) {
+            form.setValue("method", "Cash", { shouldDirty: true }); // Default if shown and empty
+        }
     }
-  }, [shouldShowPaymentMethod, form]);
+  }, [shouldShowPaymentMethod, form, editingPayment]);
 
   const fetchPaymentsAndMetrics = useCallback(async () => {
     setIsLoading(true);
     setIsLoadingMetrics(true);
     try {
+      // Firestore Index Required: payments collection, isoDate (DESC)
       const q = query(collection(db, "payments"), orderBy("isoDate", "desc"));
       const querySnapshot = await getDocs(q);
       const fetchedPayments = querySnapshot.docs.map(docSnapshot => {
@@ -194,21 +197,24 @@ export default function PaymentsPage() {
       setAllPayments(fetchedPayments);
 
       // Calculate Metrics
-      const todayISOStart = startOfDay(new Date()).toISOString();
-      const todayISOEnd = endOfDay(new Date()).toISOString();
+      const todayISOStart = startOfDay(new Date()).toISOString().split('T')[0];
+      const todayISOEnd = endOfDay(new Date()).toISOString().split('T')[0];
+
 
       let totalReceived = 0, totalPending = 0, totalSent = 0;
       let todayReceived = 0, todayPending = 0, todaySent = 0;
 
       fetchedPayments.forEach(p => {
-        const isToday = p.isoDate >= todayISOStart && p.isoDate <= todayISOEnd;
+        const paymentIsoDateOnly = p.isoDate.split('T')[0];
+        const isToday = paymentIsoDateOnly === todayISOStart; // Simpler date comparison
+
         if (p.type === 'customer') {
           if (p.status === 'Completed' || p.status === 'Received' || p.status === 'Partial') {
             totalReceived += p.amountPaid;
             if (isToday) todayReceived += p.amountPaid;
           }
           if (p.status === 'Pending' || (p.status === 'Partial' && p.remainingBalanceOnInvoice && p.remainingBalanceOnInvoice > 0)) {
-            const pendingAmount = p.remainingBalanceOnInvoice ?? p.originalInvoiceAmount ?? p.amountPaid; // estimate if partial
+            const pendingAmount = p.remainingBalanceOnInvoice ?? p.originalInvoiceAmount ?? p.amountPaid; 
             totalPending += pendingAmount;
             if (isToday) todayPending += pendingAmount;
           }
@@ -255,12 +261,13 @@ export default function PaymentsPage() {
         form.reset({
           ...editingPayment,
           isoDate: editingPayment.isoDate ? editingPayment.isoDate.split('T')[0] : new Date().toISOString().split('T')[0],
-          method: editingPayment.method || null,
-          relatedInvoiceId: editingPayment.relatedInvoiceId || null,
-          transactionId: editingPayment.transactionId || null,
-          notes: editingPayment.notes || null,
-          originalInvoiceAmount: editingPayment.originalInvoiceAmount || null,
-          ledgerEntryId: editingPayment.ledgerEntryId || null,
+          // The Zod schema transforms will handle null conversion for these from the editingPayment object
+          method: editingPayment.method, 
+          relatedInvoiceId: editingPayment.relatedInvoiceId,
+          transactionId: editingPayment.transactionId,
+          notes: editingPayment.notes,
+          originalInvoiceAmount: editingPayment.originalInvoiceAmount,
+          ledgerEntryId: editingPayment.ledgerEntryId,
         });
       } else {
         form.reset({
@@ -277,20 +284,25 @@ export default function PaymentsPage() {
       let remainingBalance = null;
       if (values.status === 'Partial' && values.originalInvoiceAmount && values.amountPaid) {
         remainingBalance = values.originalInvoiceAmount - values.amountPaid;
+         if (remainingBalance < 0) remainingBalance = 0; // Ensure remaining balance is not negative
       }
 
-      const dataToSave: Partial<PaymentRecord> & {updatedAt: any, displayAmountPaid: string, createdAt?: any, remainingBalanceOnInvoice?: number | null} = {
-        ...values,
-        method: values.method || null,
-        notes: values.notes || null,
-        transactionId: values.transactionId || null,
-        relatedInvoiceId: values.relatedInvoiceId || null,
-        originalInvoiceAmount: values.originalInvoiceAmount || null,
-        ledgerEntryId: values.ledgerEntryId || null,
+      // 'values' object is already transformed by Zod, so fields like notes, transactionId etc.,
+      // will be null if they were empty or undefined, due to the updated transforms.
+      const dataToSave: Partial<Omit<PaymentRecord, 'id' | 'date' | 'displayAmountPaid'>> & {updatedAt: any, displayAmountPaid: string, createdAt?: any, remainingBalanceOnInvoice?: number | null} = {
+        ...values, // Spread validated and transformed values
         displayAmountPaid: formatCurrency(values.amountPaid),
         remainingBalanceOnInvoice: remainingBalance,
         updatedAt: serverTimestamp(),
       };
+      
+      // Remove id and date from dataToSave as they are part of PaymentRecord but not what we save directly
+      // (id is doc ID, date is derived from isoDate).
+      // Also, displayAmountPaid is for UI, not storage.
+      // The Omit in type helps, but ensure the object itself is clean.
+      delete (dataToSave as any).id;
+      delete (dataToSave as any).date;
+      
 
       if (editingPayment) {
         const paymentRef = doc(db, "payments", editingPayment.id);
@@ -375,9 +387,15 @@ export default function PaymentsPage() {
                 <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /><span className="sr-only">Actions for payment {payment.id}</span></Button></DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem onClick={() => openEditDialog(payment)}><Edit className="mr-2 h-4 w-4" /> Edit Record</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => handleDeletePayment(payment.id, `${payment.relatedEntityName} - ${payment.displayAmountPaid}`)} className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground">
+                  {/* Ledger-originated payments might be non-deletable or have special handling */}
+                  <DropdownMenuItem 
+                    onClick={() => handleDeletePayment(payment.id, `${payment.relatedEntityName} - ${payment.displayAmountPaid}`)} 
+                    className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground"
+                    disabled={!!payment.ledgerEntryId} // Example: Disable delete if linked to ledger
+                  >
                     <Trash2 className="mr-2 h-4 w-4" /> Delete Record
                   </DropdownMenuItem>
+                  {!!payment.ledgerEntryId && <DropdownMenuItem disabled><span className="text-xs text-muted-foreground">Linked to ledger</span></DropdownMenuItem>}
                 </DropdownMenuContent>
               </DropdownMenu>
             </TableCell>
@@ -430,20 +448,20 @@ export default function PaymentsPage() {
             <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-4 py-2 max-h-[75vh] overflow-y-auto pr-4">
               <FormField control={form.control} name="type" render={({ field }) => (
                 <FormItem><FormLabel>Payment Type</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value}>
+                  <Select onValueChange={field.onChange} value={field.value} disabled={!!editingPayment && !!editingPayment.ledgerEntryId}>
                     <FormControl><SelectTrigger><SelectValue placeholder="Select payment type" /></SelectTrigger></FormControl>
                     <SelectContent>{PAYMENT_TYPES.map(type => <SelectItem key={type} value={type}>{type.charAt(0).toUpperCase() + type.slice(1)} Payment</SelectItem>)}</SelectContent>
                   </Select><FormMessage />
                 </FormItem>)}
               />
-              <FormField control={form.control} name="relatedEntityName" render={({ field }) => (<FormItem><FormLabel>{form.watch("type") === "customer" ? "Customer Name" : "Supplier Name"}</FormLabel><FormControl><Input placeholder={`Enter ${form.watch("type")} name`} {...field} /></FormControl><FormMessage /></FormItem>)} />
-              <FormField control={form.control} name="relatedEntityId" render={({ field }) => (<FormItem><FormLabel>{form.watch("type") === "customer" ? "Customer ID" : "Supplier ID"} (from database)</FormLabel><FormControl><Input placeholder={`Enter ${form.watch("type")} Firestore ID`} {...field} /></FormControl><FormMessage /></FormItem>)} />
-              <FormField control={form.control} name="relatedInvoiceId" render={({ field }) => (<FormItem><FormLabel>Related Invoice/PO/Ledger ID (Optional)</FormLabel><FormControl><Input placeholder="e.g., INV00123 or Ledger ID" {...field} value={field.value ?? ""} /></FormControl><FormMessage /></FormItem>)} />
-              <FormField control={form.control} name="isoDate" render={({ field }) => (<FormItem><FormLabel>Payment Date</FormLabel><FormControl><Input type="date" {...field} /></FormControl><FormMessage /></FormItem>)} />
+              <FormField control={form.control} name="relatedEntityName" render={({ field }) => (<FormItem><FormLabel>{form.watch("type") === "customer" ? "Customer Name" : "Supplier Name"}</FormLabel><FormControl><Input placeholder={`Enter ${form.watch("type")} name`} {...field} readOnly={!!editingPayment && !!editingPayment.ledgerEntryId} /></FormControl><FormMessage /></FormItem>)} />
+              <FormField control={form.control} name="relatedEntityId" render={({ field }) => (<FormItem><FormLabel>{form.watch("type") === "customer" ? "Customer ID" : "Supplier ID"} (from database)</FormLabel><FormControl><Input placeholder={`Enter ${form.watch("type")} Firestore ID`} {...field} readOnly={!!editingPayment && !!editingPayment.ledgerEntryId} /></FormControl><FormMessage /></FormItem>)} />
+              <FormField control={form.control} name="relatedInvoiceId" render={({ field }) => (<FormItem><FormLabel>Related Invoice/PO/Ledger ID (Optional)</FormLabel><FormControl><Input placeholder="e.g., INV00123 or Ledger ID" {...field} value={field.value ?? ""} readOnly={!!editingPayment && !!editingPayment.ledgerEntryId} /></FormControl><FormMessage /></FormItem>)} />
+              <FormField control={form.control} name="isoDate" render={({ field }) => (<FormItem><FormLabel>Payment Date</FormLabel><FormControl><Input type="date" {...field} readOnly={!!editingPayment && !!editingPayment.ledgerEntryId}/></FormControl><FormMessage /></FormItem>)} />
 
               <FormField control={form.control} name="status" render={({ field }) => (
                 <FormItem><FormLabel>Payment Status</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value}>
+                  <Select onValueChange={field.onChange} value={field.value} disabled={!!editingPayment && !!editingPayment.ledgerEntryId}>
                     <FormControl><SelectTrigger><SelectValue placeholder="Select payment status" /></SelectTrigger></FormControl>
                     <SelectContent>{PAYMENT_STATUSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
                   </Select><FormMessage />
@@ -452,7 +470,7 @@ export default function PaymentsPage() {
                {shouldShowPaymentMethod && (
                 <FormField control={form.control} name="method" render={({ field }) => (
                   <FormItem><FormLabel>Payment Method</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value ?? ""}>
+                    <Select onValueChange={field.onChange} value={field.value ?? ""} disabled={!!editingPayment && !!editingPayment.ledgerEntryId}>
                       <FormControl><SelectTrigger><SelectValue placeholder="Select payment method" /></SelectTrigger></FormControl>
                       <SelectContent>{PAYMENT_METHODS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
                     </Select><FormMessage />
@@ -462,13 +480,13 @@ export default function PaymentsPage() {
               {isPartialPayment && (
                 <FormField control={form.control} name="originalInvoiceAmount" render={({ field }) => (
                     <FormItem><FormLabel>Original Invoice Amount (₹)</FormLabel>
-                        <FormControl><Input type="number" step="0.01" placeholder="e.g., 2000.00" {...field} onChange={e => field.onChange(e.target.value ? parseFloat(e.target.value) : null)} value={field.value ?? ""} /></FormControl>
+                        <FormControl><Input type="number" step="0.01" placeholder="e.g., 2000.00" {...field} onChange={e => field.onChange(e.target.value ? parseFloat(e.target.value) : null)} value={field.value ?? ""} readOnly={!!editingPayment && !!editingPayment.ledgerEntryId} /></FormControl>
                         <FormMessage />
                     </FormItem>)} />
               )}
               <FormField control={form.control} name="amountPaid" render={({ field }) => (
                 <FormItem><FormLabel>{isPartialPayment ? "Amount Paid Now (₹)" : "Amount Paid (₹)"}</FormLabel>
-                    <FormControl><Input type="number" step="0.01" placeholder="e.g., 1000.00" {...field} onChange={e => field.onChange(parseFloat(e.target.value) || 0)} /></FormControl>
+                    <FormControl><Input type="number" step="0.01" placeholder="e.g., 1000.00" {...field} onChange={e => field.onChange(parseFloat(e.target.value) || 0)} readOnly={!!editingPayment && !!editingPayment.ledgerEntryId} /></FormControl>
                     <FormMessage />
                 </FormItem>)}
               />
@@ -482,7 +500,7 @@ export default function PaymentsPage() {
               <FormField control={form.control} name="notes" render={({ field }) => (<FormItem><FormLabel>Notes (Optional)</FormLabel><FormControl><Textarea placeholder="Any additional notes about this payment..." {...field} rows={3} value={field.value ?? ""} /></FormControl><FormMessage /></FormItem>)} />
               <DialogFooter className="pt-4 sticky bottom-0 bg-background pb-2 border-t -mx-6 px-6">
                 <DialogClose asChild><Button type="button" variant="outline">Cancel</Button></DialogClose>
-                <Button type="submit" disabled={form.formState.isSubmitting}>
+                <Button type="submit" disabled={form.formState.isSubmitting || (!!editingPayment && !!editingPayment.ledgerEntryId && editingPayment.status !== 'Partial')}>
                   {form.formState.isSubmitting ? (editingPayment ? "Saving Changes..." : "Adding Payment...") : (editingPayment ? "Save Changes" : "Add Payment Record")}
                 </Button>
               </DialogFooter>
@@ -534,3 +552,4 @@ export default function PaymentsPage() {
     </>
   );
 }
+
