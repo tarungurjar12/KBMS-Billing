@@ -467,7 +467,7 @@ export default function DailyLedgerPage() {
         remainingAmountForSave = grandTotal;
     }
 
-    const ledgerDataForSave: Omit<LedgerEntry, 'id' | 'createdAt' | 'updatedAt' | 'associatedPaymentRecordId'> & { createdAt?: any, updatedAt: any, associatedPaymentRecordId?: string | null } = {
+    const ledgerDataForSave: Omit<LedgerEntry, 'id' | 'createdAt' | 'updatedAt' | 'associatedPaymentRecordId'> & {createdAt?: any, updatedAt: any, associatedPaymentRecordId?: string | null } = {
       date: data.date, type: data.type, entityType: data.entityType,
       entityId: data.entityId, 
       entityName: data.entityName, 
@@ -497,7 +497,6 @@ export default function DailyLedgerPage() {
         let originalAssociatedPaymentRecordId: string | null = null;
         
         // --- READ PHASE ---
-        // Read original ledger entry if editing
         if (editingLedgerEntry) {
           ledgerDocRef = doc(db, "ledgerEntries", editingLedgerEntry.id);
           const originalLedgerSnap = await transaction.get(ledgerDocRef);
@@ -508,14 +507,12 @@ export default function DailyLedgerPage() {
           ledgerDocRef = doc(collection(db, "ledgerEntries"));
         }
 
-        // Collect all product IDs involved
         const productIdsInvolved = new Set<string>();
         if (originalLedgerEntryData) {
           originalLedgerEntryData.items.forEach(item => productIdsInvolved.add(item.productId));
         }
         ledgerDataForSave.items.forEach(item => productIdsInvolved.add(item.productId));
 
-        // Read all product documents
         const productSnapshots = new Map<string, DocumentSnapshot<DocumentData>>();
         for (const productId of productIdsInvolved) {
           const productRef = doc(db, "products", productId);
@@ -530,72 +527,82 @@ export default function DailyLedgerPage() {
         }
         // --- END OF READ PHASE ---
 
+        // --- CALCULATION & LOGIC PHASE ---
+        const productStockUpdates: Array<{
+            ref: DocumentReference;
+            newStock: number;
+            previousStock: number; // Stock before this entire transaction's net effect
+            productName: string;
+            sku: string;
+            originalItemEffect: { quantity: number, type: 'sale' | 'purchase' } | null;
+            newItemEffect: { quantity: number, type: 'sale' | 'purchase' } | null;
+        }> = [];
 
-        // --- CALCULATION & LOGIC PHASE (No Firestore reads/writes here) ---
-        const productStockUpdates: { ref: DocumentReference, newStock: number, previousStock: number, adjustmentValue: number, productName: string, sku: string }[] = [];
-
-        // Calculate stock reversions for original items (if editing)
-        if (originalLedgerEntryData) {
-          for (const item of originalLedgerEntryData.items) {
-            const productSnap = productSnapshots.get(item.productId)!;
+        for (const productId of productIdsInvolved) {
+            const productSnap = productSnapshots.get(productId)!;
+            if (!productSnap || !productSnap.exists()) { // Should not happen due to earlier check, but defensive
+                throw new Error(`Product snapshot for ${productId} unexpectedly missing during calculation.`);
+            }
             const currentDbStock = productSnap.data()!.stock as number;
-            const stockChange = originalLedgerEntryData.type === 'sale' ? item.quantity : -item.quantity;
-            const revertedStock = currentDbStock + stockChange;
-            // We don't push to productStockUpdates yet, as this is just a reversion.
-            // The new stock application below will handle the final update.
-            // We need to ensure the *currentDbStock for new calculations reflects this reversion*
-            // OR, better, calculate net change.
+            const productName = productSnap.data()!.name as string;
+            const sku = productSnap.data()!.sku as string;
+            let calculatedNewStock = currentDbStock; // Start with stock as read from DB
 
-            // For simplicity in the final write, let's just adjust the stock on the snapshot we have
-             productSnapshots.set(item.productId, {
-                ...productSnap,
-                data: () => ({ ...productSnap.data(), stock: revertedStock })
-            } as DocumentSnapshot<DocumentData>);
+            const originalItem = originalLedgerEntryData?.items.find(i => i.productId === productId);
+            const newItem = ledgerDataForSave.items.find(i => i.productId === productId);
+            
+            let originalItemEffectLog = null;
+            let newItemEffectLog = null;
 
-            // Log the reversion part of the edit
-            const stockMovementLogRef = doc(collection(db, "stockMovements"));
-            transaction.set(stockMovementLogRef, {
-                productId: item.productId, productName: item.productName, sku: productSnap.data()!.sku,
-                previousStock: currentDbStock, newStock: revertedStock,
-                adjustmentType: 'revert_ledger_edit_item', adjustmentValue: stockChange,
-                notes: `Stock for ${item.productName} reverted due to edit of ledger entry ${ledgerDocRef.id}`,
-                timestamp: serverTimestamp(), adjustedByUid: currentUser.uid, adjustedByEmail: currentUser.email || "N/A",
-                ledgerEntryId: ledgerDocRef.id,
-            });
-          }
-        }
-        
-        // Calculate new stock levels for items in the current form data
-        for (const item of ledgerDataForSave.items) {
-          const productSnap = productSnapshots.get(item.productId)!; // Should exist from pre-fetch
-          // If editing, currentDbStock is the *reverted* stock from above. If new, it's the fresh stock.
-          const currentDbStock = productSnap.data()!.stock as number; 
-          
-          let newStock = ledgerDataForSave.type === 'sale' ? currentDbStock - item.quantity : currentDbStock + item.quantity;
-          if (ledgerDataForSave.type === 'sale' && newStock < 0) {
-             throw new Error(`Insufficient stock for ${item.productName}. Available after potential reversion: ${currentDbStock}, Requested: ${item.quantity}.`);
-          }
-          if (newStock < 0 && ledgerDataForSave.type === 'sale') newStock = 0;
+            // Step 1: If editing, calculate the stock that needs to be "returned" or "taken back"
+            // This effectively undoes the original transaction's impact on this product's stock.
+            if (editingLedgerEntry && originalItem && originalLedgerEntryData) {
+                const quantityToRevert = originalLedgerEntryData.type === 'sale' 
+                    ? originalItem.quantity  // If original was a sale, add quantity back
+                    : -originalItem.quantity; // If original was a purchase, subtract quantity
+                calculatedNewStock += quantityToRevert;
+                originalItemEffectLog = { quantity: originalItem.quantity, type: originalLedgerEntryData.type };
+            }
 
-          productStockUpdates.push({ 
-            ref: productSnap.ref, newStock: newStock, 
-            previousStock: currentDbStock, // Stock before this item's application
-            adjustmentValue: ledgerDataForSave.type === 'sale' ? -item.quantity : item.quantity,
-            productName: item.productName,
-            sku: productSnap.data()!.sku
-          });
+            // Step 2: Apply the stock change for the new/current item details
+            if (newItem) {
+                const quantityToApply = ledgerDataForSave.type === 'sale'
+                    ? -newItem.quantity // If new is a sale, subtract quantity
+                    : newItem.quantity;  // If new is a purchase, add quantity
+                calculatedNewStock += quantityToApply;
+                newItemEffectLog = { quantity: newItem.quantity, type: ledgerDataForSave.type };
+            }
+
+            if (calculatedNewStock < 0) {
+                 throw new Error(`Insufficient stock for ${productName}. Final stock would be ${calculatedNewStock}.`);
+            }
+            
+            // Add to productStockUpdates if the stock level actually changes OR if it's a new entry with items
+            if (calculatedNewStock !== currentDbStock || (!editingLedgerEntry && newItem)) {
+                 if (!productSnap.ref || !productSnap.ref.firestore) { // Check the ref from original snapshot
+                    console.error("CRITICAL: Invalid product reference from original snapshot", productSnap.ref);
+                    throw new Error(`Invalid product reference for ${productName} from original snapshot.`);
+                }
+                productStockUpdates.push({
+                    ref: productSnap.ref, // Use the ref from the original, valid snapshot
+                    newStock: calculatedNewStock,
+                    previousStock: currentDbStock,
+                    productName,
+                    sku,
+                    originalItemEffect: originalItemEffectLog,
+                    newItemEffect: newItemEffectLog,
+                });
+            }
         }
         // --- END OF CALCULATION PHASE ---
 
 
         // --- WRITE PHASE ---
-        // Delete old payment record (if editing and one existed)
         if (editingLedgerEntry && originalAssociatedPaymentRecordId) {
             const oldPaymentRef = doc(db, "payments", originalAssociatedPaymentRecordId);
             transaction.delete(oldPaymentRef);
         }
         
-        // Create new payment record if needed
         let newAssociatedPaymentRecordId: string | null = null;
         if (ledgerDataForSave.paymentStatus === 'paid' || ledgerDataForSave.paymentStatus === 'partial') {
           const paymentRecordRef = doc(collection(db, "payments"));
@@ -621,23 +628,36 @@ export default function DailyLedgerPage() {
           transaction.set(paymentRecordRef, paymentData);
         }
 
-        // Update product stocks and log movements
         for (const pu of productStockUpdates) {
+            if (!pu.ref || !pu.ref.firestore) { 
+                console.error("CRITICAL: Invalid product reference in productStockUpdates before transaction.update", pu);
+                throw new Error(`Invalid product reference for ${pu.productName} (SKU: ${pu.sku}) during stock update. Ref: ${JSON.stringify(pu.ref)}`);
+            }
             transaction.update(pu.ref, { stock: pu.newStock, updatedAt: serverTimestamp() });
             
             const stockMovementLogRef = doc(collection(db, "stockMovements"));
+            let notesForLog = `Stock for ${pu.productName} (SKU: ${pu.sku}) `;
+            notesForLog += editingLedgerEntry ? `updated by edit of ledger ID ${ledgerDocRef.id}.` : `adjusted by new ledger ID ${ledgerDocRef.id}.`;
+            if (editingLedgerEntry && pu.originalItemEffect) {
+                notesForLog += ` Original: ${pu.originalItemEffect.type} of ${pu.originalItemEffect.quantity}.`;
+            }
+            if (pu.newItemEffect) {
+                notesForLog += ` Current: ${pu.newItemEffect.type} of ${pu.newItemEffect.quantity}.`;
+            }
+
             transaction.set(stockMovementLogRef, {
                 productId: pu.ref.id, productName: pu.productName, sku: pu.sku,
                 previousStock: pu.previousStock, newStock: pu.newStock,
-                adjustmentType: ledgerDataForSave.type === 'sale' ? 'sale_ledger_entry' : 'purchase_ledger_entry',
-                adjustmentValue: pu.adjustmentValue,
-                notes: `Stock ${editingLedgerEntry ? 'updated by edit of' : 'adjusted by'} ledger entry ${ledgerDocRef.id}`,
+                adjustmentType: editingLedgerEntry 
+                    ? (pu.newItemEffect ? `ledger_edit_${pu.newItemEffect.type}` : 'ledger_edit_reversion_only') 
+                    : (pu.newItemEffect ? `ledger_new_${pu.newItemEffect.type}` : 'ledger_new_item_missing'),
+                adjustmentValue: pu.newStock - pu.previousStock,
+                notes: notesForLog.trim(),
                 timestamp: serverTimestamp(), adjustedByUid: currentUser.uid, adjustedByEmail: currentUser.email || "N/A",
                 ledgerEntryId: ledgerDocRef.id,
             });
         }
         
-        // Set/Update ledger entry
         const finalLedgerDataToCommit = {
             ...ledgerDataForSave,
             associatedPaymentRecordId: newAssociatedPaymentRecordId,
@@ -720,11 +740,9 @@ export default function DailyLedgerPage() {
             const entryData = ledgerSnap.data() as LedgerEntry;
 
             // --- READ PHASE ---
-            // Collect all product IDs
             const productIdsInvolved = new Set<string>();
             entryData.items.forEach(item => productIdsInvolved.add(item.productId));
 
-            // Read all product documents
             const productSnapshots = new Map<string, DocumentSnapshot<DocumentData>>();
             for (const productId of productIdsInvolved) {
                 const productRef = doc(db, "products", productId);
@@ -737,6 +755,10 @@ export default function DailyLedgerPage() {
             // --- WRITE PHASE ---
             for (const item of entryData.items) {
                 const productSnap = productSnapshots.get(item.productId)!;
+                if (!productSnap.ref || !productSnap.ref.firestore) {
+                     console.error("CRITICAL: Invalid product reference during delete for product", item.productName, productSnap.ref);
+                     throw new Error(`Invalid product reference for ${item.productName} during ledger delete.`);
+                }
                 const currentDbStock = productSnap.data()!.stock as number;
                 const stockChange = entryData.type === 'sale' ? item.quantity : -item.quantity; 
                 const revertedStock = currentDbStock + stockChange;
