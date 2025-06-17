@@ -229,7 +229,7 @@ export default function ManageSellersPage() {
     </>
   );
 
-  if (isLoading) {
+  if (isLoading && sellers.length === 0) {
     return <PageHeader title="Manage Sellers/Suppliers" description="Loading seller data from database..." icon={Truck} />;
   }
 
@@ -291,7 +291,16 @@ export default function ManageSellersPage() {
           <CardDescription>A list of all registered sellers and suppliers from Firestore, ordered by name.</CardDescription>
         </CardHeader>
         <CardContent>
-          {sellers.length > 0 ? (
+          {isLoading && sellers.length === 0 ? (
+            <div className="text-center py-10 text-muted-foreground">Loading sellers...</div>
+          ) : !isLoading && sellers.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-10 text-center">
+                <FileWarning className="h-16 w-16 text-muted-foreground mb-4" />
+                <p className="text-xl font-semibold text-muted-foreground">No Sellers Found</p>
+                <p className="text-sm text-muted-foreground mb-6">Add your first seller or supplier to the database.</p>
+                <Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add New Seller/Supplier</Button>
+            </div>
+          ) : (
             <Table>
                 <TableHeader><TableRow>
                     <TableHead>Name</TableHead>
@@ -324,16 +333,10 @@ export default function ManageSellersPage() {
                     ))}
                 </TableBody>
             </Table>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-10 text-center">
-                <FileWarning className="h-16 w-16 text-muted-foreground mb-4" />
-                <p className="text-xl font-semibold text-muted-foreground">No Sellers Found</p>
-                <p className="text-sm text-muted-foreground mb-6">Add your first seller or supplier to the database.</p>
-                <Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add New Seller/Supplier</Button>
-            </div>
           )}
         </CardContent>
       </Card>
     </>
   );
 }
+

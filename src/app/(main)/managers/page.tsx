@@ -226,7 +226,7 @@ export default function ManageManagersPage() {
     }
   };
 
-  if (isLoading) {
+  if (isLoading && managers.length === 0) {
     return <PageHeader title="Manage Managers" description="Loading manager data from database..." icon={UserCog} />;
   }
 
@@ -335,7 +335,18 @@ export default function ManageManagersPage() {
           <CardDescription>A list of all store managers and their account status from Firestore.</CardDescription>
         </CardHeader>
         <CardContent>
-          {managers.length > 0 ? (
+          {isLoading && managers.length === 0 ? (
+            <div className="text-center py-10 text-muted-foreground">Loading managers...</div>
+          ) : !isLoading && managers.length === 0 ? ( 
+            <div className="flex flex-col items-center justify-center py-10 text-center">
+                <UsersIcon className="h-16 w-16 text-muted-foreground mb-4" />
+                <p className="text-xl font-semibold text-muted-foreground">No Managers Found</p>
+                <p className="text-sm text-muted-foreground mb-6">Create manager accounts to grant access to store operations.</p>
+                <Button onClick={() => { form.reset(); setIsAddManagerDialogOpen(true); }}>
+                    <PlusCircle className="mr-2 h-4 w-4" /> Add New Manager
+                </Button>
+            </div>
+          ) : (
             <Table>
               <TableHeader>
                 <TableRow>
@@ -381,18 +392,10 @@ export default function ManageManagersPage() {
                 ))}
               </TableBody>
             </Table>
-          ) : ( 
-            <div className="flex flex-col items-center justify-center py-10 text-center">
-                <UsersIcon className="h-16 w-16 text-muted-foreground mb-4" />
-                <p className="text-xl font-semibold text-muted-foreground">No Managers Found</p>
-                <p className="text-sm text-muted-foreground mb-6">Create manager accounts to grant access to store operations.</p>
-                <Button onClick={() => { form.reset(); setIsAddManagerDialogOpen(true); }}>
-                    <PlusCircle className="mr-2 h-4 w-4" /> Add New Manager
-                </Button>
-            </div>
           )}
         </CardContent>
       </Card>
     </>
   );
 }
+

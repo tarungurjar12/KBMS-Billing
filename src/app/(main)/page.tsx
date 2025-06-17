@@ -6,10 +6,10 @@ import { PageHeader } from "@/components/page-header";
 import { DollarSign, Users, FileText, PackageMinus, LayoutDashboard, Package, BarChart3, TrendingUp, AlertCircle, Activity, UserCog } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { collection, getDocs, query, where, limit, orderBy, Timestamp, getCountFromServer, parseDate } from 'firebase/firestore';
+import { collection, getDocs, query, where, limit, orderBy, Timestamp, getCountFromServer } from 'firebase/firestore'; // Removed parseDate as it's not used
 import { db } from '@/lib/firebase/firebaseConfig';
 import { useEffect, useState, useCallback } from 'react';
-import { format, startOfDay, endOfDay, parseISO } from 'date-fns';
+import { format, parseISO } from 'date-fns'; // Removed startOfDay, endOfDay as they are not used for this dashboard version
 import { useToast } from "@/hooks/use-toast";
 import type { PaymentRecord } from './payments/page'; 
 
@@ -46,6 +46,7 @@ export default function AdminDashboardPage() {
   ]);
   const [recentSales, setRecentSales] = useState<any[]>([]);
   const [isLoadingSalesChart, setIsLoadingSalesChart] = useState(true);
+  const [isLoadingMetrics, setIsLoadingMetrics] = useState(true); // For overall metric loading
 
   const LOW_STOCK_THRESHOLD = 50;
   const formatCurrency = (num: number): string => `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -58,6 +59,7 @@ export default function AdminDashboardPage() {
       );
     };
 
+    setIsLoadingMetrics(true); // Start loading all metrics
     setMetrics(prevMetrics => prevMetrics.map(m => ({ ...m, isLoading: true })));
     setIsLoadingSalesChart(true);
 
@@ -118,9 +120,11 @@ export default function AdminDashboardPage() {
       } else {
         toast({ title: "Dashboard Load Error", description: "Could not load some dashboard metrics. Please try again later.", variant: "destructive" });
       }
+      // Ensure all metrics are marked as not loading on error
       setMetrics(prevMetrics => prevMetrics.map(m => ({ ...m, value: m.isLoading ? "Error" : m.value, isLoading: false })));
     } finally {
-       setMetrics(prevMetrics => prevMetrics.map(m => ({...m, isLoading: false})));
+       setMetrics(prevMetrics => prevMetrics.map(m => ({...m, isLoading: false}))); // Mark all as not loading
+       setIsLoadingMetrics(false); // Overall metric loading done
       setIsLoadingSalesChart(false);
     }
   }, [toast]);
@@ -161,6 +165,16 @@ export default function AdminDashboardPage() {
             ) : recentSales.length > 0 ? (
               <div className="h-64 flex items-center justify-center bg-muted/20 dark:bg-muted/10 rounded-md border border-dashed">
                 <p className="text-muted-foreground p-4 text-center">Sales chart data loaded ({recentSales.length} entries). Actual chart component to be implemented here using Recharts or similar.</p>
+                 {/* Placeholder for future chart implementation. Example:
+                <ResponsiveContainer width="100%" height={250}>
+                  <BarChart data={recentSales}>
+                    <XAxis dataKey="name" stroke="#888888" fontSize={12} tickLine={false} axisLine={false}/>
+                    <YAxis stroke="#888888" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(value) => `₹${value / 1000}k`}/>
+                    <Tooltip formatter={(value) => [formatCurrency(value as number), "Sales"]} />
+                    <Bar dataKey="uv" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+                */}
               </div>
             ) : (
               <div className="h-64 flex flex-col items-center justify-center bg-muted/30 rounded-md border border-dashed">
@@ -203,3 +217,4 @@ export default function AdminDashboardPage() {
     </>
   );
 }
+

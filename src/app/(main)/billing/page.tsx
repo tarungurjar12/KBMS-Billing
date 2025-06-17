@@ -11,7 +11,7 @@ import { FileText, PlusCircle, MoreHorizontal, Download, Printer, Edit, Eye, Tra
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
-import { collection, getDocs, doc, updateDoc, deleteDoc, query, orderBy, Timestamp, serverTimestamp } from 'firebase/firestore'; 
+import { collection, getDocs, doc, updateDoc, deleteDoc, query, orderBy, Timestamp, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase/firebaseConfig';
 import { format, parseISO } from 'date-fns';
 
@@ -89,24 +89,30 @@ export default function BillingPage() {
       const querySnapshot = await getDocs(q);
       const fetchedInvoices = querySnapshot.docs.map(docSnapshot => {
         const data = docSnapshot.data();
-        let invoiceDate = "";
+        let invoiceDate = "Date N/A";
+        let finalIsoDate = new Date().toISOString(); // Default for sorting if all else fails
+
         if (data.isoDate) {
             if (typeof data.isoDate === 'string') {
                  try {
                     invoiceDate = format(parseISO(data.isoDate), "MMM dd, yyyy"); 
+                    finalIsoDate = data.isoDate;
                 } catch (e) {
                     console.warn("Invalid isoDate string format:", data.isoDate, e);
                     invoiceDate = "Invalid Date";
+                    // Try createdAt as fallback for finalIsoDate if isoDate parse fails
+                    if (data.createdAt instanceof Timestamp) finalIsoDate = data.createdAt.toDate().toISOString();
                 }
             } else if (data.isoDate instanceof Timestamp) {
                 invoiceDate = format(data.isoDate.toDate(), "MMM dd, yyyy");
+                finalIsoDate = data.isoDate.toDate().toISOString();
             } else {
                  invoiceDate = "Unknown Date"; 
+                 if (data.createdAt instanceof Timestamp) finalIsoDate = data.createdAt.toDate().toISOString();
             }
         } else if (data.createdAt instanceof Timestamp) { // Fallback to createdAt if isoDate is missing
             invoiceDate = format(data.createdAt.toDate(), "MMM dd, yyyy");
-        } else {
-            invoiceDate = "Date N/A";
+            finalIsoDate = data.createdAt.toDate().toISOString();
         }
 
         return {
@@ -115,7 +121,7 @@ export default function BillingPage() {
           customerName: data.customerName || 'N/A',
           customerId: data.customerId || '',
           date: invoiceDate,
-          isoDate: typeof data.isoDate === 'string' ? data.isoDate : (data.isoDate instanceof Timestamp ? data.isoDate.toDate().toISOString() : new Date().toISOString()),
+          isoDate: finalIsoDate,
           totalAmount: data.totalAmount || data.grandTotal || 0, 
           displayTotal: formatCurrency(data.totalAmount || data.grandTotal || 0),
           status: data.status || 'Pending',
@@ -216,7 +222,7 @@ export default function BillingPage() {
     }
   };
 
-  if (isLoading) {
+  if (isLoading && invoices.length === 0) { // Show loading header only if no data yet
     return <PageHeader title="Billing & Invoicing" description="Loading invoices from database..." icon={FileText} />;
   }
 
@@ -239,7 +245,18 @@ export default function BillingPage() {
           <CardDescription>A list of all generated invoices, fetched from Firestore. Most recent first.</CardDescription>
         </CardHeader>
         <CardContent>
-          {invoices.length > 0 ? (
+          {isLoading && invoices.length === 0 ? (
+             <div className="text-center py-10 text-muted-foreground">Loading invoices...</div>
+          ) : !isLoading && invoices.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-10 text-center">
+                <AlertCircle className="h-16 w-16 text-muted-foreground mb-4" />
+                <p className="text-xl font-semibold text-muted-foreground">No Invoices Found</p>
+                <p className="text-sm text-muted-foreground mb-6">It seems there are no invoices in the database yet.</p>
+                <Button onClick={handleCreateNewInvoice}>
+                    <PlusCircle className="mr-2 h-4 w-4" /> Create First Invoice
+                </Button>
+            </div>
+          ) : (
             <Table>
               <TableHeader>
                 <TableRow>
@@ -307,15 +324,6 @@ export default function BillingPage() {
                 ))}
               </TableBody>
             </Table>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-10 text-center">
-                <AlertCircle className="h-16 w-16 text-muted-foreground mb-4" />
-                <p className="text-xl font-semibold text-muted-foreground">No Invoices Found</p>
-                <p className="text-sm text-muted-foreground mb-6">It seems there are no invoices in the database yet.</p>
-                <Button onClick={handleCreateNewInvoice}>
-                    <PlusCircle className="mr-2 h-4 w-4" /> Create First Invoice
-                </Button>
-            </div>
           )}
         </CardContent>
       </Card>

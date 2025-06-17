@@ -17,7 +17,7 @@ import { z } from "zod";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { collection, getDocs, doc, updateDoc, query, orderBy, serverTimestamp, addDoc, Timestamp, runTransaction } from 'firebase/firestore';
-import type { DocumentSnapshot, DocumentData } from 'firebase/firestore';
+import type { DocumentReference, DocumentSnapshot, DocumentData } from 'firebase/firestore';
 import { db, auth } from '@/lib/firebase/firebaseConfig';
 import type { Product } from './../products/page';
 
@@ -168,20 +168,17 @@ export default function StockPage() {
       if (!db) {
         throw new Error("Firestore database instance is not available.");
       }
-      // values.productId is guaranteed by Zod schema to be a non-empty string here
 
       await runTransaction(db, async (transaction) => {
-        if (!values.productId || typeof values.productId !== 'string' || values.productId.trim() === '') {
-            console.error("CRITICAL: Invalid productId in transaction despite Zod:", values.productId);
-            throw new Error(`Critical: Invalid Product ID in transaction: "${values.productId}".`);
-        }
-
         const productRef = doc(db, "products", values.productId);
-
-        if (!productRef || !productRef.firestore) { // Explicit check for valid DocumentReference
-            console.error("Invalid productRef created in transaction:", productRef, "for productId:", values.productId);
-            throw new Error("Failed to create a valid document reference for the product in the transaction.");
+        if (!productRef || !productRef.firestore) { 
+            console.error("CRITICAL: Invalid productRef in transaction for productId:", values.productId, productRef);
+            throw new Error(`Critical: Invalid Product Reference for ID "${values.productId}" in transaction.`);
         }
+        
+        // Although we have productToUpdateStock.stock, it's safer to read within transaction for current value if many users operate.
+        // However, for this specific manual adjustment, using productToUpdateStock.stock (which was recently fetched) is acceptable.
+        // For maximum safety in a highly concurrent system, one might re-fetch productSnap here.
 
         transaction.update(productRef, {
           stock: finalStock,
@@ -215,7 +212,7 @@ export default function StockPage() {
     }
   };
 
-  if (isLoading) {
+  if (isLoading && stockList.length === 0) {
     return <PageHeader title="Inventory Levels" description="Loading inventory data from database..." icon={Boxes} />;
   }
 
@@ -288,7 +285,17 @@ export default function StockPage() {
           </div>
         </CardHeader>
         <CardContent>
-          {filteredStockItems.length > 0 ? (
+          {isLoading && filteredStockItems.length === 0 ? (
+             <div className="text-center py-10 text-muted-foreground">Loading stock levels...</div>
+          ) : !isLoading && filteredStockItems.length === 0 ? (
+             <div className="flex flex-col items-center justify-center py-10 text-center">
+                <FileWarning className="h-16 w-16 text-muted-foreground mb-4" />
+                <p className="text-xl font-semibold text-muted-foreground">No Products Found</p>
+                <p className="text-sm text-muted-foreground mb-6">
+                    {searchTerm ? `No products found matching "${searchTerm}".` : "The product database appears to be empty."}
+                </p>
+             </div>
+           ) : (
             <Table>
               <TableHeader><TableRow>
                   <TableHead className="w-[60px] sm:w-[80px]">Image</TableHead><TableHead>Product Name</TableHead>
@@ -328,14 +335,6 @@ export default function StockPage() {
                 ))}
               </TableBody>
             </Table>
-          ) : (
-             <div className="flex flex-col items-center justify-center py-10 text-center">
-                <FileWarning className="h-16 w-16 text-muted-foreground mb-4" />
-                <p className="text-xl font-semibold text-muted-foreground">No Products Found</p>
-                <p className="text-sm text-muted-foreground mb-6">
-                    {searchTerm ? `No products found matching "${searchTerm}".` : "The product database appears to be empty."}
-                </p>
-             </div>
            )}
         </CardContent>
       </Card>

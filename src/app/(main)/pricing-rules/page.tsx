@@ -199,7 +199,7 @@ export default function PricingRulesPage() {
     }
   };
 
-  if (isLoading) {
+  if (isLoading && pricingRules.length === 0) {
     return <PageHeader title="Pricing Rules Engine" description="Loading pricing rules from database..." icon={SlidersHorizontal} />;
   }
 
@@ -298,7 +298,16 @@ export default function PricingRulesPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {pricingRules.length > 0 ? (
+      {isLoading && pricingRules.length === 0 ? (
+         <div className="text-center py-10 text-muted-foreground">Loading pricing rules...</div>
+      ): !isLoading && pricingRules.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-10 text-center">
+            <FileWarning className="h-16 w-16 text-muted-foreground mb-4" />
+            <p className="text-xl font-semibold text-muted-foreground mb-2">No Pricing Rules Yet</p>
+            <p className="text-sm text-muted-foreground mb-6">Get started by defining your first pricing rule to automate discounts or special prices.</p>
+            <Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add New Pricing Rule</Button>
+        </div>
+      ) : (
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {pricingRules.map((rule) => (
             <Card key={rule.id} className="shadow-lg rounded-xl flex flex-col justify-between hover:shadow-primary/10 transition-shadow">
@@ -345,14 +354,8 @@ export default function PricingRulesPage() {
                 </Card>
             )}
         </div>
-       ) : (
-        <div className="flex flex-col items-center justify-center py-10 text-center">
-            <FileWarning className="h-16 w-16 text-muted-foreground mb-4" />
-            <p className="text-xl font-semibold text-muted-foreground mb-2">No Pricing Rules Yet</p>
-            <p className="text-sm text-muted-foreground mb-6">Get started by defining your first pricing rule to automate discounts or special prices.</p>
-            <Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add New Pricing Rule</Button>
-        </div>
-      )}
+       )}
     </>
   );
 }
+

@@ -50,6 +50,9 @@ export default function StoreManagerDashboardPage() {
     { title: "Pending Bills (Yours)", value: "0", icon: ReceiptText, description: "Your bills awaiting payment.", dataAiHint: "payment money", isLoading: true, link: "/billing?status=Pending&manager=me"},
     { title: "Reported Product Issues", value: "0", icon: AlertTriangle, description: "Issues you've reported (active).", dataAiHint: "alert inventory", isLoading: true, link: "/view-products-stock" },
   ]);
+  const [isLoadingMetrics, setIsLoadingMetrics] = useState(true);
+  const [isLoadingActivity, setIsLoadingActivity] = useState(true);
+
 
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged((user) => { setCurrentUser(user); });
@@ -61,6 +64,8 @@ export default function StoreManagerDashboardPage() {
     if (!currentUser) {
       setMetrics(prevMetrics => prevMetrics.map(m => ({ ...m, isLoading: false, value: "N/A" })));
       setRecentActivity([]);
+      setIsLoadingMetrics(false);
+      setIsLoadingActivity(false);
       return;
     }
 
@@ -69,7 +74,9 @@ export default function StoreManagerDashboardPage() {
         prevMetrics.map(m => m.title === title ? { ...m, ...newValue, isLoading: false } : m)
       );
     };
-
+    
+    setIsLoadingMetrics(true);
+    setIsLoadingActivity(true);
     setMetrics(prevMetrics => prevMetrics.map(m => ({ ...m, isLoading: true })));
     setRecentActivity([]);
 
@@ -145,6 +152,8 @@ export default function StoreManagerDashboardPage() {
       if (recentActivity.length === 0) setRecentActivity(["Failed to load recent activity."]);
     } finally {
         setMetrics(prevMetrics => prevMetrics.map(m => ({...m, isLoading: false})));
+        setIsLoadingMetrics(false);
+        setIsLoadingActivity(false);
     }
   }, [currentUser, toast]);
 
@@ -199,17 +208,18 @@ export default function StoreManagerDashboardPage() {
              <CardDescription>Latest interactions and tasks performed by you.</CardDescription>
           </CardHeader>
           <CardContent>
-             {metrics.some(m => m.isLoading) && recentActivity.length === 0 && !currentUser ? ( 
-                <div className="h-48 flex flex-col items-center justify-center bg-muted/30 rounded-md border border-dashed">
-                    <Activity className="h-10 w-10 text-muted-foreground animate-spin mb-2" />
-                    <p className="text-muted-foreground">Loading data...</p>
-                </div>
-             ) : metrics.some(m => m.isLoading) && recentActivity.length === 0 && currentUser ? ( 
+             {isLoadingActivity && recentActivity.length === 0 ? ( 
                 <div className="h-48 flex flex-col items-center justify-center bg-muted/30 rounded-md border border-dashed">
                     <Activity className="h-10 w-10 text-muted-foreground animate-spin mb-2" />
                     <p className="text-muted-foreground">Loading recent activity...</p>
                 </div>
-             ) : recentActivity.length > 0 ? (
+             ) : !isLoadingActivity && recentActivity.length === 0 ? (
+                <div className="h-48 flex flex-col items-center justify-center bg-muted/30 rounded-md border border-dashed">
+                    <AlertCircle className="h-10 w-10 text-muted-foreground mb-2" />
+                    <p className="text-muted-foreground font-semibold">No Recent Activity</p>
+                    <p className="text-sm text-muted-foreground">You haven&apos;t performed any actions recently.</p>
+                </div>
+             ) : (
                 <ul className="space-y-2">
                     {recentActivity.map((activity, index) => (
                         <li key={index} className="text-sm text-muted-foreground p-3 border-b last:border-b-0 hover:bg-muted/30 rounded-md transition-colors">
@@ -217,12 +227,6 @@ export default function StoreManagerDashboardPage() {
                         </li>
                     ))}
                 </ul>
-             ) : (
-                <div className="h-48 flex flex-col items-center justify-center bg-muted/30 rounded-md border border-dashed">
-                    <AlertCircle className="h-10 w-10 text-muted-foreground mb-2" />
-                    <p className="text-muted-foreground font-semibold">No Recent Activity</p>
-                    <p className="text-sm text-muted-foreground">You haven&apos;t performed any actions recently, or data is still loading.</p>
-                </div>
              )}
           </CardContent>
         </Card>
@@ -230,3 +234,4 @@ export default function StoreManagerDashboardPage() {
     </>
   );
 }
+

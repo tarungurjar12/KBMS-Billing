@@ -37,13 +37,13 @@ export interface Product {
   name: string;
   sku: string; // Stock Keeping Unit
   description?: string | null; 
-  price: string; 
-  numericPrice: number; 
+  price: string; // Formatted display price
+  numericPrice: number; // Actual price for calculations
   stock: number; 
   category: string; 
   unitOfMeasure: string; 
-  imageUrl: string; 
-  dataAiHint: string; 
+  imageUrl: string; // URL for placeholder image
+  dataAiHint: string; // Keywords for image search/generation for placeholder
   createdAt?: Timestamp; 
   updatedAt?: Timestamp; 
 }
@@ -207,7 +207,7 @@ export default function ProductsPage() {
     }
   };
 
-  if (isLoading) {
+  if (isLoading && productList.length === 0) {
     return <PageHeader title="Product Database" description="Loading product data from database..." icon={Package} />;
   }
 
@@ -285,7 +285,16 @@ export default function ProductsPage() {
       <Card className="shadow-lg rounded-xl">
         <CardHeader><CardTitle className="font-headline text-foreground">Product List</CardTitle><CardDescription>A comprehensive list of all available products from Firestore, ordered by name.</CardDescription></CardHeader>
         <CardContent>
-          {productList.length > 0 ? (
+          {isLoading && productList.length === 0 ? (
+            <div className="text-center py-10 text-muted-foreground">Loading products...</div>
+          ) : !isLoading && productList.length === 0 ? (
+             <div className="flex flex-col items-center justify-center py-10 text-center">
+                <FileWarning className="h-16 w-16 text-muted-foreground mb-4" />
+                <p className="text-xl font-semibold text-muted-foreground">No Products Found</p>
+                <p className="text-sm text-muted-foreground mb-6">Get started by adding your first product to the database.</p>
+                <Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add New Product</Button>
+            </div>
+           ) : (
             <Table>
               <TableHeader><TableRow>
                   <TableHead className="w-[60px] sm:w-[80px]">Image</TableHead>
@@ -332,16 +341,10 @@ export default function ProductsPage() {
                 ))}
               </TableBody>
             </Table>
-          ) : (
-             <div className="flex flex-col items-center justify-center py-10 text-center">
-                <FileWarning className="h-16 w-16 text-muted-foreground mb-4" />
-                <p className="text-xl font-semibold text-muted-foreground">No Products Found</p>
-                <p className="text-sm text-muted-foreground mb-6">Get started by adding your first product to the database.</p>
-                <Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add New Product</Button>
-            </div>
            )}
         </CardContent>
       </Card>
     </>
   );
 }
+

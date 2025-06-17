@@ -6,7 +6,7 @@ import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { PackageSearch, AlertTriangle, Info } from "lucide-react"; // Added Info icon
+import { PackageSearch, AlertTriangle, Info, FileWarning } from "lucide-react"; 
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -60,7 +60,7 @@ const formatCurrency = (num: number): string => `₹${num.toLocaleString('en-IN'
  * @returns {JSX.Element} The rendered view products/stock page.
  */
 export default function ViewProductsStockPage() {
-  const [products, setProducts] = useState<ProductInfo[]>([]);
+  const [productsList, setProductsList] = useState<ProductInfo[]>([]); // Renamed to avoid conflict
   const [isLoading, setIsLoading] = useState(true);
   const [isReportIssueDialogOpen, setIsReportIssueDialogOpen] = useState(false);
   const [productToReport, setProductToReport] = useState<ProductInfo | null>(null);
@@ -87,12 +87,12 @@ export default function ViewProductsStockPage() {
    * Fetches product data from Firestore's 'products' collection.
    * Orders products by name and calculates stock status for display.
    */
-  const fetchProducts = useCallback(async () => {
+  const fetchProductData = useCallback(async () => { // Renamed to avoid conflict
     setIsLoading(true);
     try {
       const q = query(collection(db, "products"), orderBy("name", "asc"));
       const querySnapshot = await getDocs(q);
-      const fetchedProducts = querySnapshot.docs.map(docSnapshot => {
+      const fetchedItems = querySnapshot.docs.map(docSnapshot => { // Renamed to avoid conflict
         const data = docSnapshot.data();
         return {
           id: docSnapshot.id,
@@ -109,10 +109,18 @@ export default function ViewProductsStockPage() {
           description: data.description || "No description available.", // Default description
         } as ProductInfo;
       });
-      setProducts(fetchedProducts);
-    } catch (error) {
+      setProductsList(fetchedItems);
+    } catch (error: any) {
       console.error("Error fetching products: ", error);
-      toast({ title: "Database Error", description: "Could not load product data. Please try again.", variant: "destructive" });
+      if (error.code === 'failed-precondition') {
+         toast({
+            title: "Database Index Required",
+            description: `A query for products failed. Please create the required Firestore index for 'products' collection (orderBy 'name' ascending). Check your browser's developer console for a Firebase link to create it.`,
+            variant: "destructive", duration: 15000,
+        });
+      } else {
+        toast({ title: "Database Error", description: "Could not load product data. Please try again.", variant: "destructive" });
+      }
     } finally {
       setIsLoading(false);
     }
@@ -120,8 +128,8 @@ export default function ViewProductsStockPage() {
 
   // Fetch products when the component mounts
   useEffect(() => {
-    fetchProducts();
-  }, [fetchProducts]);
+    fetchProductData();
+  }, [fetchProductData]);
 
   /**
    * Opens the issue report dialog and pre-fills form with selected product's ID and name.
@@ -169,7 +177,7 @@ export default function ViewProductsStockPage() {
   };
 
   // Display loading state
-  if (isLoading) {
+  if (isLoading && productsList.length === 0) {
     return <PageHeader title="View Products & Stock" description="Loading product data from database..." icon={PackageSearch} />;
   }
 
@@ -239,41 +247,50 @@ export default function ViewProductsStockPage() {
           <Card className="shadow-lg rounded-xl">
             <CardHeader><CardTitle className="font-headline text-foreground">Product Price List</CardTitle><CardDescription>Complete list of products and their current selling prices.</CardDescription></CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader><TableRow>
-                    <TableHead className="w-[60px] sm:w-[80px]">Image</TableHead><TableHead>Product Name</TableHead>
-                    <TableHead className="hidden md:table-cell">SKU</TableHead><TableHead className="hidden lg:table-cell">Category</TableHead>
-                    <TableHead>Unit</TableHead><TableHead className="text-right">Price (₹)</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                </TableRow></TableHeader>
-                <TableBody>
-                  {products.map((product) => (
-                    <TableRow key={product.id + "-price"}>
-                      <TableCell>
-                        <Image 
-                            src={product.imageUrl} 
-                            alt={product.name} 
-                            width={40} height={40} 
-                            className="rounded-md object-cover border" 
-                            data-ai-hint={product.dataAiHint}
-                            onError={(e) => { e.currentTarget.src = `https://placehold.co/40x40.png?text=${encodeURIComponent(product.name.substring(0,2).toUpperCase())}`; }} // Fallback image
-                        />
-                      </TableCell>
-                      <TableCell className="font-medium">{product.name}</TableCell>
-                      <TableCell className="hidden md:table-cell">{product.sku}</TableCell>
-                      <TableCell className="hidden lg:table-cell">{product.category}</TableCell>
-                      <TableCell>{product.unitOfMeasure}</TableCell>
-                      <TableCell className="text-right font-semibold">{product.price}</TableCell>
-                      <TableCell className="text-right">
-                        <Button variant="outline" size="sm" onClick={() => openReportIssueDialog(product)} title={`Report issue with ${product.name}`}>
-                            <AlertTriangle className="mr-1.5 h-3.5 w-3.5" /> Report Issue
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-               {products.length === 0 && !isLoading && (<div className="text-center py-8 text-muted-foreground">No products found in the database.</div>)}
+              {isLoading && productsList.length === 0 ? (
+                <div className="text-center py-10 text-muted-foreground">Loading price list...</div>
+              ) : !isLoading && productsList.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-10 text-center">
+                    <FileWarning className="h-16 w-16 text-muted-foreground mb-4" />
+                    <p className="text-xl font-semibold text-muted-foreground">No Products Found</p>
+                    <p className="text-sm text-muted-foreground">The product database appears to be empty.</p>
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader><TableRow>
+                      <TableHead className="w-[60px] sm:w-[80px]">Image</TableHead><TableHead>Product Name</TableHead>
+                      <TableHead className="hidden md:table-cell">SKU</TableHead><TableHead className="hidden lg:table-cell">Category</TableHead>
+                      <TableHead>Unit</TableHead><TableHead className="text-right">Price (₹)</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                  </TableRow></TableHeader>
+                  <TableBody>
+                    {productsList.map((product) => (
+                      <TableRow key={product.id + "-price"}>
+                        <TableCell>
+                          <Image 
+                              src={product.imageUrl} 
+                              alt={product.name} 
+                              width={40} height={40} 
+                              className="rounded-md object-cover border" 
+                              data-ai-hint={product.dataAiHint}
+                              onError={(e) => { e.currentTarget.src = `https://placehold.co/40x40.png?text=${encodeURIComponent(product.name.substring(0,2).toUpperCase())}`; }} // Fallback image
+                          />
+                        </TableCell>
+                        <TableCell className="font-medium">{product.name}</TableCell>
+                        <TableCell className="hidden md:table-cell">{product.sku}</TableCell>
+                        <TableCell className="hidden lg:table-cell">{product.category}</TableCell>
+                        <TableCell>{product.unitOfMeasure}</TableCell>
+                        <TableCell className="text-right font-semibold">{product.price}</TableCell>
+                        <TableCell className="text-right">
+                          <Button variant="outline" size="sm" onClick={() => openReportIssueDialog(product)} title={`Report issue with ${product.name}`}>
+                              <AlertTriangle className="mr-1.5 h-3.5 w-3.5" /> Report Issue
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -281,51 +298,60 @@ export default function ViewProductsStockPage() {
           <Card className="shadow-lg rounded-xl">
             <CardHeader><CardTitle className="font-headline text-foreground">Current Stock Levels</CardTitle><CardDescription>View current inventory status for all products.</CardDescription></CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader><TableRow>
-                    <TableHead className="w-[60px] sm:w-[80px]">Image</TableHead><TableHead>Product Name</TableHead>
-                    <TableHead className="hidden md:table-cell">SKU</TableHead><TableHead>Unit</TableHead>
-                    <TableHead className="text-right">Current Stock</TableHead><TableHead className="text-center">Status</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                </TableRow></TableHeader>
-                <TableBody>
-                  {products.map((item) => (
-                    <TableRow key={item.id + "-stock"}>
-                      <TableCell>
-                        <Image 
-                            src={item.imageUrl} 
-                            alt={item.name} 
-                            width={40} height={40} 
-                            className="rounded-md object-cover border" 
-                            data-ai-hint={item.dataAiHint}
-                            onError={(e) => { e.currentTarget.src = `https://placehold.co/40x40.png?text=${encodeURIComponent(item.name.substring(0,2).toUpperCase())}`; }} // Fallback image
-                        />
-                      </TableCell>
-                      <TableCell className="font-medium">{item.name}</TableCell>
-                      <TableCell className="hidden md:table-cell">{item.sku}</TableCell>
-                      <TableCell>{item.unitOfMeasure}</TableCell>
-                      <TableCell className="text-right font-semibold">{item.stock}</TableCell>
-                      <TableCell className="text-center">
-                        <Badge 
-                           variant={item.status === "In Stock" ? "default" : item.status === "Low Stock" ? "secondary" : "destructive"}
-                           className={
-                               item.status === "In Stock" ? "bg-accent text-accent-foreground" : 
-                               item.status === "Low Stock" ? "bg-yellow-400 text-yellow-900 dark:bg-yellow-600 dark:text-yellow-100 border-yellow-500" : ""
-                           } // Custom styles for Low Stock
-                        >
-                          {item.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button variant="outline" size="sm" onClick={() => openReportIssueDialog(item)} title={`Report issue with ${item.name}`}>
-                           <AlertTriangle className="mr-1.5 h-3.5 w-3.5" /> Report Issue
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-              {products.length === 0 && !isLoading && (<div className="text-center py-8 text-muted-foreground">No products found in the database.</div>)}
+              {isLoading && productsList.length === 0 ? (
+                <div className="text-center py-10 text-muted-foreground">Loading stock levels...</div>
+              ) : !isLoading && productsList.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-10 text-center">
+                    <FileWarning className="h-16 w-16 text-muted-foreground mb-4" />
+                    <p className="text-xl font-semibold text-muted-foreground">No Products Found</p>
+                    <p className="text-sm text-muted-foreground">The product database appears to be empty.</p>
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader><TableRow>
+                      <TableHead className="w-[60px] sm:w-[80px]">Image</TableHead><TableHead>Product Name</TableHead>
+                      <TableHead className="hidden md:table-cell">SKU</TableHead><TableHead>Unit</TableHead>
+                      <TableHead className="text-right">Current Stock</TableHead><TableHead className="text-center">Status</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                  </TableRow></TableHeader>
+                  <TableBody>
+                    {productsList.map((item) => (
+                      <TableRow key={item.id + "-stock"}>
+                        <TableCell>
+                          <Image 
+                              src={item.imageUrl} 
+                              alt={item.name} 
+                              width={40} height={40} 
+                              className="rounded-md object-cover border" 
+                              data-ai-hint={item.dataAiHint}
+                              onError={(e) => { e.currentTarget.src = `https://placehold.co/40x40.png?text=${encodeURIComponent(item.name.substring(0,2).toUpperCase())}`; }} // Fallback image
+                          />
+                        </TableCell>
+                        <TableCell className="font-medium">{item.name}</TableCell>
+                        <TableCell className="hidden md:table-cell">{item.sku}</TableCell>
+                        <TableCell>{item.unitOfMeasure}</TableCell>
+                        <TableCell className="text-right font-semibold">{item.stock}</TableCell>
+                        <TableCell className="text-center">
+                          <Badge 
+                             variant={item.status === "In Stock" ? "default" : item.status === "Low Stock" ? "secondary" : "destructive"}
+                             className={
+                                 item.status === "In Stock" ? "bg-accent text-accent-foreground" : 
+                                 item.status === "Low Stock" ? "bg-yellow-400 text-yellow-900 dark:bg-yellow-600 dark:text-yellow-100 border-yellow-500" : ""
+                             } // Custom styles for Low Stock
+                          >
+                            {item.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button variant="outline" size="sm" onClick={() => openReportIssueDialog(item)} title={`Report issue with ${item.name}`}>
+                             <AlertTriangle className="mr-1.5 h-3.5 w-3.5" /> Report Issue
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

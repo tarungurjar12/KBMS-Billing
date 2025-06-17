@@ -250,7 +250,7 @@ export default function CustomersPage() {
     router.push(`/payments?type=customer&entityId=${customer.id}&entityName=${encodeURIComponent(customer.name)}`);
   };
 
-  if (isLoading) {
+  if (isLoading && customerList.length === 0) {
     return <PageHeader title="Manage Customers" description="Loading customer data from database..." icon={Users} />;
   }
 
@@ -364,7 +364,16 @@ export default function CustomersPage() {
           <CardDescription>A list of all registered customers from Firestore, ordered alphabetically.</CardDescription>
         </CardHeader>
         <CardContent>
-          {customerList.length > 0 ? (
+          {isLoading && customerList.length === 0 ? (
+            <div className="text-center py-10 text-muted-foreground">Loading customers...</div>
+          ) : !isLoading && customerList.length === 0 ? (
+             <div className="flex flex-col items-center justify-center py-10 text-center">
+                <UserPlus className="h-16 w-16 text-muted-foreground mb-4" />
+                <p className="text-xl font-semibold text-muted-foreground">No Customers Found</p>
+                <p className="text-sm text-muted-foreground mb-6">It looks like there are no customers in your database yet.</p>
+                <Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add New Customer</Button>
+            </div>
+           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
@@ -416,16 +425,10 @@ export default function CustomersPage() {
                 ))}
               </TableBody>
             </Table>
-          ) : (
-             <div className="flex flex-col items-center justify-center py-10 text-center">
-                <UserPlus className="h-16 w-16 text-muted-foreground mb-4" />
-                <p className="text-xl font-semibold text-muted-foreground">No Customers Found</p>
-                <p className="text-sm text-muted-foreground mb-6">It looks like there are no customers in your database yet.</p>
-                <Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add New Customer</Button>
-            </div>
            )}
         </CardContent>
       </Card>
     </>
   );
 }
+
