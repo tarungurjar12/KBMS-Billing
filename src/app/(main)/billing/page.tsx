@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { createRoot } from 'react-dom/client'; // Updated import for React 18+
+import { createRoot } from 'react-dom/client';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -66,6 +66,14 @@ export interface CompanyDetailsForInvoice {
 
 const formatCurrency = (num: number): string => `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+const getCookie = (name: string): string | undefined => {
+  if (typeof window === 'undefined') return undefined;
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  if (parts.length === 2) return parts.pop()?.split(';').shift();
+  return undefined;
+};
+
 export default function BillingPage() {
   const router = useRouter();
   const { toast } = useToast();
@@ -75,9 +83,14 @@ export default function BillingPage() {
   const [companyDetails, setCompanyDetails] = useState<CompanyDetailsForInvoice | null>(null);
   const [isInvoiceViewOpen, setIsInvoiceViewOpen] = useState(false);
   const [selectedInvoiceForView, setSelectedInvoiceForView] = useState<Invoice | null>(null);
+  const [currentUserRole, setCurrentUserRole] = useState<string | undefined>(undefined);
   
   const invoicePrintRef = useRef<HTMLDivElement>(null); 
   const invoicePrintRefForDropdownHidden = useRef<HTMLDivElement>(null); 
+
+  useEffect(() => {
+    setCurrentUserRole(getCookie('userRole'));
+  }, []);
 
   const fetchCompanyDetails = useCallback(async () => {
     setIsLoadingCompanyDetails(true);
@@ -216,7 +229,6 @@ export default function BillingPage() {
     
     let tempRoot: ReturnType<typeof createRoot> | null = null;
 
-    // Helper component to use refs and effects for rendering and cleanup
     const InvoiceRenderer = ({ invoice, companyDetails, onRendered }: { invoice: Invoice, companyDetails: CompanyDetailsForInvoice, onRendered: (element: HTMLElement) => void }) => {
       const renderRef = React.useRef<HTMLDivElement>(null);
       React.useEffect(() => {
@@ -319,6 +331,10 @@ export default function BillingPage() {
   };
 
   const handleDeleteInvoice = async (invoiceId: string, invoiceNumber: string) => {
+    if (currentUserRole !== 'admin') {
+      toast({ title: "Permission Denied", description: "Only Admins can delete invoices.", variant: "destructive"});
+      return;
+    }
     try {
       await deleteDoc(doc(db, "invoices", invoiceId));
       toast({ title: "Invoice Deleted", description: `Invoice ${invoiceNumber} has been successfully deleted.`, variant: "default" });
@@ -348,7 +364,7 @@ export default function BillingPage() {
     <>
       <PageHeader
         title="Billing & Invoicing"
-        description="Create and manage GST-compliant bills and invoices. (Admin Access)"
+        description="Create and manage GST-compliant bills and invoices."
         icon={FileText}
         actions={
           <Button onClick={handleCreateNewInvoice} className="mt-4 sm:mt-0">
@@ -433,8 +449,8 @@ export default function BillingPage() {
                            <DropdownMenuItem onClick={() => {
                                 const invoiceForAction = invoices.find(inv => inv.id === invoice.id);
                                 if (invoiceForAction) {
-                                    setSelectedInvoiceForView(invoiceForAction); // Set the invoice for the hidden div
-                                    setTimeout(() => handleActualPrint(), 0); // Allow state to update and hidden div to render
+                                    setSelectedInvoiceForView(invoiceForAction); 
+                                    setTimeout(() => handleActualPrint(), 0); 
                                 }
                            }}>
                               <Printer className="mr-2 h-4 w-4" /> Print Invoice
@@ -447,8 +463,12 @@ export default function BillingPage() {
                           {invoice.status !== "Pending" && <DropdownMenuItem onClick={() => handleUpdateStatus(invoice.id, "Pending")}>Mark as Pending</DropdownMenuItem>}
                           {invoice.status !== "Overdue" && <DropdownMenuItem onClick={() => handleUpdateStatus(invoice.id, "Overdue")}>Mark as Overdue</DropdownMenuItem>}
                           {invoice.status !== "Cancelled" && <DropdownMenuItem onClick={() => handleUpdateStatus(invoice.id, "Cancelled")}>Mark as Cancelled</DropdownMenuItem>}
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem onClick={() => handleDeleteInvoice(invoice.id, invoice.invoiceNumber)} className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground">
+                          {currentUserRole === 'admin' && <DropdownMenuSeparator />}
+                          <DropdownMenuItem 
+                            onClick={() => handleDeleteInvoice(invoice.id, invoice.invoiceNumber)} 
+                            className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground"
+                            disabled={currentUserRole !== 'admin'}
+                          >
                               <Trash2 className="mr-2 h-4 w-4" /> Delete Invoice
                           </DropdownMenuItem>
                         </DropdownMenuContent>
@@ -502,3 +522,5 @@ export default function BillingPage() {
     </>
   );
 }
+
+    
