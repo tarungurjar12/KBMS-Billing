@@ -4,7 +4,7 @@
 import { useState, useEffect } from "react";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
-import { UserCircle, ShieldCheck, Mail, Phone, Building, Globe, FileTextIcon, Image as ImageIcon } from "lucide-react"; 
+import { UserCircle, ShieldCheck, Mail, Phone, Building, Globe, FileTextIcon, Image as ImageIcon, Info } from "lucide-react"; 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,8 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { auth, db } from '@/lib/firebase/firebaseConfig'; 
 import { onAuthStateChanged, updatePassword, EmailAuthProvider, reauthenticateWithCredential, User as FirebaseUser } from "firebase/auth";
-import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore"; 
-import { Separator } from "@/components/ui/separator";
+import { doc, getDoc, setDoc, serverTimestamp, updateDoc } from "firebase/firestore"; 
 
 /**
  * @fileOverview My Profile page for authenticated users (Admin and Store Manager).
@@ -43,7 +42,7 @@ export default function MyProfilePage() {
   const [name, setName] = useState(""); 
   const [contactNumber, setContactNumber] = useState("");
 
-  // Company details state (for admin)
+  // Company details state
   const [companyName, setCompanyName] = useState("");
   const [companyAddress, setCompanyAddress] = useState("");
   const [companyContact, setCompanyContact] = useState("");
@@ -81,31 +80,48 @@ export default function MyProfilePage() {
             setUserProfile(profile);
             setName(profile.name); 
             setContactNumber(profile.contactNumber); 
-            if (profile.role === 'admin') {
-                setCompanyName(profile.companyName || "");
-                setCompanyAddress(profile.companyAddress || "");
-                setCompanyContact(profile.companyContact || "");
-                setCompanyGstin(profile.companyGstin || "");
-                setCompanyLogoUrl(profile.companyLogoUrl || "");
-            }
+            // Set company details regardless of role, for display
+            setCompanyName(profile.companyName || "");
+            setCompanyAddress(profile.companyAddress || "");
+            setCompanyContact(profile.companyContact || "");
+            setCompanyGstin(profile.companyGstin || "");
+            setCompanyLogoUrl(profile.companyLogoUrl || "");
+            
           } else {
+            // If user doc doesn't exist, create a basic one
             const profile: UserProfile = {
               uid: firebaseUser.uid,
               email: firebaseUser.email || "N/A",
               name: firebaseUser.displayName || firebaseUser.email || "User", 
               contactNumber: "",
-              role: undefined, 
+              role: undefined, // Role should be set by an admin or during initial setup
+              companyName: "", companyAddress: "", companyContact: "", companyGstin: "", companyLogoUrl: "",
             };
             setUserProfile(profile);
             setName(profile.name);
             setContactNumber(profile.contactNumber);
-            toast({ title: "Profile Incomplete", description: "Your profile details are not fully set up. Please update and save.", variant: "default"});
+            // Attempt to set basic user profile in Firestore
+            try {
+                await setDoc(doc(db, "users", firebaseUser.uid), {
+                    name: profile.name,
+                    email: profile.email,
+                    uid: firebaseUser.uid,
+                    createdAt: serverTimestamp(),
+                    updatedAt: serverTimestamp(),
+                    // role will be undefined here, admin should set it or a default process
+                }, { merge: true });
+                toast({ title: "Profile Initialized", description: "Your basic profile has been created. Please complete your details.", variant: "default"});
+            } catch (initError) {
+                console.error("Error initializing user profile in Firestore:", initError);
+                toast({ title: "Profile Initialization Error", description: "Could not create your initial profile.", variant: "destructive"});
+            }
           }
         } catch (error) {
             console.error("Error fetching user profile from Firestore:", error);
             toast({ title: "Profile Load Error", description: "Could not load your full profile details.", variant: "destructive"});
             const profile: UserProfile = { // Fallback
               uid: firebaseUser.uid, email: firebaseUser.email || "N/A", name: firebaseUser.displayName || firebaseUser.email || "User", contactNumber: "", role: undefined,
+              companyName: "", companyAddress: "", companyContact: "", companyGstin: "", companyLogoUrl: "",
             };
             setUserProfile(profile); setName(profile.name); setContactNumber(profile.contactNumber);
         }
@@ -140,15 +156,16 @@ export default function MyProfilePage() {
                             companyLogoUrl !== (userProfile.companyLogoUrl || "");
     }
 
-    if (hasPersonalChanges || hasCompanyChanges) {
+    if (hasPersonalChanges || (userProfile.role === 'admin' && hasCompanyChanges)) {
       try {
         const userDocRef = doc(db, "users", firebaseUser.uid);
         const profileDataToSave: Partial<UserProfile> = {
           name: name,
-          email: userProfile.email, 
           contactNumber: contactNumber,
           updatedAt: serverTimestamp() as any, 
         };
+        // email and role are generally not updated by the user directly here, but kept for consistency if doc is new
+        if(userProfile.email) profileDataToSave.email = userProfile.email;
         if (userProfile.role) profileDataToSave.role = userProfile.role;
 
         if (userProfile.role === 'admin') {
@@ -159,8 +176,10 @@ export default function MyProfilePage() {
             profileDataToSave.companyLogoUrl = companyLogoUrl;
         }
         
+        // Use setDoc with merge:true to create if not exists or update if exists
         await setDoc(userDocRef, profileDataToSave, { merge: true });
         
+        // Update local state optimistically
         setUserProfile(prev => prev ? {
             ...prev, 
             name: name, 
@@ -221,6 +240,8 @@ export default function MyProfilePage() {
     return <PageHeader title="My Profile" description="Please log in to view your profile." icon={UserCircle} />;
   }
 
+  const isAdmin = userProfile.role === 'admin';
+
   return (
     <>
       <PageHeader title="My Profile" description="View and update your personal & company information." icon={UserCircle}/>
@@ -248,41 +269,42 @@ export default function MyProfilePage() {
                 </CardContent>
             </Card>
 
-            {/* Company Details Card (Admin Only) */}
-            {userProfile.role === 'admin' && (
+            {/* Company Information Card (Visible to both, editable by Admin only) */}
             <Card className="md:col-span-2 shadow-lg rounded-xl">
                 <CardHeader>
-                    <CardTitle className="font-headline text-foreground text-xl">Company Details (for Invoices)</CardTitle>
-                    <CardDescription className="text-xs">This information will appear on generated invoices.</CardDescription>
+                    <CardTitle className="font-headline text-foreground text-xl">Company Information</CardTitle>
+                    <CardDescription className="text-xs flex items-center">
+                       <Info className="h-3 w-3 mr-1.5 text-muted-foreground"/>
+                       This information will appear on generated invoices. Editable by Admin only.
+                    </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="space-y-1.5">
                             <Label htmlFor="companyName" className="flex items-center text-sm"><Building className="mr-2 h-4 w-4 text-muted-foreground"/>Company Name</Label>
-                            <Input id="companyName" placeholder="Your Company Name" value={companyName} onChange={(e) => setCompanyName(e.target.value)} disabled={isUpdating} className="text-sm"/>
+                            <Input id="companyName" placeholder="Your Company Name" value={companyName} onChange={(e) => setCompanyName(e.target.value)} disabled={isUpdating || !isAdmin} className="text-sm"/>
                         </div>
                         <div className="space-y-1.5">
                             <Label htmlFor="companyContact" className="flex items-center text-sm"><Phone className="mr-2 h-4 w-4 text-muted-foreground"/>Company Contact</Label>
-                            <Input id="companyContact" placeholder="Company Phone or Email" value={companyContact} onChange={(e) => setCompanyContact(e.target.value)} disabled={isUpdating} className="text-sm"/>
+                            <Input id="companyContact" placeholder="Company Phone or Email" value={companyContact} onChange={(e) => setCompanyContact(e.target.value)} disabled={isUpdating || !isAdmin} className="text-sm"/>
                         </div>
                     </div>
                     <div className="space-y-1.5">
                         <Label htmlFor="companyAddress" className="flex items-center text-sm"><Globe className="mr-2 h-4 w-4 text-muted-foreground"/>Company Address</Label>
-                        <Textarea id="companyAddress" placeholder="Full Company Address" value={companyAddress} onChange={(e) => setCompanyAddress(e.target.value)} disabled={isUpdating} rows={2} className="text-sm"/>
+                        <Textarea id="companyAddress" placeholder="Full Company Address" value={companyAddress} onChange={(e) => setCompanyAddress(e.target.value)} disabled={isUpdating || !isAdmin} rows={2} className="text-sm"/>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="space-y-1.5">
                             <Label htmlFor="companyGstin" className="flex items-center text-sm"><FileTextIcon className="mr-2 h-4 w-4 text-muted-foreground"/>Company GSTIN (Optional)</Label>
-                            <Input id="companyGstin" placeholder="Company GSTIN" value={companyGstin} onChange={(e) => setCompanyGstin(e.target.value)} disabled={isUpdating} className="text-sm"/>
+                            <Input id="companyGstin" placeholder="Company GSTIN" value={companyGstin} onChange={(e) => setCompanyGstin(e.target.value)} disabled={isUpdating || !isAdmin} className="text-sm"/>
                         </div>
                         <div className="space-y-1.5">
                              <Label htmlFor="companyLogoUrl" className="flex items-center text-sm"><ImageIcon className="mr-2 h-4 w-4 text-muted-foreground"/>Company Logo URL (Optional)</Label>
-                             <Input id="companyLogoUrl" placeholder="https://example.com/logo.png" value={companyLogoUrl} onChange={(e) => setCompanyLogoUrl(e.target.value)} disabled={isUpdating} className="text-sm"/>
+                             <Input id="companyLogoUrl" placeholder="https://example.com/logo.png" value={companyLogoUrl} onChange={(e) => setCompanyLogoUrl(e.target.value)} disabled={isUpdating || !isAdmin} className="text-sm"/>
                         </div>
                     </div>
                 </CardContent>
             </Card>
-            )}
         </div>
 
         {/* Password Change Card */}
@@ -318,3 +340,4 @@ export default function MyProfilePage() {
     </>
   );
 }
+
