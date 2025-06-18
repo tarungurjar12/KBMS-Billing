@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import ReactDOM from 'react-dom'; // Import ReactDOM
+import { createRoot } from 'react-dom/client'; // Updated import for React 18+
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -76,8 +76,8 @@ export default function BillingPage() {
   const [isInvoiceViewOpen, setIsInvoiceViewOpen] = useState(false);
   const [selectedInvoiceForView, setSelectedInvoiceForView] = useState<Invoice | null>(null);
   
-  const invoicePrintRef = useRef<HTMLDivElement>(null); // For dialog content
-  const invoicePrintRefForDropdownHidden = useRef<HTMLDivElement>(null); // For hidden div content
+  const invoicePrintRef = useRef<HTMLDivElement>(null); 
+  const invoicePrintRefForDropdownHidden = useRef<HTMLDivElement>(null); 
 
   const fetchCompanyDetails = useCallback(async () => {
     setIsLoadingCompanyDetails(true);
@@ -207,22 +207,23 @@ export default function BillingPage() {
   
     const tempContainer = document.createElement('div');
     tempContainer.style.position = 'absolute';
-    tempContainer.style.left = '-9999px';
+    tempContainer.style.left = '-9999px'; // Position off-screen
     tempContainer.style.top = '-9999px';
-    tempContainer.style.width = '800px'; // A4-like width
-    tempContainer.style.padding = '20px'; // Mimic some padding
-    tempContainer.style.background = 'white'; // Ensure background for canvas
+    tempContainer.style.width = '800px'; // A4-like width for rendering consistency
+    tempContainer.style.padding = '20px'; 
+    tempContainer.style.background = 'white';
     document.body.appendChild(tempContainer);
-  
+    
+    let tempRoot: ReturnType<typeof createRoot> | null = null;
+
     // Helper component to use refs and effects for rendering and cleanup
     const InvoiceRenderer = ({ invoice, companyDetails, onRendered }: { invoice: Invoice, companyDetails: CompanyDetailsForInvoice, onRendered: (element: HTMLElement) => void }) => {
       const renderRef = React.useRef<HTMLDivElement>(null);
       React.useEffect(() => {
         if (renderRef.current) {
-          // Allow a short timeout for images/styles to apply before capturing
           const timer = setTimeout(() => {
             if (renderRef.current) onRendered(renderRef.current);
-          }, 500); // Increased timeout slightly
+          }, 500); 
           return () => clearTimeout(timer);
         }
       }, [invoice, companyDetails, onRendered]);
@@ -238,7 +239,7 @@ export default function BillingPage() {
           height: element.scrollHeight,
           windowWidth: element.scrollWidth,
           windowHeight: element.scrollHeight,
-          logging: false, // Disable html2canvas logging to console
+          logging: false,
         });
   
         const imgData = canvas.toDataURL('image/png');
@@ -258,7 +259,7 @@ export default function BillingPage() {
   
         while (heightLeft > 0) {
           pdf.addPage();
-          currentPosition -= (pdfHeight - (2 * margin)); // Negative offset for subsequent pages
+          currentPosition -= (pdfHeight - (2 * margin)); 
           pdf.addImage(imgData, 'PNG', margin, currentPosition, availableWidth, imgRenderHeight);
           heightLeft -= (pdfHeight - (2 * margin));
         }
@@ -269,15 +270,18 @@ export default function BillingPage() {
         console.error("Error generating PDF:", error);
         toast({ title: "PDF Generation Error", description: "Could not generate PDF.", variant: "destructive" });
       } finally {
-        ReactDOM.unmountComponentAtNode(tempContainer);
-        document.body.removeChild(tempContainer);
+        if (tempRoot) {
+          tempRoot.unmount();
+        }
+        if (document.body.contains(tempContainer)) {
+            document.body.removeChild(tempContainer);
+        }
       }
     };
     
-    // Render the InvoiceTemplate into the temporary container
-    ReactDOM.render(
-      <InvoiceRenderer invoice={invoiceToDownload} companyDetails={companyDetailsForPdf} onRendered={(el) => generatePdfFromElement(el, invoiceToDownload)} />,
-      tempContainer
+    tempRoot = createRoot(tempContainer);
+    tempRoot.render(
+      <InvoiceRenderer invoice={invoiceToDownload} companyDetails={companyDetailsForPdf} onRendered={(el) => generatePdfFromElement(el, invoiceToDownload)} />
     );
   };
   
@@ -429,8 +433,8 @@ export default function BillingPage() {
                            <DropdownMenuItem onClick={() => {
                                 const invoiceForAction = invoices.find(inv => inv.id === invoice.id);
                                 if (invoiceForAction) {
-                                    setSelectedInvoiceForView(invoiceForAction);
-                                    setTimeout(() => handleActualPrint(), 0); // Allow state to update hidden div
+                                    setSelectedInvoiceForView(invoiceForAction); // Set the invoice for the hidden div
+                                    setTimeout(() => handleActualPrint(), 0); // Allow state to update and hidden div to render
                                 }
                            }}>
                               <Printer className="mr-2 h-4 w-4" /> Print Invoice
@@ -488,7 +492,6 @@ export default function BillingPage() {
         </DialogContent>
       </Dialog>
       
-      {/* Hidden div for react-to-print to clone content when printing directly from dropdown */}
       <div style={{ display: "none" }}> 
           <div ref={invoicePrintRefForDropdownHidden}>
             {selectedInvoiceForView && companyDetails && (
