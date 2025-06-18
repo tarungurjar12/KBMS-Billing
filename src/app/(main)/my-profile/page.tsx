@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { auth, db } from '@/lib/firebase/firebaseConfig'; 
 import { onAuthStateChanged, updatePassword, EmailAuthProvider, reauthenticateWithCredential, User as FirebaseUser } from "firebase/auth";
-import { doc, getDoc, setDoc, serverTimestamp, updateDoc } from "firebase/firestore"; 
+import { doc, getDoc, setDoc, serverTimestamp, updateDoc, Timestamp } from "firebase/firestore"; 
 
 /**
  * @fileOverview My Profile page for authenticated users (Admin and Store Manager).
@@ -31,6 +31,11 @@ export interface UserProfile {
   companyContact?: string;
   companyGstin?: string;
   companyLogoUrl?: string;
+  // Timestamps from Firestore
+  createdAt?: Timestamp;
+  updatedAt?: Timestamp;
+  status?: string; // if used for managers
+  authUid?: string; // if used for managers
 }
 
 export default function MyProfilePage() {
@@ -65,6 +70,7 @@ export default function MyProfilePage() {
           
           if (userDoc.exists()) {
             const userData = userDoc.data();
+            console.log(`MyProfilePage: Fetched user data for ${firebaseUser.email}:`, userData); // Log fetched data
             const profile: UserProfile = {
               uid: firebaseUser.uid,
               email: firebaseUser.email || "N/A",
@@ -76,11 +82,14 @@ export default function MyProfilePage() {
               companyContact: userData.companyContact || "",
               companyGstin: userData.companyGstin || "",
               companyLogoUrl: userData.companyLogoUrl || "",
+              createdAt: userData.createdAt,
+              updatedAt: userData.updatedAt,
+              status: userData.status,
+              authUid: userData.authUid,
             };
             setUserProfile(profile);
             setName(profile.name); 
             setContactNumber(profile.contactNumber); 
-            // Set company details regardless of role, for display
             setCompanyName(profile.companyName || "");
             setCompanyAddress(profile.companyAddress || "");
             setCompanyContact(profile.companyContact || "");
@@ -88,29 +97,50 @@ export default function MyProfilePage() {
             setCompanyLogoUrl(profile.companyLogoUrl || "");
             
           } else {
+            console.log(`MyProfilePage: No user document found for ${firebaseUser.email}. Creating basic profile.`);
             // If user doc doesn't exist, create a basic one
+            // Determine role based on email for initial setup if it's a known admin email
+            let determinedRole: 'admin' | 'store_manager' | undefined = undefined;
+            if (firebaseUser.email === 'admin@kbms.com') { // Specific check for the main admin email
+              determinedRole = 'admin';
+              console.log(`MyProfilePage: Auto-assigning role 'admin' for ${firebaseUser.email} during initial profile creation.`);
+            }
+            // Add other role determination logic if necessary e.g. for store_manager from email pattern.
+            // else if (firebaseUser.email?.includes('manager@')) {
+            // determinedRole = 'store_manager';
+            // }
+
+
             const profile: UserProfile = {
               uid: firebaseUser.uid,
               email: firebaseUser.email || "N/A",
               name: firebaseUser.displayName || firebaseUser.email || "User", 
               contactNumber: "",
-              role: undefined, // Role should be set by an admin or during initial setup
+              role: determinedRole, 
               companyName: "", companyAddress: "", companyContact: "", companyGstin: "", companyLogoUrl: "",
             };
             setUserProfile(profile);
             setName(profile.name);
             setContactNumber(profile.contactNumber);
-            // Attempt to set basic user profile in Firestore
+            
+            const dataToSet: Partial<UserProfile> = {
+                name: profile.name,
+                email: profile.email,
+                uid: firebaseUser.uid,
+                createdAt: serverTimestamp() as Timestamp,
+                updatedAt: serverTimestamp() as Timestamp,
+            };
+            if (determinedRole) {
+                dataToSet.role = determinedRole;
+            }
+
             try {
-                await setDoc(doc(db, "users", firebaseUser.uid), {
-                    name: profile.name,
-                    email: profile.email,
-                    uid: firebaseUser.uid,
-                    createdAt: serverTimestamp(),
-                    updatedAt: serverTimestamp(),
-                    // role will be undefined here, admin should set it or a default process
-                }, { merge: true });
-                toast({ title: "Profile Initialized", description: "Your basic profile has been created. Please complete your details.", variant: "default"});
+                await setDoc(userDocRef, dataToSet, { merge: true }); // Use userDocRef directly
+                if (determinedRole) {
+                    toast({ title: "Profile Initialized", description: `Your basic profile with role '${determinedRole}' has been created. Please complete your details.`, variant: "default"});
+                } else {
+                    toast({ title: "Profile Initialized", description: "Your basic profile has been created. Role needs to be assigned by an admin.", variant: "default"});
+                }
             } catch (initError) {
                 console.error("Error initializing user profile in Firestore:", initError);
                 toast({ title: "Profile Initialization Error", description: "Could not create your initial profile.", variant: "destructive"});
@@ -148,7 +178,9 @@ export default function MyProfilePage() {
 
     const hasPersonalChanges = name !== userProfile.name || contactNumber !== userProfile.contactNumber;
     let hasCompanyChanges = false;
-    if (userProfile.role === 'admin') {
+    const currentRoleIsAdmin = userProfile.role === 'admin';
+
+    if (currentRoleIsAdmin) {
         hasCompanyChanges = companyName !== (userProfile.companyName || "") ||
                             companyAddress !== (userProfile.companyAddress || "") ||
                             companyContact !== (userProfile.companyContact || "") ||
@@ -156,19 +188,16 @@ export default function MyProfilePage() {
                             companyLogoUrl !== (userProfile.companyLogoUrl || "");
     }
 
-    if (hasPersonalChanges || (userProfile.role === 'admin' && hasCompanyChanges)) {
+    if (hasPersonalChanges || (currentRoleIsAdmin && hasCompanyChanges)) {
       try {
         const userDocRef = doc(db, "users", firebaseUser.uid);
         const profileDataToSave: Partial<UserProfile> = {
           name: name,
           contactNumber: contactNumber,
-          updatedAt: serverTimestamp() as any, 
+          updatedAt: serverTimestamp() as Timestamp, 
         };
-        // email and role are generally not updated by the user directly here, but kept for consistency if doc is new
-        if(userProfile.email) profileDataToSave.email = userProfile.email;
-        if (userProfile.role) profileDataToSave.role = userProfile.role;
-
-        if (userProfile.role === 'admin') {
+        
+        if (currentRoleIsAdmin) {
             profileDataToSave.companyName = companyName;
             profileDataToSave.companyAddress = companyAddress;
             profileDataToSave.companyContact = companyContact;
@@ -176,15 +205,20 @@ export default function MyProfilePage() {
             profileDataToSave.companyLogoUrl = companyLogoUrl;
         }
         
-        // Use setDoc with merge:true to create if not exists or update if exists
+        // Ensure existing essential fields like email and role are preserved if not being changed here
+        // This is mainly for if the doc was just created and these are being set for the first time effectively
+        if (userProfile.email && !profileDataToSave.email) profileDataToSave.email = userProfile.email;
+        if (userProfile.role && !profileDataToSave.role) profileDataToSave.role = userProfile.role;
+        if (userProfile.uid && !profileDataToSave.uid) profileDataToSave.uid = userProfile.uid;
+
+
         await setDoc(userDocRef, profileDataToSave, { merge: true });
         
-        // Update local state optimistically
         setUserProfile(prev => prev ? {
             ...prev, 
             name: name, 
             contactNumber: contactNumber,
-            ...(userProfile.role === 'admin' && {
+            ...(currentRoleIsAdmin && {
                 companyName, companyAddress, companyContact, companyGstin, companyLogoUrl
             })
         } : null); 
@@ -240,7 +274,7 @@ export default function MyProfilePage() {
     return <PageHeader title="My Profile" description="Please log in to view your profile." icon={UserCircle} />;
   }
 
-  const isAdmin = userProfile.role === 'admin';
+  const isEffectivelyAdmin = userProfile.role === 'admin'; // Use this for disabling inputs
 
   return (
     <>
@@ -275,32 +309,32 @@ export default function MyProfilePage() {
                     <CardTitle className="font-headline text-foreground text-xl">Company Information</CardTitle>
                     <CardDescription className="text-xs flex items-center">
                        <Info className="h-3 w-3 mr-1.5 text-muted-foreground"/>
-                       This information will appear on generated invoices. Editable by Admin only.
+                       This information will appear on generated invoices. {isEffectivelyAdmin ? "Editable by you (Admin)." : "View-only for Store Managers."}
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="space-y-1.5">
                             <Label htmlFor="companyName" className="flex items-center text-sm"><Building className="mr-2 h-4 w-4 text-muted-foreground"/>Company Name</Label>
-                            <Input id="companyName" placeholder="Your Company Name" value={companyName} onChange={(e) => setCompanyName(e.target.value)} disabled={isUpdating || !isAdmin} className="text-sm"/>
+                            <Input id="companyName" placeholder="Your Company Name" value={companyName} onChange={(e) => setCompanyName(e.target.value)} disabled={isUpdating || !isEffectivelyAdmin} className="text-sm"/>
                         </div>
                         <div className="space-y-1.5">
                             <Label htmlFor="companyContact" className="flex items-center text-sm"><Phone className="mr-2 h-4 w-4 text-muted-foreground"/>Company Contact</Label>
-                            <Input id="companyContact" placeholder="Company Phone or Email" value={companyContact} onChange={(e) => setCompanyContact(e.target.value)} disabled={isUpdating || !isAdmin} className="text-sm"/>
+                            <Input id="companyContact" placeholder="Company Phone or Email" value={companyContact} onChange={(e) => setCompanyContact(e.target.value)} disabled={isUpdating || !isEffectivelyAdmin} className="text-sm"/>
                         </div>
                     </div>
                     <div className="space-y-1.5">
                         <Label htmlFor="companyAddress" className="flex items-center text-sm"><Globe className="mr-2 h-4 w-4 text-muted-foreground"/>Company Address</Label>
-                        <Textarea id="companyAddress" placeholder="Full Company Address" value={companyAddress} onChange={(e) => setCompanyAddress(e.target.value)} disabled={isUpdating || !isAdmin} rows={2} className="text-sm"/>
+                        <Textarea id="companyAddress" placeholder="Full Company Address" value={companyAddress} onChange={(e) => setCompanyAddress(e.target.value)} disabled={isUpdating || !isEffectivelyAdmin} rows={2} className="text-sm"/>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="space-y-1.5">
                             <Label htmlFor="companyGstin" className="flex items-center text-sm"><FileTextIcon className="mr-2 h-4 w-4 text-muted-foreground"/>Company GSTIN (Optional)</Label>
-                            <Input id="companyGstin" placeholder="Company GSTIN" value={companyGstin} onChange={(e) => setCompanyGstin(e.target.value)} disabled={isUpdating || !isAdmin} className="text-sm"/>
+                            <Input id="companyGstin" placeholder="Company GSTIN" value={companyGstin} onChange={(e) => setCompanyGstin(e.target.value)} disabled={isUpdating || !isEffectivelyAdmin} className="text-sm"/>
                         </div>
                         <div className="space-y-1.5">
                              <Label htmlFor="companyLogoUrl" className="flex items-center text-sm"><ImageIcon className="mr-2 h-4 w-4 text-muted-foreground"/>Company Logo URL (Optional)</Label>
-                             <Input id="companyLogoUrl" placeholder="https://example.com/logo.png" value={companyLogoUrl} onChange={(e) => setCompanyLogoUrl(e.target.value)} disabled={isUpdating || !isAdmin} className="text-sm"/>
+                             <Input id="companyLogoUrl" placeholder="https://example.com/logo.png" value={companyLogoUrl} onChange={(e) => setCompanyLogoUrl(e.target.value)} disabled={isUpdating || !isEffectivelyAdmin} className="text-sm"/>
                         </div>
                     </div>
                 </CardContent>
@@ -341,3 +375,5 @@ export default function MyProfilePage() {
   );
 }
 
+
+    
