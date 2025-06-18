@@ -74,14 +74,13 @@ export default function LoginPage() {
       if (user) {
         let userRole = getCookie('userRole') as UserProfile['role'];
         
-        // If no cookie, try to fetch role from Firestore (e.g., for session persistence)
         if (!userRole) {
             try {
                 const userDocRef = doc(db, "users", user.uid);
                 const userDocSnap = await getDoc(userDocRef);
                 if (userDocSnap.exists()) {
                     userRole = userDocSnap.data()?.role as UserProfile['role'];
-                    if (userRole) setCookie('userRole', userRole, 1); // Re-set cookie if found
+                    if (userRole) setCookie('userRole', userRole, 1); 
                 }
             } catch (e) {
                 console.error("LoginPage Initial Auth Check: Error fetching user role from Firestore", e);
@@ -127,19 +126,27 @@ export default function LoginPage() {
       console.log("LoginPage handleLogin: Firebase signInWithEmailAndPassword successful for user:", user?.email);
 
       if (user && user.uid) {
-        // Fetch role from Firestore
         const userDocRef = doc(db, "users", user.uid);
-        const userDocSnap = await getDoc(userDocRef);
+        let userDocSnap;
+        let firestoreError: any = null;
+
+        try {
+          console.log(`LoginPage handleLogin: Attempting to fetch Firestore document: users/${user.uid}`);
+          userDocSnap = await getDoc(userDocRef);
+        } catch (e: any) {
+          console.error(`LoginPage handleLogin: Error fetching user document from Firestore for UID: ${user.uid}. Code: ${e.code}, Message: ${e.message}`, e);
+          firestoreError = e;
+        }
 
         let userRole: UserProfile['role'] | undefined = undefined;
 
-        if (userDocSnap.exists()) {
+        if (userDocSnap?.exists()) { 
           userRole = userDocSnap.data()?.role as UserProfile['role'];
           console.log(`LoginPage handleLogin: Fetched role from Firestore: '${userRole}' for UID: ${user.uid}`);
-        } else {
-          console.warn(`LoginPage handleLogin: No user document found in Firestore for UID: ${user.uid}. Cannot determine role.`);
+        } else if (!firestoreError) { 
+          console.warn(`LoginPage handleLogin: No user document found in Firestore for UID: ${user.uid}.`);
         }
-
+        
         if (userRole) {
           setCookie('userRole', userRole, 1); 
 
@@ -150,15 +157,17 @@ export default function LoginPage() {
             console.log("LoginPage handleLogin: Redirecting store_manager to /store-dashboard");
             router.push('/store-dashboard');
           } else {
-             // This case should ideally not be reached if role is one of the two expected
             console.error('LoginPage handleLogin: Unknown role fetched from Firestore:', userRole);
             setError('Your account has an unrecognized role. Please contact support.');
             await signOut(auth); 
             deleteCookie('userRole'); 
           }
         } else {
-          console.error('LoginPage handleLogin: User role could not be determined from Firestore for UID:', user.uid);
-          setError('Your account is not configured correctly (role missing in database). Please contact support.');
+          const errorDetail = firestoreError 
+            ? `(Firestore Error: ${firestoreError.code || 'UnknownCode'} - ${firestoreError.message || 'Unknown Firestore Error'})` 
+            : '(Document not found or role field missing in Firestore)';
+          console.error('LoginPage handleLogin: User role could not be determined from Firestore for UID:', user.uid, errorDetail);
+          setError(`Your account is not configured correctly. ${errorDetail}. Please contact support.`);
           await signOut(auth); 
           deleteCookie('userRole');
         }
