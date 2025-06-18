@@ -4,29 +4,34 @@
 import { useState, useEffect } from "react";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
-import { UserCircle, ShieldCheck, Mail, Phone } from "lucide-react"; 
+import { UserCircle, ShieldCheck, Mail, Phone, Building, Globe, FileTextIcon, Image as ImageIcon } from "lucide-react"; 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { auth, db } from '@/lib/firebase/firebaseConfig'; 
 import { onAuthStateChanged, updatePassword, EmailAuthProvider, reauthenticateWithCredential, User as FirebaseUser } from "firebase/auth";
 import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore"; 
+import { Separator } from "@/components/ui/separator";
 
 /**
  * @fileOverview My Profile page for authenticated users (Admin and Store Manager).
- * Allows users to:
- *  - View their profile information (name, email, contact number from Firestore).
- *  - Update their name and contact number (saved to Firestore).
- *  - Change their password (via Firebase Auth).
+ * Admins can additionally manage company details.
  */
 
-interface UserProfile {
+export interface UserProfile {
   uid: string; 
   name: string; 
   email: string; 
   contactNumber: string; 
   role?: 'admin' | 'store_manager'; 
+  // Company details (for admin role)
+  companyName?: string;
+  companyAddress?: string;
+  companyContact?: string;
+  companyGstin?: string;
+  companyLogoUrl?: string;
 }
 
 export default function MyProfilePage() {
@@ -34,11 +39,22 @@ export default function MyProfilePage() {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  // Personal details state
   const [name, setName] = useState(""); 
   const [contactNumber, setContactNumber] = useState("");
+
+  // Company details state (for admin)
+  const [companyName, setCompanyName] = useState("");
+  const [companyAddress, setCompanyAddress] = useState("");
+  const [companyContact, setCompanyContact] = useState("");
+  const [companyGstin, setCompanyGstin] = useState("");
+  const [companyLogoUrl, setCompanyLogoUrl] = useState("");
+
+  // Password change state
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
+  
   const [isUpdating, setIsUpdating] = useState(false);
 
   useEffect(() => {
@@ -56,38 +72,42 @@ export default function MyProfilePage() {
               name: userData.name || firebaseUser.displayName || "User", 
               contactNumber: userData.contactNumber || "",
               role: userData.role, 
+              companyName: userData.companyName || "",
+              companyAddress: userData.companyAddress || "",
+              companyContact: userData.companyContact || "",
+              companyGstin: userData.companyGstin || "",
+              companyLogoUrl: userData.companyLogoUrl || "",
             };
             setUserProfile(profile);
             setName(profile.name); 
             setContactNumber(profile.contactNumber); 
+            if (profile.role === 'admin') {
+                setCompanyName(profile.companyName || "");
+                setCompanyAddress(profile.companyAddress || "");
+                setCompanyContact(profile.companyContact || "");
+                setCompanyGstin(profile.companyGstin || "");
+                setCompanyLogoUrl(profile.companyLogoUrl || "");
+            }
           } else {
-            // Document doesn't exist, initialize local state for potential creation on save
             const profile: UserProfile = {
               uid: firebaseUser.uid,
               email: firebaseUser.email || "N/A",
               name: firebaseUser.displayName || firebaseUser.email || "User", 
               contactNumber: "",
-              role: undefined, // Role might be determinable later or set on first save
-            };
-            setUserProfile(profile);
-            setName(profile.name);
-            setContactNumber(profile.contactNumber); // Ensure contact number from this default is set
-            toast({ title: "Profile Incomplete", description: "Your profile details are not fully set up in the database. Please update and save.", variant: "default"});
-          }
-        } catch (error) {
-            console.error("Error fetching user profile from Firestore:", error);
-            toast({ title: "Profile Load Error", description: "Could not load your full profile details.", variant: "destructive"});
-            // Fallback local profile if Firestore read fails
-            const profile: UserProfile = {
-              uid: firebaseUser.uid,
-              email: firebaseUser.email || "N/A",
-              name: firebaseUser.displayName || firebaseUser.email || "User",
-              contactNumber: "",
-              role: undefined,
+              role: undefined, 
             };
             setUserProfile(profile);
             setName(profile.name);
             setContactNumber(profile.contactNumber);
+            toast({ title: "Profile Incomplete", description: "Your profile details are not fully set up. Please update and save.", variant: "default"});
+          }
+        } catch (error) {
+            console.error("Error fetching user profile from Firestore:", error);
+            toast({ title: "Profile Load Error", description: "Could not load your full profile details.", variant: "destructive"});
+            const profile: UserProfile = { // Fallback
+              uid: firebaseUser.uid, email: firebaseUser.email || "N/A", name: firebaseUser.displayName || firebaseUser.email || "User", contactNumber: "", role: undefined,
+            };
+            setUserProfile(profile); setName(profile.name); setContactNumber(profile.contactNumber);
         }
       } else {
         setUserProfile(null); 
@@ -100,7 +120,7 @@ export default function MyProfilePage() {
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsUpdating(true);
-    let profileUpdatedInFirestore = false;
+    let profileInfoUpdated = false;
     let passwordChanged = false;
 
     const firebaseUser = auth.currentUser;
@@ -110,49 +130,60 @@ export default function MyProfilePage() {
       return;
     }
 
-    // Check if name or contactNumber actually changed, or if profile was just loaded and is being saved for the first time
-    const hasProfileInfoChanges = name !== userProfile.name || contactNumber !== userProfile.contactNumber;
-    // We might want to save even if no changes if the profile was just loaded and potentially incomplete
-    // For now, we'll save if there are changes or if the user document might be new (though userProfile.uid should always exist if authenticated)
+    const hasPersonalChanges = name !== userProfile.name || contactNumber !== userProfile.contactNumber;
+    let hasCompanyChanges = false;
+    if (userProfile.role === 'admin') {
+        hasCompanyChanges = companyName !== (userProfile.companyName || "") ||
+                            companyAddress !== (userProfile.companyAddress || "") ||
+                            companyContact !== (userProfile.companyContact || "") ||
+                            companyGstin !== (userProfile.companyGstin || "") ||
+                            companyLogoUrl !== (userProfile.companyLogoUrl || "");
+    }
 
-    if (hasProfileInfoChanges) {
+    if (hasPersonalChanges || hasCompanyChanges) {
       try {
         const userDocRef = doc(db, "users", firebaseUser.uid);
-        const profileDataToSave: any = {
+        const profileDataToSave: Partial<UserProfile> = {
           name: name,
-          email: userProfile.email, // Keep email from auth/initial load
+          email: userProfile.email, 
           contactNumber: contactNumber,
-          updatedAt: serverTimestamp(),
+          updatedAt: serverTimestamp() as any, 
         };
-        if (userProfile.role) { // Persist role if it was loaded
-          profileDataToSave.role = userProfile.role;
+        if (userProfile.role) profileDataToSave.role = userProfile.role;
+
+        if (userProfile.role === 'admin') {
+            profileDataToSave.companyName = companyName;
+            profileDataToSave.companyAddress = companyAddress;
+            profileDataToSave.companyContact = companyContact;
+            profileDataToSave.companyGstin = companyGstin;
+            profileDataToSave.companyLogoUrl = companyLogoUrl;
         }
         
-        // Use setDoc with merge:true to create if not exists, or update if exists
         await setDoc(userDocRef, profileDataToSave, { merge: true });
         
         setUserProfile(prev => prev ? {
             ...prev, 
             name: name, 
-            contactNumber: contactNumber 
+            contactNumber: contactNumber,
+            ...(userProfile.role === 'admin' && {
+                companyName, companyAddress, companyContact, companyGstin, companyLogoUrl
+            })
         } : null); 
-        profileUpdatedInFirestore = true;
+        profileInfoUpdated = true;
       } catch (error) {
         console.error("Error updating profile in Firestore: ", error);
-        toast({ title: "Profile Update Failed", description: "Failed to update your name or contact number in the database.", variant: "destructive" });
+        toast({ title: "Profile Update Failed", description: "Failed to update your information in the database.", variant: "destructive" });
       }
     }
 
     if (newPassword) {
       if (newPassword !== confirmNewPassword) {
-        toast({ title: "Password Mismatch", description: "New passwords do not match. Please re-enter.", variant: "destructive" });
-        setIsUpdating(false);
-        return;
+        toast({ title: "Password Mismatch", description: "New passwords do not match.", variant: "destructive" });
+        setIsUpdating(false); return;
       }
       if (!currentPassword) {
-        toast({ title: "Current Password Required", description: "Please enter your current password to set a new one.", variant: "destructive" });
-        setIsUpdating(false);
-        return;
+        toast({ title: "Current Password Required", description: "Enter current password to set a new one.", variant: "destructive" });
+        setIsUpdating(false); return;
       }
 
       try {
@@ -161,43 +192,29 @@ export default function MyProfilePage() {
             await reauthenticateWithCredential(firebaseUser, credential);
             await updatePassword(firebaseUser, newPassword); 
             passwordChanged = true;
-            setCurrentPassword("");
-            setNewPassword("");
-            setConfirmNewPassword("");
-        } else {
-            throw new Error("User email not found for re-authentication. Cannot change password.");
-        }
+            setCurrentPassword(""); setNewPassword(""); setConfirmNewPassword("");
+        } else { throw new Error("User email not found for re-authentication."); }
       } catch (error: any) {
         console.error("Error updating password: ", error);
-        let errorMessage = "Failed to update password. Please try again.";
-        if (error.code === 'auth/wrong-password') {
-            errorMessage = "Incorrect current password. Please try again.";
-        } else if (error.code === 'auth/weak-password') {
-            errorMessage = "The new password is too weak. It must be at least 6 characters.";
-        } else if (error.code === 'auth/requires-recent-login') {
-             errorMessage = "This operation is sensitive and requires recent authentication. Please log out and log back in before changing your password.";
-        }
-        toast({ title: "Password Change Failed", description: errorMessage, variant: "destructive" });
-        setIsUpdating(false);
-        return; 
+        let errMsg = "Failed to update password.";
+        if (error.code === 'auth/wrong-password') errMsg = "Incorrect current password.";
+        else if (error.code === 'auth/weak-password') errMsg = "New password is too weak (min. 6 characters).";
+        else if (error.code === 'auth/requires-recent-login') errMsg = "Re-login required for this sensitive operation.";
+        toast({ title: "Password Change Failed", description: errMsg, variant: "destructive" });
+        setIsUpdating(false); return; 
       }
     }
 
-    if (profileUpdatedInFirestore && passwordChanged) {
-      toast({ title: "Profile & Password Updated", description: "Your information and password have been successfully updated." });
-    } else if (profileUpdatedInFirestore) {
-      toast({ title: "Profile Updated", description: "Your name/contact information has been updated." });
-    } else if (passwordChanged) {
-      toast({ title: "Password Changed", description: "Your password has been successfully updated." });
-    } else if (!hasProfileInfoChanges && !newPassword) { 
-       toast({ title: "No Changes Detected", description: "No information was changed." });
-    }
+    if (profileInfoUpdated && passwordChanged) toast({ title: "Profile & Password Updated", description: "Information and password updated." });
+    else if (profileInfoUpdated) toast({ title: "Profile Updated", description: "Your information has been updated." });
+    else if (passwordChanged) toast({ title: "Password Changed", description: "Password successfully updated." });
+    else if (!hasPersonalChanges && !hasCompanyChanges && !newPassword) toast({ title: "No Changes", description: "No information was changed." });
     
     setIsUpdating(false);
   };
   
   if (isLoading) {
-    return <PageHeader title="My Profile" description="Loading your profile information..." icon={UserCircle} />;
+    return <PageHeader title="My Profile" description="Loading your profile..." icon={UserCircle} />;
   }
 
   if (!userProfile) {
@@ -206,96 +223,98 @@ export default function MyProfilePage() {
 
   return (
     <>
-      <PageHeader
-        title="My Profile"
-        description="View and update your personal information and account password."
-        icon={UserCircle}
-      />
-      <Card className="shadow-lg rounded-xl max-w-2xl mx-auto">
-        <form onSubmit={handleUpdateProfile}>
-          <CardHeader>
-            <CardTitle className="font-headline text-foreground">Your Account Details</CardTitle>
-            <CardDescription>Manage your display name, contact information, and password.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="space-y-2">
-              <Label htmlFor="email" className="flex items-center"><Mail className="mr-2 h-4 w-4 text-muted-foreground"/>Email (Login ID)</Label>
-              <Input id="email" value={userProfile.email} disabled readOnly className="bg-muted/50"/>
-               {userProfile.role && <p className="text-xs text-muted-foreground mt-1">Role: <span className="font-semibold capitalize">{userProfile.role.replace('_', ' ')}</span></p>}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="name" className="flex items-center"><UserCircle className="mr-2 h-4 w-4 text-muted-foreground"/>Display Name</Label>
-              <Input 
-                id="name" 
-                placeholder="Enter your display name" 
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                disabled={isUpdating}
-                autoComplete="name"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="contactNumber" className="flex items-center"><Phone className="mr-2 h-4 w-4 text-muted-foreground"/>Contact Number</Label>
-              <Input 
-                id="contactNumber" 
-                placeholder="Enter your contact number" 
-                value={contactNumber}
-                onChange={(e) => setContactNumber(e.target.value)}
-                disabled={isUpdating}
-                autoComplete="tel"
-              />
-            </div>
-            
-            <div className="border-t pt-6 space-y-2">
-                <h3 className="text-lg font-medium flex items-center"><ShieldCheck className="mr-2 h-5 w-5 text-primary" />Change Password</h3>
-                <p className="text-sm text-muted-foreground">Leave these fields blank if you do not want to change your password.</p>
-            </div>
-             <div className="space-y-2">
-              <Label htmlFor="currentPassword">Current Password</Label>
-              <Input 
-                id="currentPassword" 
-                type="password" 
-                placeholder="Enter current password to change" 
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                disabled={isUpdating}
-                autoComplete="current-password"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="newPassword">New Password</Label>
-              <Input 
-                id="newPassword" 
-                type="password" 
-                placeholder="Enter new password (min. 6 characters)" 
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                disabled={isUpdating}
-                autoComplete="new-password"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="confirmNewPassword">Confirm New Password</Label>
-              <Input 
-                id="confirmNewPassword" 
-                type="password" 
-                placeholder="Re-enter new password"
-                value={confirmNewPassword}
-                onChange={(e) => setConfirmNewPassword(e.target.value)} 
-                disabled={isUpdating}
-                autoComplete="new-password"
-              />
-            </div>
-          </CardContent>
-          <CardFooter className="flex flex-col sm:flex-row">
-            <Button type="submit" className="w-full sm:w-auto" disabled={isUpdating || isLoading}>
-              {isUpdating ? "Updating Profile..." : "Update Profile & Password"}
+      <PageHeader title="My Profile" description="View and update your personal & company information." icon={UserCircle}/>
+      <form onSubmit={handleUpdateProfile}>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* Personal Details Card */}
+            <Card className="md:col-span-1 shadow-lg rounded-xl">
+                <CardHeader>
+                    <CardTitle className="font-headline text-foreground text-xl">Personal Details</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div className="space-y-1.5">
+                        <Label htmlFor="email" className="flex items-center text-sm"><Mail className="mr-2 h-4 w-4 text-muted-foreground"/>Email (Login ID)</Label>
+                        <Input id="email" value={userProfile.email} disabled readOnly className="bg-muted/50 text-sm"/>
+                        {userProfile.role && <p className="text-xs text-muted-foreground pt-1">Role: <span className="font-semibold capitalize">{userProfile.role.replace('_', ' ')}</span></p>}
+                    </div>
+                    <div className="space-y-1.5">
+                        <Label htmlFor="name" className="flex items-center text-sm"><UserCircle className="mr-2 h-4 w-4 text-muted-foreground"/>Display Name</Label>
+                        <Input id="name" placeholder="Your display name" value={name} onChange={(e) => setName(e.target.value)} disabled={isUpdating} autoComplete="name" className="text-sm"/>
+                    </div>
+                    <div className="space-y-1.5">
+                        <Label htmlFor="contactNumber" className="flex items-center text-sm"><Phone className="mr-2 h-4 w-4 text-muted-foreground"/>Contact Number</Label>
+                        <Input id="contactNumber" placeholder="Your contact number" value={contactNumber} onChange={(e) => setContactNumber(e.target.value)} disabled={isUpdating} autoComplete="tel" className="text-sm"/>
+                    </div>
+                </CardContent>
+            </Card>
+
+            {/* Company Details Card (Admin Only) */}
+            {userProfile.role === 'admin' && (
+            <Card className="md:col-span-2 shadow-lg rounded-xl">
+                <CardHeader>
+                    <CardTitle className="font-headline text-foreground text-xl">Company Details (for Invoices)</CardTitle>
+                    <CardDescription className="text-xs">This information will appear on generated invoices.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                            <Label htmlFor="companyName" className="flex items-center text-sm"><Building className="mr-2 h-4 w-4 text-muted-foreground"/>Company Name</Label>
+                            <Input id="companyName" placeholder="Your Company Name" value={companyName} onChange={(e) => setCompanyName(e.target.value)} disabled={isUpdating} className="text-sm"/>
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label htmlFor="companyContact" className="flex items-center text-sm"><Phone className="mr-2 h-4 w-4 text-muted-foreground"/>Company Contact</Label>
+                            <Input id="companyContact" placeholder="Company Phone or Email" value={companyContact} onChange={(e) => setCompanyContact(e.target.value)} disabled={isUpdating} className="text-sm"/>
+                        </div>
+                    </div>
+                    <div className="space-y-1.5">
+                        <Label htmlFor="companyAddress" className="flex items-center text-sm"><Globe className="mr-2 h-4 w-4 text-muted-foreground"/>Company Address</Label>
+                        <Textarea id="companyAddress" placeholder="Full Company Address" value={companyAddress} onChange={(e) => setCompanyAddress(e.target.value)} disabled={isUpdating} rows={2} className="text-sm"/>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                            <Label htmlFor="companyGstin" className="flex items-center text-sm"><FileTextIcon className="mr-2 h-4 w-4 text-muted-foreground"/>Company GSTIN (Optional)</Label>
+                            <Input id="companyGstin" placeholder="Company GSTIN" value={companyGstin} onChange={(e) => setCompanyGstin(e.target.value)} disabled={isUpdating} className="text-sm"/>
+                        </div>
+                        <div className="space-y-1.5">
+                             <Label htmlFor="companyLogoUrl" className="flex items-center text-sm"><ImageIcon className="mr-2 h-4 w-4 text-muted-foreground"/>Company Logo URL (Optional)</Label>
+                             <Input id="companyLogoUrl" placeholder="https://example.com/logo.png" value={companyLogoUrl} onChange={(e) => setCompanyLogoUrl(e.target.value)} disabled={isUpdating} className="text-sm"/>
+                        </div>
+                    </div>
+                </CardContent>
+            </Card>
+            )}
+        </div>
+
+        {/* Password Change Card */}
+        <Card className="mt-6 shadow-lg rounded-xl">
+            <CardHeader>
+                <CardTitle className="font-headline text-foreground text-xl flex items-center"><ShieldCheck className="mr-2 h-5 w-5 text-primary" />Change Password</CardTitle>
+                <CardDescription className="text-xs">Leave fields blank if you do not want to change password.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="space-y-1.5">
+                        <Label htmlFor="currentPassword">Current Password</Label>
+                        <Input id="currentPassword" type="password" placeholder="Required to change" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} disabled={isUpdating} autoComplete="current-password" className="text-sm"/>
+                    </div>
+                    <div className="space-y-1.5">
+                        <Label htmlFor="newPassword">New Password</Label>
+                        <Input id="newPassword" type="password" placeholder="Min. 6 characters" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} disabled={isUpdating} autoComplete="new-password" className="text-sm"/>
+                    </div>
+                    <div className="space-y-1.5">
+                        <Label htmlFor="confirmNewPassword">Confirm New Password</Label>
+                        <Input id="confirmNewPassword" type="password" placeholder="Re-enter new password" value={confirmNewPassword} onChange={(e) => setConfirmNewPassword(e.target.value)} disabled={isUpdating} autoComplete="new-password" className="text-sm"/>
+                    </div>
+                </div>
+            </CardContent>
+        </Card>
+
+        <CardFooter className="mt-6 py-4 px-0 flex justify-end">
+            <Button type="submit" size="lg" className="w-full sm:w-auto" disabled={isUpdating || isLoading}>
+              {isUpdating ? "Updating..." : "Save All Changes"}
             </Button>
-          </CardFooter>
-        </form>
-      </Card>
+        </CardFooter>
+      </form>
     </>
   );
 }
-
-    

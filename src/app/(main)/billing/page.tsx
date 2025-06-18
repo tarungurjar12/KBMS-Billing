@@ -1,28 +1,28 @@
 
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/page-header";
-import { FileText, PlusCircle, MoreHorizontal, Download, Printer, Edit, Eye, Trash2, AlertCircle } from "lucide-react";
+import { FileText, PlusCircle, MoreHorizontal, Download, Printer, Edit, Eye, Trash2, AlertCircle, Loader2 } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
-import { collection, getDocs, doc, updateDoc, deleteDoc, query, orderBy, Timestamp, serverTimestamp } from 'firebase/firestore';
+import { collection, getDocs, doc, updateDoc, deleteDoc, query, orderBy, Timestamp, serverTimestamp, where, limit, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase/firebaseConfig';
 import { format, parseISO } from 'date-fns';
+import type { UserProfile } from '../my-profile/page';
+import { InvoiceTemplate } from '@/components/invoice/invoice-template';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
+import { useReactToPrint } from 'react-to-print';
 
 /**
  * @fileOverview Page for Admin to manage Billing and Invoicing.
- * Allows Admin to:
- *  - View a list of all generated invoices from Firestore.
- *  - Navigate to create new invoices.
- *  - Perform actions like view (placeholder), download (placeholder), print (placeholder), edit, 
- *    update status, and delete individual invoices.
- * Data is fetched from and saved to Firebase Firestore.
  */
 
 export interface InvoiceItem {
@@ -55,6 +55,15 @@ export interface Invoice {
   updatedAt?: Timestamp; 
 }
 
+// Simplified company details structure for invoice template
+export interface CompanyDetailsForInvoice {
+  companyName?: string;
+  companyAddress?: string;
+  companyContact?: string;
+  companyGstin?: string;
+  companyLogoUrl?: string;
+}
+
 const formatCurrency = (num: number): string => `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export default function BillingPage() {
@@ -62,6 +71,42 @@ export default function BillingPage() {
   const { toast } = useToast();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingCompanyDetails, setIsLoadingCompanyDetails] = useState(false);
+  const [companyDetails, setCompanyDetails] = useState<CompanyDetailsForInvoice | null>(null);
+  const [isInvoiceViewOpen, setIsInvoiceViewOpen] = useState(false);
+  const [selectedInvoiceForView, setSelectedInvoiceForView] = useState<Invoice | null>(null);
+  const invoicePrintRef = useRef<HTMLDivElement>(null);
+
+  const fetchCompanyDetails = useCallback(async () => {
+    setIsLoadingCompanyDetails(true);
+    try {
+      const adminQuery = query(collection(db, "users"), where("role", "==", "admin"), limit(1));
+      const adminSnapshot = await getDocs(adminQuery);
+      if (!adminSnapshot.empty) {
+        const adminData = adminSnapshot.docs[0].data() as UserProfile;
+        setCompanyDetails({
+          companyName: adminData.companyName,
+          companyAddress: adminData.companyAddress,
+          companyContact: adminData.companyContact,
+          companyGstin: adminData.companyGstin,
+          companyLogoUrl: adminData.companyLogoUrl,
+        });
+      } else {
+        console.warn("No admin user found with company details.");
+        setCompanyDetails(null); // Or set to default/empty placeholder
+      }
+    } catch (error) {
+      console.error("Error fetching company details: ", error);
+      toast({ title: "Error", description: "Could not load company details for invoice.", variant: "destructive" });
+      setCompanyDetails(null);
+    } finally {
+      setIsLoadingCompanyDetails(false);
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    fetchCompanyDetails();
+  }, [fetchCompanyDetails]);
 
   const fetchInvoices = useCallback(async () => {
     setIsLoading(true);
@@ -144,19 +189,66 @@ export default function BillingPage() {
 
   const handleViewInvoice = (invoiceId: string) => {
     const invoice = invoices.find(inv => inv.id === invoiceId);
-    toast({ 
-        title: `View Invoice (Placeholder): ${invoice?.invoiceNumber || invoiceId}`, 
-        description: `Detailed view for Customer: ${invoice?.customerName}, Total: ${invoice?.displayTotal} is planned for future implementation.` 
-    });
+    if (invoice) {
+      setSelectedInvoiceForView(invoice);
+      setIsInvoiceViewOpen(true);
+    } else {
+      toast({ title: "Error", description: "Invoice details not found.", variant: "destructive" });
+    }
   };
 
-  const handleDownloadPDF = (invoiceId: string) => {
-    toast({ title: "Download PDF (Placeholder)", description: `PDF generation for invoice ID: ${invoiceId} is a planned feature.` });
+  const handleDownloadPDF = async () => {
+    if (!invoicePrintRef.current || !selectedInvoiceForView) {
+      toast({ title: "Error", description: "Cannot download PDF. Invoice content not available.", variant: "destructive" });
+      return;
+    }
+    const canvas = await html2canvas(invoicePrintRef.current, { scale: 2 });
+    const imgData = canvas.toDataURL('image/png');
+    const pdf = new jsPDF({
+      orientation: 'portrait',
+      unit: 'px',
+      format: 'a4'
+    });
+    const pdfWidth = pdf.internal.pageSize.getWidth();
+    const pdfHeight = pdf.internal.pageSize.getHeight();
+    const imgProps = pdf.getImageProperties(imgData);
+    const ratio = imgProps.height / imgProps.width;
+    const imgWidth = pdfWidth - 20; // with some margin
+    const imgHeight = imgWidth * ratio;
+
+    let heightLeft = imgHeight;
+    let position = 10; // top margin
+
+    pdf.addImage(imgData, 'PNG', 10, position, imgWidth, imgHeight);
+    heightLeft -= pdfHeight;
+
+    while (heightLeft > 0) {
+      position = heightLeft - imgHeight + 10; // top margin for new page
+      pdf.addPage();
+      pdf.addImage(imgData, 'PNG', 10, position, imgWidth, imgHeight);
+      heightLeft -= pdfHeight;
+    }
+    pdf.save(`Invoice-${selectedInvoiceForView.invoiceNumber}.pdf`);
+    toast({ title: "PDF Downloaded", description: `Invoice ${selectedInvoiceForView.invoiceNumber}.pdf started downloading.` });
   };
   
-  const handlePrintInvoice = (invoiceId: string) => {
-    toast({ title: "Print Invoice (Placeholder)", description: `Print-friendly view/logic for invoice ID: ${invoiceId} to be implemented.` });
+  const reactToPrintTrigger = () => {
+    return (
+      <Button variant="outline" className="w-full sm:w-auto" disabled={!selectedInvoiceForView || isLoadingCompanyDetails}>
+        <Printer className="mr-2 h-4 w-4" /> Print Invoice
+      </Button>
+    );
   };
+
+  const handleActualPrint = useReactToPrint({
+    content: () => invoicePrintRef.current,
+    documentTitle: `Invoice-${selectedInvoiceForView?.invoiceNumber || 'details'}`,
+    onPrintError: (error) => {
+      console.error("Print error:", error);
+      toast({ title: "Print Error", description: "Could not print the invoice.", variant: "destructive" });
+    }
+  });
+
 
   const handleEditInvoice = (invoiceId: string) => {
     router.push(`/create-bill?editInvoiceId=${invoiceId}`); 
@@ -187,18 +279,12 @@ export default function BillingPage() {
   
   const getBadgeVariant = (status: Invoice['status']): "default" | "secondary" | "destructive" | "outline" => {
     switch (status) {
-      case "Paid":
-        return "default"; 
-      case "Pending":
-        return "secondary";
-      case "Overdue":
-        return "destructive";
-      case "Partially Paid":
-        return "outline"; 
-      case "Cancelled":
-        return "destructive"; 
-      default:
-        return "secondary";
+      case "Paid": return "default"; 
+      case "Pending": return "secondary";
+      case "Overdue": return "destructive";
+      case "Partially Paid": return "outline"; 
+      case "Cancelled": return "destructive"; 
+      default: return "secondary";
     }
   };
 
@@ -280,10 +366,10 @@ export default function BillingPage() {
                           <DropdownMenuItem onClick={() => handleViewInvoice(invoice.id)}>
                               <Eye className="mr-2 h-4 w-4" /> View Details
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleDownloadPDF(invoice.id)}>
+                           <DropdownMenuItem onClick={() => {setSelectedInvoiceForView(invoice); handleDownloadPDF();}}>
                               <Download className="mr-2 h-4 w-4" /> Download PDF
                           </DropdownMenuItem>
-                           <DropdownMenuItem onClick={() => handlePrintInvoice(invoice.id)}>
+                           <DropdownMenuItem onClick={() => {setSelectedInvoiceForView(invoice); handleActualPrint();}}>
                               <Printer className="mr-2 h-4 w-4" /> Print Invoice
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
@@ -309,6 +395,43 @@ export default function BillingPage() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={isInvoiceViewOpen} onOpenChange={setIsInvoiceViewOpen}>
+        <DialogContent className="max-w-3xl w-[90vw] max-h-[90vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Invoice Details: {selectedInvoiceForView?.invoiceNumber}</DialogTitle>
+            <DialogDescription>
+              Customer: {selectedInvoiceForView?.customerName} | Total: {selectedInvoiceForView?.displayTotal}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex-grow overflow-y-auto p-2" ref={invoicePrintRef}>
+            {isLoadingCompanyDetails && <div className="flex items-center justify-center h-full"><Loader2 className="h-8 w-8 animate-spin text-primary" /> <span className="ml-2">Loading company details...</span></div>}
+            {!isLoadingCompanyDetails && selectedInvoiceForView && companyDetails && (
+              <InvoiceTemplate invoice={selectedInvoiceForView} companyDetails={companyDetails} />
+            )}
+            {!isLoadingCompanyDetails && selectedInvoiceForView && !companyDetails && (
+                <div className="text-center text-red-500 p-4">Company details could not be loaded. Invoice display may be incomplete.</div>
+            )}
+          </div>
+           <div className="flex flex-col sm:flex-row justify-end gap-2 p-4 border-t">
+              <Button variant="outline" onClick={() => setIsInvoiceViewOpen(false)} className="w-full sm:w-auto">Close</Button>
+              <Button onClick={handleDownloadPDF} disabled={!selectedInvoiceForView || isLoadingCompanyDetails || !companyDetails} className="w-full sm:w-auto">
+                <Download className="mr-2 h-4 w-4" /> Download PDF
+              </Button>
+              <Button onClick={handleActualPrint} disabled={!selectedInvoiceForView || isLoadingCompanyDetails || !companyDetails} className="w-full sm:w-auto">
+                <Printer className="mr-2 h-4 w-4" /> Print Invoice
+              </Button>
+            </div>
+        </DialogContent>
+      </Dialog>
+      {/* Hidden div for react-to-print to clone content when printing directly from dropdown (not used currently as dialog is preferred for full view) */}
+      {selectedInvoiceForView && companyDetails && (
+        <div style={{ display: "none" }}> 
+          <div ref={invoicePrintRef}>
+            <InvoiceTemplate invoice={selectedInvoiceForView} companyDetails={companyDetails} />
+          </div>
+        </div>
+      )}
     </>
   );
 }
