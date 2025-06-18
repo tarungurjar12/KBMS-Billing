@@ -28,7 +28,8 @@ export function InvoiceTemplate({ invoice, companyDetails }: InvoiceTemplateProp
     <div className="bg-white p-4 sm:p-8 rounded-lg shadow-sm border border-gray-200 text-gray-800 text-sm font-sans">
       {/* Header Section */}
       <div className="flex flex-col sm:flex-row justify-between items-start mb-6 sm:mb-8">
-        <div className="mb-4 sm:mb-0">
+        {/* Company Information (Left Column on SM+) */}
+        <div className="w-full sm:w-1/2 mb-4 sm:mb-0 sm:pr-2">
           {companyDetails.companyLogoUrl ? (
             <Image src={companyDetails.companyLogoUrl} alt={`${companyDetails.companyName || 'Company'} Logo`} width={120} height={60} className="object-contain max-h-16" />
           ) : (
@@ -36,12 +37,13 @@ export function InvoiceTemplate({ invoice, companyDetails }: InvoiceTemplateProp
               {getInitials(companyDetails.companyName)}
             </div>
           )}
-          <h1 className="text-xl sm:text-2xl font-bold text-primary mt-2">{companyDetails.companyName || "Your Company Name"}</h1>
-          <p className="text-xs">{companyDetails.companyAddress || "Company Address, City, State, Pin"}</p>
-          <p className="text-xs">{companyDetails.companyContact || "Phone: (XXX) XXX-XXXX | Email: contact@company.com"}</p>
-          {companyDetails.companyGstin && <p className="text-xs">GSTIN: {companyDetails.companyGstin}</p>}
+          <h1 className="text-xl sm:text-2xl font-bold text-primary mt-2 break-words">{companyDetails.companyName || "Your Company Name"}</h1>
+          <p className="text-xs break-words">{companyDetails.companyAddress || "Company Address, City, State, Pin"}</p>
+          <p className="text-xs break-words">{companyDetails.companyContact || "Phone: (XXX) XXX-XXXX | Email: contact@company.com"}</p>
+          {companyDetails.companyGstin && <p className="text-xs break-words">GSTIN: {companyDetails.companyGstin}</p>}
         </div>
-        <div className="text-left sm:text-right">
+        {/* Invoice Details (Right Column on SM+) */}
+        <div className="w-full sm:w-1/2 text-left sm:text-right sm:pl-2">
           <h2 className="text-2xl sm:text-3xl font-semibold text-gray-700 uppercase mb-1">Invoice</h2>
           <p className="text-xs"><strong>Invoice #:</strong> {invoice.invoiceNumber}</p>
           <p className="text-xs"><strong>Date:</strong> {invoice.date}</p>
@@ -138,3 +140,4 @@ export function InvoiceTemplate({ invoice, companyDetails }: InvoiceTemplateProp
     </div>
   );
 }
+
