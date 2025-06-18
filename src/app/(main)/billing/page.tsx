@@ -2,6 +2,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import ReactDOM from 'react-dom'; // Import ReactDOM
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -55,7 +56,6 @@ export interface Invoice {
   updatedAt?: Timestamp; 
 }
 
-// Simplified company details structure for invoice template
 export interface CompanyDetailsForInvoice {
   companyName?: string;
   companyAddress?: string;
@@ -75,7 +75,9 @@ export default function BillingPage() {
   const [companyDetails, setCompanyDetails] = useState<CompanyDetailsForInvoice | null>(null);
   const [isInvoiceViewOpen, setIsInvoiceViewOpen] = useState(false);
   const [selectedInvoiceForView, setSelectedInvoiceForView] = useState<Invoice | null>(null);
-  const invoicePrintRef = useRef<HTMLDivElement>(null);
+  
+  const invoicePrintRef = useRef<HTMLDivElement>(null); // For dialog content
+  const invoicePrintRefForDropdownHidden = useRef<HTMLDivElement>(null); // For hidden div content
 
   const fetchCompanyDetails = useCallback(async () => {
     setIsLoadingCompanyDetails(true);
@@ -93,7 +95,7 @@ export default function BillingPage() {
         });
       } else {
         console.warn("No admin user found with company details.");
-        setCompanyDetails(null); // Or set to default/empty placeholder
+        setCompanyDetails(null);
       }
     } catch (error) {
       console.error("Error fetching company details: ", error);
@@ -197,58 +199,104 @@ export default function BillingPage() {
     }
   };
 
-  const handleDownloadPDF = async () => {
-    if (!invoicePrintRef.current || !selectedInvoiceForView) {
-      toast({ title: "Error", description: "Cannot download PDF. Invoice content not available.", variant: "destructive" });
+  const handleDownloadPDF = async (invoiceToDownload: Invoice | null, companyDetailsForPdf: CompanyDetailsForInvoice | null) => {
+    if (!invoiceToDownload || !companyDetailsForPdf) {
+      toast({ title: "Error", description: "Invoice or company details not available for PDF generation.", variant: "destructive" });
       return;
     }
-    const canvas = await html2canvas(invoicePrintRef.current, { scale: 2 });
-    const imgData = canvas.toDataURL('image/png');
-    const pdf = new jsPDF({
-      orientation: 'portrait',
-      unit: 'px',
-      format: 'a4'
-    });
-    const pdfWidth = pdf.internal.pageSize.getWidth();
-    const pdfHeight = pdf.internal.pageSize.getHeight();
-    const imgProps = pdf.getImageProperties(imgData);
-    const ratio = imgProps.height / imgProps.width;
-    const imgWidth = pdfWidth - 20; // with some margin
-    const imgHeight = imgWidth * ratio;
-
-    let heightLeft = imgHeight;
-    let position = 10; // top margin
-
-    pdf.addImage(imgData, 'PNG', 10, position, imgWidth, imgHeight);
-    heightLeft -= pdfHeight;
-
-    while (heightLeft > 0) {
-      position = heightLeft - imgHeight + 10; // top margin for new page
-      pdf.addPage();
-      pdf.addImage(imgData, 'PNG', 10, position, imgWidth, imgHeight);
-      heightLeft -= pdfHeight;
-    }
-    pdf.save(`Invoice-${selectedInvoiceForView.invoiceNumber}.pdf`);
-    toast({ title: "PDF Downloaded", description: `Invoice ${selectedInvoiceForView.invoiceNumber}.pdf started downloading.` });
-  };
   
-  const reactToPrintTrigger = () => {
-    return (
-      <Button variant="outline" className="w-full sm:w-auto" disabled={!selectedInvoiceForView || isLoadingCompanyDetails}>
-        <Printer className="mr-2 h-4 w-4" /> Print Invoice
-      </Button>
+    const tempContainer = document.createElement('div');
+    tempContainer.style.position = 'absolute';
+    tempContainer.style.left = '-9999px';
+    tempContainer.style.top = '-9999px';
+    tempContainer.style.width = '800px'; // A4-like width
+    tempContainer.style.padding = '20px'; // Mimic some padding
+    tempContainer.style.background = 'white'; // Ensure background for canvas
+    document.body.appendChild(tempContainer);
+  
+    // Helper component to use refs and effects for rendering and cleanup
+    const InvoiceRenderer = ({ invoice, companyDetails, onRendered }: { invoice: Invoice, companyDetails: CompanyDetailsForInvoice, onRendered: (element: HTMLElement) => void }) => {
+      const renderRef = React.useRef<HTMLDivElement>(null);
+      React.useEffect(() => {
+        if (renderRef.current) {
+          // Allow a short timeout for images/styles to apply before capturing
+          const timer = setTimeout(() => {
+            if (renderRef.current) onRendered(renderRef.current);
+          }, 500); // Increased timeout slightly
+          return () => clearTimeout(timer);
+        }
+      }, [invoice, companyDetails, onRendered]);
+      return <div ref={renderRef}><InvoiceTemplate invoice={invoice} companyDetails={companyDetails} /></div>;
+    };
+  
+    const generatePdfFromElement = async (element: HTMLElement, currentInvoice: Invoice) => {
+      try {
+        const canvas = await html2canvas(element, {
+          scale: 2,
+          useCORS: true,
+          width: element.scrollWidth,
+          height: element.scrollHeight,
+          windowWidth: element.scrollWidth,
+          windowHeight: element.scrollHeight,
+          logging: false, // Disable html2canvas logging to console
+        });
+  
+        const imgData = canvas.toDataURL('image/png');
+        const pdf = new jsPDF({ orientation: 'portrait', unit: 'px', format: 'a4' });
+        const pdfWidth = pdf.internal.pageSize.getWidth();
+        const pdfHeight = pdf.internal.pageSize.getHeight();
+        const imgProps = pdf.getImageProperties(imgData);
+  
+        const margin = 20;
+        const availableWidth = pdfWidth - (2 * margin);
+        const imgRenderHeight = (imgProps.height * availableWidth) / imgProps.width;
+        let currentPosition = margin;
+        let heightLeft = imgRenderHeight;
+  
+        pdf.addImage(imgData, 'PNG', margin, currentPosition, availableWidth, imgRenderHeight);
+        heightLeft -= (pdfHeight - (2 * margin));
+  
+        while (heightLeft > 0) {
+          pdf.addPage();
+          currentPosition -= (pdfHeight - (2 * margin)); // Negative offset for subsequent pages
+          pdf.addImage(imgData, 'PNG', margin, currentPosition, availableWidth, imgRenderHeight);
+          heightLeft -= (pdfHeight - (2 * margin));
+        }
+  
+        pdf.save(`Invoice-${currentInvoice.invoiceNumber}.pdf`);
+        toast({ title: "PDF Downloaded", description: `Invoice ${currentInvoice.invoiceNumber}.pdf started downloading.` });
+      } catch (error) {
+        console.error("Error generating PDF:", error);
+        toast({ title: "PDF Generation Error", description: "Could not generate PDF.", variant: "destructive" });
+      } finally {
+        ReactDOM.unmountComponentAtNode(tempContainer);
+        document.body.removeChild(tempContainer);
+      }
+    };
+    
+    // Render the InvoiceTemplate into the temporary container
+    ReactDOM.render(
+      <InvoiceRenderer invoice={invoiceToDownload} companyDetails={companyDetailsForPdf} onRendered={(el) => generatePdfFromElement(el, invoiceToDownload)} />,
+      tempContainer
     );
   };
-
+  
   const handleActualPrint = useReactToPrint({
-    content: () => invoicePrintRef.current,
+    content: () => {
+      if (isInvoiceViewOpen && invoicePrintRef.current) {
+        return invoicePrintRef.current;
+      }
+      if (!isInvoiceViewOpen && invoicePrintRefForDropdownHidden.current) {
+        return invoicePrintRefForDropdownHidden.current;
+      }
+      return null;
+    },
     documentTitle: `Invoice-${selectedInvoiceForView?.invoiceNumber || 'details'}`,
     onPrintError: (error) => {
       console.error("Print error:", error);
       toast({ title: "Print Error", description: "Could not print the invoice.", variant: "destructive" });
     }
   });
-
 
   const handleEditInvoice = (invoiceId: string) => {
     router.push(`/create-bill?editInvoiceId=${invoiceId}`); 
@@ -366,10 +414,25 @@ export default function BillingPage() {
                           <DropdownMenuItem onClick={() => handleViewInvoice(invoice.id)}>
                               <Eye className="mr-2 h-4 w-4" /> View Details
                           </DropdownMenuItem>
-                           <DropdownMenuItem onClick={() => {setSelectedInvoiceForView(invoice); handleDownloadPDF();}}>
+                           <DropdownMenuItem onClick={() => {
+                                const invoiceForAction = invoices.find(inv => inv.id === invoice.id);
+                                if (invoiceForAction && companyDetails) {
+                                    handleDownloadPDF(invoiceForAction, companyDetails);
+                                } else if (!companyDetails) {
+                                    toast({ title: "Info", description: "Company details still loading, please try again shortly.", variant: "default" });
+                                } else {
+                                    toast({ title: "Error", description: "Invoice details not found for PDF generation.", variant: "destructive" });
+                                }
+                           }}>
                               <Download className="mr-2 h-4 w-4" /> Download PDF
                           </DropdownMenuItem>
-                           <DropdownMenuItem onClick={() => {setSelectedInvoiceForView(invoice); handleActualPrint();}}>
+                           <DropdownMenuItem onClick={() => {
+                                const invoiceForAction = invoices.find(inv => inv.id === invoice.id);
+                                if (invoiceForAction) {
+                                    setSelectedInvoiceForView(invoiceForAction);
+                                    setTimeout(() => handleActualPrint(), 0); // Allow state to update hidden div
+                                }
+                           }}>
                               <Printer className="mr-2 h-4 w-4" /> Print Invoice
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
@@ -415,7 +478,7 @@ export default function BillingPage() {
           </div>
            <div className="flex flex-col sm:flex-row justify-end gap-2 p-4 border-t">
               <Button variant="outline" onClick={() => setIsInvoiceViewOpen(false)} className="w-full sm:w-auto">Close</Button>
-              <Button onClick={handleDownloadPDF} disabled={!selectedInvoiceForView || isLoadingCompanyDetails || !companyDetails} className="w-full sm:w-auto">
+              <Button onClick={() => handleDownloadPDF(selectedInvoiceForView, companyDetails)} disabled={!selectedInvoiceForView || isLoadingCompanyDetails || !companyDetails} className="w-full sm:w-auto">
                 <Download className="mr-2 h-4 w-4" /> Download PDF
               </Button>
               <Button onClick={handleActualPrint} disabled={!selectedInvoiceForView || isLoadingCompanyDetails || !companyDetails} className="w-full sm:w-auto">
@@ -424,14 +487,15 @@ export default function BillingPage() {
             </div>
         </DialogContent>
       </Dialog>
-      {/* Hidden div for react-to-print to clone content when printing directly from dropdown (not used currently as dialog is preferred for full view) */}
-      {selectedInvoiceForView && companyDetails && (
-        <div style={{ display: "none" }}> 
-          <div ref={invoicePrintRef}>
-            <InvoiceTemplate invoice={selectedInvoiceForView} companyDetails={companyDetails} />
+      
+      {/* Hidden div for react-to-print to clone content when printing directly from dropdown */}
+      <div style={{ display: "none" }}> 
+          <div ref={invoicePrintRefForDropdownHidden}>
+            {selectedInvoiceForView && companyDetails && (
+                 <InvoiceTemplate invoice={selectedInvoiceForView} companyDetails={companyDetails} />
+            )}
           </div>
-        </div>
-      )}
+      </div>
     </>
   );
 }
