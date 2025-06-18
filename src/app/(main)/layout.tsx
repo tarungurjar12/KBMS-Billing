@@ -62,27 +62,24 @@ export default function MainAppLayout({
         setIsAuthenticated(true);
         console.log("MainAppLayout verifyAndSetRole: Role from cookie:", roleFromCookie);
       } else {
-        // If no cookie, try to fetch role from Firestore
         try {
           const userDocRef = doc(db, "users", firebaseUser.uid);
           const userDocSnap = await getDoc(userDocRef);
           if (userDocSnap.exists()) {
             const firestoreRole = userDocSnap.data()?.role as UserProfile['role'];
             if (firestoreRole) {
-              setCookie('userRole', firestoreRole, 1); // Set cookie if found in Firestore
+              setCookie('userRole', firestoreRole, 1); 
               setCurrentRole(firestoreRole);
               setIsAuthenticated(true);
               console.log("MainAppLayout verifyAndSetRole: Role from Firestore:", firestoreRole);
             } else {
-              // User doc exists but no role field or invalid role
-              setIsAuthenticated(false); // Treat as not properly authenticated for app purposes
+              setIsAuthenticated(false); 
               setCurrentRole(undefined);
               deleteCookie('userRole');
               console.warn("MainAppLayout verifyAndSetRole: User doc found but role missing/invalid. Redirecting to login.");
               if (pathname !== '/login') router.push('/login');
             }
           } else {
-            // No user document in Firestore, user might be from Auth but not in our system
             setIsAuthenticated(false);
             setCurrentRole(undefined);
             deleteCookie('userRole');
@@ -97,7 +94,7 @@ export default function MainAppLayout({
           if (pathname !== '/login') router.push('/login');
         }
       }
-    } else { // No Firebase user
+    } else { 
       setIsAuthenticated(false);
       setCurrentRole(undefined);
       deleteCookie('userRole');
@@ -116,7 +113,7 @@ export default function MainAppLayout({
     
     const handleRoleChanged = () => {
         console.log("MainAppLayout: 'userRoleChanged' event received. Re-verifying role.");
-        verifyAndSetRole(auth.currentUser); // Re-check with current Firebase user
+        verifyAndSetRole(auth.currentUser); 
     };
     window.addEventListener('userRoleChanged', handleRoleChanged);
 
@@ -125,10 +122,11 @@ export default function MainAppLayout({
       unsubscribe();
       window.removeEventListener('userRoleChanged', handleRoleChanged);
     };
-  }, [verifyAndSetRole, pathname]); // Added pathname to re-check if navigation occurs before auth state resolves
+  }, [verifyAndSetRole, pathname]); 
 
-  if (isAuthenticated === null && pathname !== '/login') {
-    console.log("MainAppLayout: Auth state loading (isAuthenticated is null), showing skeleton.");
+  // Loading state: Either initial auth check or auth is true but role is still being fetched
+  if (isAuthenticated === null || (isAuthenticated === true && !currentRole && pathname !== '/login')) {
+    console.log("MainAppLayout: Auth/Role loading, showing skeleton. isAuthenticated:", isAuthenticated, "currentRole:", currentRole);
     return (
       <div className="flex min-h-screen w-full">
         <div className="hidden md:block border-r bg-muted/40 w-64 p-4 space-y-4">
@@ -146,6 +144,7 @@ export default function MainAppLayout({
     );
   }
   
+  // Not authenticated and not on login page: Redirect
   if (isAuthenticated === false && pathname !== '/login') {
       console.log("MainAppLayout: Auth state is false, not on login page. Showing redirecting message.");
       return (
@@ -155,7 +154,8 @@ export default function MainAppLayout({
       );
   }
 
-  if (isAuthenticated === true && pathname !== '/login' && currentRole) {
+  // Authenticated and role determined: Render main app
+  if (isAuthenticated === true && currentRole && pathname !== '/login') {
     console.log("MainAppLayout: User authenticated, rendering main app structure for role:", currentRole);
     return (
       <SidebarProvider defaultOpen> 
@@ -175,13 +175,15 @@ export default function MainAppLayout({
     );
   }
 
+  // On login page: Render login page children
   if (pathname === '/login') {
     console.log("MainAppLayout: Path is /login, rendering children (LoginPage).");
     return <>{children}</>;
   }
 
+  // Fallback (should ideally not be reached if logic above is comprehensive)
   console.log("MainAppLayout: Fallback rendering. isAuthenticated:", isAuthenticated, "pathname:", pathname, "role:", currentRole);
-  return ( // Fallback loading state or if role determination is pending but auth is true
+  return ( 
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
         <p className="text-muted-foreground">Loading application...</p>
     </div>

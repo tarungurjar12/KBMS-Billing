@@ -57,7 +57,9 @@ export default function MyProfilePage() {
   const [companyLogoUrl, setCompanyLogoUrl] = useState("");
 
   // State to hold company details fetched from Admin, for Manager's display
-  const [companyDetailsForDisplay, setCompanyDetailsForDisplay] = useState<Partial<UserProfile>>({});
+  const [companyDetailsForDisplay, setCompanyDetailsForDisplay] = useState<Partial<UserProfile>>({
+    companyName: "", companyAddress: "", companyContact: "", companyGstin: "", companyLogoUrl: ""
+  });
 
   // Password change state
   const [currentPassword, setCurrentPassword] = useState("");
@@ -93,9 +95,12 @@ export default function MyProfilePage() {
             };
           } else {
             let determinedRole: 'admin' | 'store_manager' | undefined = undefined;
-            if (firebaseUser.email === 'admin@kbms.com') {
+            if (firebaseUser.email === 'admin@kbms.com') { // Special handling for primary admin email
               determinedRole = 'admin';
             }
+            // For other users, role might be set during manager creation, or needs to be assigned.
+            // If creating profile here and role is unknown, it remains undefined.
+
             profileData = {
               uid: firebaseUser.uid,
               email: firebaseUser.email || "N/A",
@@ -106,7 +111,7 @@ export default function MyProfilePage() {
             const dataToSet: Partial<UserProfile> = {
                 name: profileData.name, email: profileData.email, uid: firebaseUser.uid,
                 createdAt: serverTimestamp() as Timestamp, updatedAt: serverTimestamp() as Timestamp,
-                ...(determinedRole && { role: determinedRole })
+                ...(determinedRole && { role: determinedRole }) // Only set role if determined
             };
             await setDoc(userDocRef, dataToSet, { merge: true });
             toast({ title: "Profile Initialized", description: `Your basic profile${determinedRole ? ` with role '${determinedRole}'` : ''} has been created.`, variant: "default"});
@@ -123,7 +128,6 @@ export default function MyProfilePage() {
             setCompanyGstin(profileData.companyGstin || "");
             setCompanyLogoUrl(profileData.companyLogoUrl || "");
           } else if (profileData.role === 'store_manager') {
-            // Fetch company details from an admin profile for manager display
             try {
               const adminQuery = query(collection(db, "users"), where("role", "==", "admin"), limit(1));
               const adminSnapshot = await getDocs(adminQuery);
@@ -138,11 +142,13 @@ export default function MyProfilePage() {
                 });
               } else {
                 console.warn("MyProfilePage: No admin user found to fetch company details for manager view.");
-                toast({ title: "Company Info Unavailable", description: "Could not load company details. Please contact an admin.", variant: "default" });
+                toast({ title: "Company Info Unavailable", description: "Could not load company details. Admin may need to set them up.", variant: "default" });
+                setCompanyDetailsForDisplay({ companyName: "N/A", companyAddress: "N/A", companyContact: "N/A", companyGstin: "N/A", companyLogoUrl: "" }); // Explicitly clear/set to N/A
               }
             } catch (adminFetchError) {
               console.error("Error fetching admin company details for manager view:", adminFetchError);
               toast({ title: "Company Info Error", description: "Failed to load company details.", variant: "destructive" });
+              setCompanyDetailsForDisplay({ companyName: "Error loading", companyAddress: "", companyContact: "", companyGstin: "", companyLogoUrl: "" });
             }
           }
           
@@ -196,9 +202,9 @@ export default function MyProfilePage() {
           name: name,
           contactNumber: contactNumber,
           updatedAt: serverTimestamp() as Timestamp, 
-          email: userProfile.email, // Ensure email is preserved
-          role: userProfile.role,   // Ensure role is preserved
-          uid: userProfile.uid,     // Ensure uid is preserved
+          email: userProfile.email, 
+          role: userProfile.role,   
+          uid: userProfile.uid,     
         };
         
         if (isEffectivelyAdmin) {
@@ -209,7 +215,7 @@ export default function MyProfilePage() {
             profileDataToSave.companyLogoUrl = companyLogoUrl;
         }
         
-        await setDoc(userDocRef, profileDataToSave, { merge: true });
+        await setDoc(userDocRef, profileDataToSave, { merge: true }); // Use setDoc with merge:true
         
         setUserProfile(prev => prev ? {
             ...prev, 
@@ -304,7 +310,7 @@ export default function MyProfilePage() {
                     <CardTitle className="font-headline text-foreground text-xl">Company Information</CardTitle>
                     <CardDescription className="text-xs flex items-center">
                        <Info className="h-3 w-3 mr-1.5 text-muted-foreground"/>
-                       This information will appear on generated invoices. {isEffectivelyAdmin ? "Editable by you (Admin)." : "View-only for Store Managers."}
+                       This information will appear on generated invoices. {isEffectivelyAdmin ? "Editable by you (Admin)." : "View-only. Set by Admin."}
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -362,6 +368,9 @@ export default function MyProfilePage() {
                             />
                         </div>
                     </div>
+                     {!isEffectivelyAdmin && (companyDetailsForDisplay.companyName === "" || companyDetailsForDisplay.companyName === "N/A" || companyDetailsForDisplay.companyName === "Error loading") && (
+                        <p className="text-xs text-muted-foreground text-center pt-2">Company details are not yet configured by an administrator or could not be loaded.</p>
+                    )}
                 </CardContent>
             </Card>
         </div>
@@ -398,3 +407,4 @@ export default function MyProfilePage() {
     </>
   );
 }
+
