@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { auth, db } from '@/lib/firebase/firebaseConfig'; 
 import { onAuthStateChanged, updatePassword, EmailAuthProvider, reauthenticateWithCredential, User as FirebaseUser } from "firebase/auth";
-import { doc, getDoc, updateDoc, serverTimestamp } from "firebase/firestore"; 
+import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore"; 
 
 /**
  * @fileOverview My Profile page for authenticated users (Admin and Store Manager).
@@ -61,20 +61,23 @@ export default function MyProfilePage() {
             setName(profile.name); 
             setContactNumber(profile.contactNumber); 
           } else {
+            // Document doesn't exist, initialize local state for potential creation on save
             const profile: UserProfile = {
               uid: firebaseUser.uid,
               email: firebaseUser.email || "N/A",
               name: firebaseUser.displayName || firebaseUser.email || "User", 
               contactNumber: "",
-              role: undefined, 
+              role: undefined, // Role might be determinable later or set on first save
             };
             setUserProfile(profile);
             setName(profile.name);
-            toast({ title: "Profile Incomplete", description: "Some profile details are missing from the database. Please update if necessary.", variant: "default"});
+            setContactNumber(profile.contactNumber); // Ensure contact number from this default is set
+            toast({ title: "Profile Incomplete", description: "Your profile details are not fully set up in the database. Please update and save.", variant: "default"});
           }
         } catch (error) {
             console.error("Error fetching user profile from Firestore:", error);
             toast({ title: "Profile Load Error", description: "Could not load your full profile details.", variant: "destructive"});
+            // Fallback local profile if Firestore read fails
             const profile: UserProfile = {
               uid: firebaseUser.uid,
               email: firebaseUser.email || "N/A",
@@ -84,6 +87,7 @@ export default function MyProfilePage() {
             };
             setUserProfile(profile);
             setName(profile.name);
+            setContactNumber(profile.contactNumber);
         }
       } else {
         setUserProfile(null); 
@@ -106,16 +110,32 @@ export default function MyProfilePage() {
       return;
     }
 
-    const profileDataToUpdate: { name?: string; contactNumber?: string; updatedAt?: any } = {};
-    if (name !== userProfile.name) profileDataToUpdate.name = name;
-    if (contactNumber !== userProfile.contactNumber) profileDataToUpdate.contactNumber = contactNumber;
+    // Check if name or contactNumber actually changed, or if profile was just loaded and is being saved for the first time
+    const hasProfileInfoChanges = name !== userProfile.name || contactNumber !== userProfile.contactNumber;
+    // We might want to save even if no changes if the profile was just loaded and potentially incomplete
+    // For now, we'll save if there are changes or if the user document might be new (though userProfile.uid should always exist if authenticated)
 
-    if (Object.keys(profileDataToUpdate).length > 0) {
-      profileDataToUpdate.updatedAt = serverTimestamp(); 
+    if (hasProfileInfoChanges) {
       try {
         const userDocRef = doc(db, "users", firebaseUser.uid);
-        await updateDoc(userDocRef, profileDataToUpdate);
-        setUserProfile(prev => prev ? {...prev, ...profileDataToUpdate, name: name, contactNumber: contactNumber } : null); 
+        const profileDataToSave: any = {
+          name: name,
+          email: userProfile.email, // Keep email from auth/initial load
+          contactNumber: contactNumber,
+          updatedAt: serverTimestamp(),
+        };
+        if (userProfile.role) { // Persist role if it was loaded
+          profileDataToSave.role = userProfile.role;
+        }
+        
+        // Use setDoc with merge:true to create if not exists, or update if exists
+        await setDoc(userDocRef, profileDataToSave, { merge: true });
+        
+        setUserProfile(prev => prev ? {
+            ...prev, 
+            name: name, 
+            contactNumber: contactNumber 
+        } : null); 
         profileUpdatedInFirestore = true;
       } catch (error) {
         console.error("Error updating profile in Firestore: ", error);
@@ -169,7 +189,7 @@ export default function MyProfilePage() {
       toast({ title: "Profile Updated", description: "Your name/contact information has been updated." });
     } else if (passwordChanged) {
       toast({ title: "Password Changed", description: "Your password has been successfully updated." });
-    } else if (!Object.keys(profileDataToUpdate).length && !newPassword) { 
+    } else if (!hasProfileInfoChanges && !newPassword) { 
        toast({ title: "No Changes Detected", description: "No information was changed." });
     }
     
@@ -277,3 +297,5 @@ export default function MyProfilePage() {
     </>
   );
 }
+
+    
