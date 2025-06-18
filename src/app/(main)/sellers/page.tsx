@@ -28,12 +28,9 @@ import { useRouter } from 'next/navigation';
  * Data is fetched from and saved to Firebase Firestore.
  */
 
-/**
- * Interface representing a Seller/Supplier document in Firestore.
- */
 export interface Seller {
-  id: string; // Firestore document ID
-  name: string; // Name of the seller/supplier company
+  id: string; 
+  name: string; 
   contactPerson?: string | null; 
   email?: string | null; 
   phone: string; 
@@ -45,7 +42,6 @@ export interface Seller {
   updatedAt?: Timestamp; 
 }
 
-// Zod schema for seller form validation
 const sellerSchema = z.object({
   name: z.string().min(3, { message: "Seller/Company name must be at least 3 characters." }),
   contactPerson: z.string().optional(),
@@ -61,12 +57,6 @@ const sellerSchema = z.object({
 
 type SellerFormValues = z.infer<typeof sellerSchema>;
 
-/**
- * ManageSellersPage component.
- * Provides UI and logic for Admin to manage seller/supplier data in Firestore.
- * Handles CRUD operations, dialogs for add/edit, and form validation.
- * @returns {JSX.Element} The rendered manage sellers page.
- */
 export default function ManageSellersPage() {
   const router = useRouter(); 
   const [sellers, setSellers] = useState<Seller[]>([]);
@@ -239,7 +229,7 @@ export default function ManageSellersPage() {
         title="Manage Sellers/Suppliers" 
         description="Administer seller and supplier accounts and their information. (Admin Only)" 
         icon={Truck} 
-        actions={<Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add New Seller/Supplier</Button>} 
+        actions={<Button onClick={openAddDialog} className="mt-4 sm:mt-0"><PlusCircle className="mr-2 h-4 w-4" />Add New Seller/Supplier</Button>} 
       />
 
       <Dialog open={isFormDialogOpen} onOpenChange={(isOpen) => { 
@@ -261,9 +251,9 @@ export default function ManageSellersPage() {
           <Form {...form}>
             <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-4 py-2 max-h-[75vh] overflow-y-auto pr-4">
               {renderSellerFormFields()}
-              <DialogFooter className="pt-4 sticky bottom-0 bg-background pb-2 border-t -mx-6 px-6"> 
-                <DialogClose asChild><Button type="button" variant="outline">Cancel</Button></DialogClose>
-                <Button type="submit" disabled={form.formState.isSubmitting}>
+              <DialogFooter className="pt-4 sticky bottom-0 bg-background pb-2 border-t -mx-6 px-6 flex flex-col sm:flex-row gap-2"> 
+                <DialogClose asChild><Button type="button" variant="outline" className="w-full sm:w-auto">Cancel</Button></DialogClose>
+                <Button type="submit" disabled={form.formState.isSubmitting} className="w-full sm:w-auto">
                   {form.formState.isSubmitting ? (editingSeller ? "Saving..." : "Adding...") : (editingSeller ? "Save Changes" : "Add Seller")}
                 </Button>
               </DialogFooter>
@@ -295,12 +285,13 @@ export default function ManageSellersPage() {
             <div className="text-center py-10 text-muted-foreground">Loading sellers...</div>
           ) : !isLoading && sellers.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-10 text-center">
-                <FileWarning className="h-16 w-16 text-muted-foreground mb-4" />
-                <p className="text-xl font-semibold text-muted-foreground">No Sellers Found</p>
-                <p className="text-sm text-muted-foreground mb-6">Add your first seller or supplier to the database.</p>
+                <FileWarning className="h-12 w-12 sm:h-16 sm:w-16 text-muted-foreground mb-4" />
+                <p className="text-lg sm:text-xl font-semibold text-muted-foreground">No Sellers Found</p>
+                <p className="text-xs sm:text-sm text-muted-foreground mb-6">Add your first seller or supplier to the database.</p>
                 <Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add New Seller/Supplier</Button>
             </div>
           ) : (
+            <div className="overflow-x-auto">
             <Table>
                 <TableHeader><TableRow>
                     <TableHead>Name</TableHead>
@@ -333,10 +324,10 @@ export default function ManageSellersPage() {
                     ))}
                 </TableBody>
             </Table>
+            </div>
           )}
         </CardContent>
       </Card>
     </>
   );
 }
-

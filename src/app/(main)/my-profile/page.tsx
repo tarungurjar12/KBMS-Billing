@@ -21,28 +21,19 @@ import { doc, getDoc, updateDoc, serverTimestamp } from "firebase/firestore";
  *  - Change their password (via Firebase Auth).
  */
 
-/**
- * Interface for the user's profile data, combining Firebase Auth info and Firestore data.
- */
 interface UserProfile {
-  uid: string; // Firebase Auth UID
+  uid: string; 
   name: string; 
-  email: string; // From Firebase Auth, read-only here
-  contactNumber: string; // Stored in Firestore
-  role?: 'admin' | 'store_manager'; // Stored in Firestore 'users' collection
+  email: string; 
+  contactNumber: string; 
+  role?: 'admin' | 'store_manager'; 
 }
 
-/**
- * MyProfilePage component.
- * Provides UI for users to view and manage their profile details,
- * interacting with both Firebase Auth and Firestore.
- */
 export default function MyProfilePage() {
   const { toast } = useToast();
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Form states for profile update
   const [name, setName] = useState(""); 
   const [contactNumber, setContactNumber] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
@@ -50,12 +41,10 @@ export default function MyProfilePage() {
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
   const [isUpdating, setIsUpdating] = useState(false);
 
-  // Effect to fetch current user data from Firebase Auth and Firestore 'users' collection.
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
       if (firebaseUser) {
         try {
-          // Fetch additional profile details from Firestore 'users' collection using UID.
           const userDocRef = doc(db, "users", firebaseUser.uid); 
           const userDoc = await getDoc(userDocRef);
           
@@ -64,21 +53,20 @@ export default function MyProfilePage() {
             const profile: UserProfile = {
               uid: firebaseUser.uid,
               email: firebaseUser.email || "N/A",
-              name: userData.name || firebaseUser.displayName || "User", // Prioritize Firestore name
+              name: userData.name || firebaseUser.displayName || "User", 
               contactNumber: userData.contactNumber || "",
-              role: userData.role, // Role is stored in Firestore 'users' collection
+              role: userData.role, 
             };
             setUserProfile(profile);
-            setName(profile.name); // Pre-fill form field for name
-            setContactNumber(profile.contactNumber); // Pre-fill form field for contact
+            setName(profile.name); 
+            setContactNumber(profile.contactNumber); 
           } else {
-            // Fallback if no Firestore document found (e.g., user authenticated but profile data missing)
             const profile: UserProfile = {
               uid: firebaseUser.uid,
               email: firebaseUser.email || "N/A",
-              name: firebaseUser.displayName || firebaseUser.email || "User", // Fallback name
+              name: firebaseUser.displayName || firebaseUser.email || "User", 
               contactNumber: "",
-              role: undefined, // Role unknown if Firestore doc is missing
+              role: undefined, 
             };
             setUserProfile(profile);
             setName(profile.name);
@@ -87,7 +75,6 @@ export default function MyProfilePage() {
         } catch (error) {
             console.error("Error fetching user profile from Firestore:", error);
             toast({ title: "Profile Load Error", description: "Could not load your full profile details.", variant: "destructive"});
-             // Basic fallback with auth data only if Firestore fetch fails
             const profile: UserProfile = {
               uid: firebaseUser.uid,
               email: firebaseUser.email || "N/A",
@@ -99,18 +86,13 @@ export default function MyProfilePage() {
             setName(profile.name);
         }
       } else {
-        setUserProfile(null); // No user authenticated (should be redirected by middleware/layout)
+        setUserProfile(null); 
       }
       setIsLoading(false);
     });
-    return () => unsubscribe(); // Cleanup Firebase auth subscription on component unmount
+    return () => unsubscribe(); 
   }, [toast]);
 
-  /**
-   * Handles profile update (name, contact number) and password change.
-   * Updates name/contact in Firestore, changes password via Firebase Auth.
-   * @param {React.FormEvent} e - The form submission event.
-   */
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsUpdating(true);
@@ -124,26 +106,23 @@ export default function MyProfilePage() {
       return;
     }
 
-    // Part 1: Update name and contact number in Firestore 'users' collection
     const profileDataToUpdate: { name?: string; contactNumber?: string; updatedAt?: any } = {};
     if (name !== userProfile.name) profileDataToUpdate.name = name;
     if (contactNumber !== userProfile.contactNumber) profileDataToUpdate.contactNumber = contactNumber;
 
     if (Object.keys(profileDataToUpdate).length > 0) {
-      profileDataToUpdate.updatedAt = serverTimestamp(); // Always update timestamp if any field changed
+      profileDataToUpdate.updatedAt = serverTimestamp(); 
       try {
         const userDocRef = doc(db, "users", firebaseUser.uid);
         await updateDoc(userDocRef, profileDataToUpdate);
-        setUserProfile(prev => prev ? {...prev, ...profileDataToUpdate, name: name, contactNumber: contactNumber } : null); // Update local state
+        setUserProfile(prev => prev ? {...prev, ...profileDataToUpdate, name: name, contactNumber: contactNumber } : null); 
         profileUpdatedInFirestore = true;
       } catch (error) {
         console.error("Error updating profile in Firestore: ", error);
         toast({ title: "Profile Update Failed", description: "Failed to update your name or contact number in the database.", variant: "destructive" });
-        // Continue to password change attempt even if profile update fails
       }
     }
 
-    // Part 2: Handle password change if new password fields are filled
     if (newPassword) {
       if (newPassword !== confirmNewPassword) {
         toast({ title: "Password Mismatch", description: "New passwords do not match. Please re-enter.", variant: "destructive" });
@@ -157,13 +136,11 @@ export default function MyProfilePage() {
       }
 
       try {
-        // Re-authenticate user before password update for security
         if (firebaseUser.email) { 
             const credential = EmailAuthProvider.credential(firebaseUser.email, currentPassword);
             await reauthenticateWithCredential(firebaseUser, credential);
-            await updatePassword(firebaseUser, newPassword); // Update password in Firebase Auth
+            await updatePassword(firebaseUser, newPassword); 
             passwordChanged = true;
-            // Clear password fields after successful change
             setCurrentPassword("");
             setNewPassword("");
             setConfirmNewPassword("");
@@ -182,18 +159,17 @@ export default function MyProfilePage() {
         }
         toast({ title: "Password Change Failed", description: errorMessage, variant: "destructive" });
         setIsUpdating(false);
-        return; // Stop further processing if password change failed
+        return; 
       }
     }
 
-    // Provide consolidated feedback toast
     if (profileUpdatedInFirestore && passwordChanged) {
       toast({ title: "Profile & Password Updated", description: "Your information and password have been successfully updated." });
     } else if (profileUpdatedInFirestore) {
       toast({ title: "Profile Updated", description: "Your name/contact information has been updated." });
     } else if (passwordChanged) {
       toast({ title: "Password Changed", description: "Your password has been successfully updated." });
-    } else if (!Object.keys(profileDataToUpdate).length && !newPassword) { // No changes were made
+    } else if (!Object.keys(profileDataToUpdate).length && !newPassword) { 
        toast({ title: "No Changes Detected", description: "No information was changed." });
     }
     
@@ -291,7 +267,7 @@ export default function MyProfilePage() {
               />
             </div>
           </CardContent>
-          <CardFooter>
+          <CardFooter className="flex flex-col sm:flex-row">
             <Button type="submit" className="w-full sm:w-auto" disabled={isUpdating || isLoading}>
               {isUpdating ? "Updating Profile..." : "Update Profile & Password"}
             </Button>

@@ -29,21 +29,18 @@ import { db } from '@/lib/firebase/firebaseConfig';
  * Data is fetched from and saved to Firebase Firestore.
  */
 
-/**
- * Interface representing a Product document in Firestore.
- */
 export interface Product {
-  id: string; // Firestore document ID
+  id: string; 
   name: string;
-  sku: string; // Stock Keeping Unit
+  sku: string; 
   description?: string | null; 
-  price: string; // Formatted display price
-  numericPrice: number; // Actual price for calculations
+  price: string; 
+  numericPrice: number; 
   stock: number; 
   category: string; 
   unitOfMeasure: string; 
-  imageUrl: string; // URL for placeholder image
-  dataAiHint: string; // Keywords for image search/generation for placeholder
+  imageUrl: string; 
+  dataAiHint: string; 
   createdAt?: Timestamp; 
   updatedAt?: Timestamp; 
 }
@@ -217,7 +214,7 @@ export default function ProductsPage() {
         title="Product Database"
         description="Manage product information, pricing, and inventory levels. (Admin Only)"
         icon={Package}
-        actions={<Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add New Product</Button>}
+        actions={<Button onClick={openAddDialog} className="mt-4 sm:mt-0"><PlusCircle className="mr-2 h-4 w-4" />Add New Product</Button>}
       />
 
       <Dialog open={isFormDialogOpen} onOpenChange={(isOpen) => { 
@@ -229,7 +226,7 @@ export default function ProductsPage() {
             setIsFormDialogOpen(isOpen); 
           }
       }}>
-        <DialogContent className="sm:max-w-xl"> 
+        <DialogContent className="sm:max-w-lg"> 
           <DialogHeader>
             <DialogTitle>{editingProduct ? "Edit Product Details" : "Add New Product"}</DialogTitle>
             <DialogDescription>
@@ -264,9 +261,9 @@ export default function ProductsPage() {
                 <FormField control={form.control} name="stock" render={({ field }) => (<FormItem><FormLabel>Stock Quantity</FormLabel><FormControl><Input type="number" placeholder="e.g., 100" {...field} onChange={e => field.onChange(parseInt(e.target.value, 10) || 0)} /></FormControl><FormMessage /></FormItem>)} />
               </div>
               <FormField control={form.control} name="dataAiHint" render={({ field }) => (<FormItem><FormLabel>Image Hint</FormLabel><FormControl><Input placeholder="e.g., blue gadget or shiny pipe" {...field} /></FormControl><FormDescription>Keywords for placeholder image (e.g., &quot;steel pipe&quot;). Max 2-3 words.</FormDescription><FormMessage /></FormItem>)} />
-              <DialogFooter className="pt-4 sticky bottom-0 bg-background pb-2 border-t -mx-6 px-6"> 
-                <DialogClose asChild><Button type="button" variant="outline">Cancel</Button></DialogClose>
-                <Button type="submit" disabled={form.formState.isSubmitting}>
+              <DialogFooter className="pt-4 sticky bottom-0 bg-background pb-2 border-t -mx-6 px-6 flex flex-col sm:flex-row gap-2"> 
+                <DialogClose asChild><Button type="button" variant="outline" className="w-full sm:w-auto">Cancel</Button></DialogClose>
+                <Button type="submit" disabled={form.formState.isSubmitting} className="w-full sm:w-auto">
                   {form.formState.isSubmitting ? (editingProduct ? "Saving..." : "Adding...") : (editingProduct ? "Save Changes" : "Add Product")}
                 </Button>
               </DialogFooter>
@@ -289,19 +286,20 @@ export default function ProductsPage() {
             <div className="text-center py-10 text-muted-foreground">Loading products...</div>
           ) : !isLoading && productList.length === 0 ? (
              <div className="flex flex-col items-center justify-center py-10 text-center">
-                <FileWarning className="h-16 w-16 text-muted-foreground mb-4" />
-                <p className="text-xl font-semibold text-muted-foreground">No Products Found</p>
-                <p className="text-sm text-muted-foreground mb-6">Get started by adding your first product to the database.</p>
+                <FileWarning className="h-12 w-12 sm:h-16 sm:w-16 text-muted-foreground mb-4" />
+                <p className="text-lg sm:text-xl font-semibold text-muted-foreground">No Products Found</p>
+                <p className="text-xs sm:text-sm text-muted-foreground mb-6">Get started by adding your first product to the database.</p>
                 <Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add New Product</Button>
             </div>
            ) : (
+            <div className="overflow-x-auto">
             <Table>
               <TableHeader><TableRow>
-                  <TableHead className="w-[60px] sm:w-[80px]">Image</TableHead>
+                  <TableHead className="w-[40px] sm:w-[60px]">Image</TableHead>
                   <TableHead>Name</TableHead>
                   <TableHead className="hidden md:table-cell">SKU</TableHead>
                   <TableHead className="hidden lg:table-cell">Category</TableHead>
-                  <TableHead>Unit</TableHead>
+                  <TableHead className="hidden sm:table-cell">Unit</TableHead>
                   <TableHead className="text-right">Price (₹)</TableHead>
                   <TableHead className="text-right">Stock</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
@@ -323,7 +321,7 @@ export default function ProductsPage() {
                     <TableCell className="font-medium">{product.name}</TableCell>
                     <TableCell className="hidden md:table-cell">{product.sku}</TableCell>
                     <TableCell className="hidden lg:table-cell">{product.category}</TableCell>
-                    <TableCell>{product.unitOfMeasure}</TableCell>
+                    <TableCell className="hidden sm:table-cell">{product.unitOfMeasure}</TableCell>
                     <TableCell className="text-right font-semibold">{product.price}</TableCell>
                     <TableCell className="text-right">{product.stock}</TableCell>
                     <TableCell className="text-right">
@@ -341,10 +339,10 @@ export default function ProductsPage() {
                 ))}
               </TableBody>
             </Table>
+            </div>
            )}
         </CardContent>
       </Card>
     </>
   );
 }
-

@@ -159,7 +159,7 @@ export default function StockPage() {
         finalStock = values.adjustmentValue;
     } else if (values.adjustmentType === "add") {
         finalStock = originalStock + values.adjustmentValue;
-    } else { // subtract
+    } else { 
         finalStock = originalStock - values.adjustmentValue;
     }
     if (finalStock < 0) finalStock = 0;
@@ -176,10 +176,6 @@ export default function StockPage() {
             throw new Error(`Critical: Invalid Product Reference for ID "${values.productId}" in transaction.`);
         }
         
-        // Although we have productToUpdateStock.stock, it's safer to read within transaction for current value if many users operate.
-        // However, for this specific manual adjustment, using productToUpdateStock.stock (which was recently fetched) is acceptable.
-        // For maximum safety in a highly concurrent system, one might re-fetch productSnap here.
-
         transaction.update(productRef, {
           stock: finalStock,
           updatedAt: serverTimestamp(),
@@ -248,10 +244,10 @@ export default function StockPage() {
             <form onSubmit={form.handleSubmit(handleUpdateStockSubmit)} className="space-y-4 py-2 max-h-[75vh] overflow-y-auto pr-4">
               <FormField control={form.control} name="adjustmentType" render={({ field }) => (
                   <FormItem className="space-y-1"><FormLabel>Adjustment Type</FormLabel>
-                    <FormControl><div className="flex gap-2 pt-1">
-                       <Button type="button" size="sm" variant={field.value === 'set' ? 'default' : 'outline'} onClick={() => { field.onChange('set'); form.setValue('adjustmentValue', productToUpdateStock?.stock || 0);}}>Set New Total</Button>
-                       <Button type="button" size="sm" variant={field.value === 'add' ? 'default' : 'outline'} onClick={() => { field.onChange('add'); form.setValue('adjustmentValue', 0);}}>Add to Stock</Button>
-                       <Button type="button" size="sm" variant={field.value === 'subtract' ? 'default' : 'outline'} onClick={() => { field.onChange('subtract'); form.setValue('adjustmentValue', 0);}}>Subtract from Stock</Button>
+                    <FormControl><div className="flex flex-col sm:flex-row gap-2 pt-1">
+                       <Button type="button" size="sm" variant={field.value === 'set' ? 'default' : 'outline'} onClick={() => { field.onChange('set'); form.setValue('adjustmentValue', productToUpdateStock?.stock || 0);}} className="w-full sm:w-auto">Set New Total</Button>
+                       <Button type="button" size="sm" variant={field.value === 'add' ? 'default' : 'outline'} onClick={() => { field.onChange('add'); form.setValue('adjustmentValue', 0);}} className="w-full sm:w-auto">Add to Stock</Button>
+                       <Button type="button" size="sm" variant={field.value === 'subtract' ? 'default' : 'outline'} onClick={() => { field.onChange('subtract'); form.setValue('adjustmentValue', 0);}} className="w-full sm:w-auto">Subtract from Stock</Button>
                     </div></FormControl><FormMessage />
                   </FormItem>)} />
                <FormField control={form.control} name="adjustmentValue" render={({ field }) => (
@@ -264,9 +260,9 @@ export default function StockPage() {
                         <FormControl><Input placeholder="e.g., Stock take correction, Damaged goods returned" {...field} /></FormControl>
                         <FormMessage />
                     </FormItem>)} />
-              <DialogFooter className="pt-4 sticky bottom-0 bg-background pb-2 border-t -mx-6 px-6">
-                 <DialogClose asChild><Button type="button" variant="outline">Cancel</Button></DialogClose>
-                <Button type="submit" disabled={form.formState.isSubmitting}>
+              <DialogFooter className="pt-4 sticky bottom-0 bg-background pb-2 border-t -mx-6 px-6 flex flex-col sm:flex-row gap-2">
+                 <DialogClose asChild><Button type="button" variant="outline" className="w-full sm:w-auto">Cancel</Button></DialogClose>
+                <Button type="submit" disabled={form.formState.isSubmitting} className="w-full sm:w-auto">
                   {form.formState.isSubmitting ? "Updating Stock..." : "Confirm Stock Update"}
                 </Button>
               </DialogFooter>
@@ -285,20 +281,21 @@ export default function StockPage() {
           </div>
         </CardHeader>
         <CardContent>
-          {isLoading && filteredStockItems.length === 0 ? (
+          {isLoading && filteredStockItems.length === 0 && !searchTerm ? (
              <div className="text-center py-10 text-muted-foreground">Loading stock levels...</div>
           ) : !isLoading && filteredStockItems.length === 0 ? (
              <div className="flex flex-col items-center justify-center py-10 text-center">
-                <FileWarning className="h-16 w-16 text-muted-foreground mb-4" />
-                <p className="text-xl font-semibold text-muted-foreground">No Products Found</p>
-                <p className="text-sm text-muted-foreground mb-6">
+                <FileWarning className="h-12 w-12 sm:h-16 sm:w-16 text-muted-foreground mb-4" />
+                <p className="text-lg sm:text-xl font-semibold text-muted-foreground">No Products Found</p>
+                <p className="text-xs sm:text-sm text-muted-foreground mb-6">
                     {searchTerm ? `No products found matching "${searchTerm}".` : "The product database appears to be empty."}
                 </p>
              </div>
            ) : (
+            <div className="overflow-x-auto">
             <Table>
               <TableHeader><TableRow>
-                  <TableHead className="w-[60px] sm:w-[80px]">Image</TableHead><TableHead>Product Name</TableHead>
+                  <TableHead className="w-[40px] sm:w-[60px]">Image</TableHead><TableHead>Product Name</TableHead>
                   <TableHead className="hidden md:table-cell">SKU</TableHead><TableHead className="hidden lg:table-cell">Unit</TableHead>
                   <TableHead className="text-right">Current Stock</TableHead><TableHead className="text-center">Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
@@ -335,11 +332,10 @@ export default function StockPage() {
                 ))}
               </TableBody>
             </Table>
+            </div>
            )}
         </CardContent>
       </Card>
     </>
   );
 }
-
-    

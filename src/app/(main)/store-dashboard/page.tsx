@@ -142,27 +142,27 @@ export default function StoreManagerDashboardPage() {
       if (error.code === 'failed-precondition') {
         toast({
             title: "Database Index Required",
-            description: `Dashboard data query failed. A Firestore index is needed (likely involving 'createdBy' field on 'invoices' or 'customers'). Check browser console for a link to create it.`,
+            description: `Dashboard data query failed. A Firestore index is needed (likely involving 'createdBy' field on 'invoices' or 'customers'). Check browser console for a link to create it. Without these indexes, dashboard data will not load.`,
             variant: "destructive", duration: 20000,
         });
       } else {
         toast({ title: "Dashboard Load Error", description: "Could not load some dashboard metrics. Please ensure all necessary Firestore indexes are created.", variant: "destructive"});
       }
       setMetrics(prevMetrics => prevMetrics.map(m => ({ ...m, value: m.isLoading ? "Error" : m.value, isLoading: false })));
-      if (recentActivity.length === 0) setRecentActivity(["Failed to load recent activity."]);
+      if (recentActivity.length === 0 && !isLoadingActivity) setRecentActivity(["Failed to load recent activity. Check Firestore indexes."]);
     } finally {
         setMetrics(prevMetrics => prevMetrics.map(m => ({...m, isLoading: false})));
         setIsLoadingMetrics(false);
         setIsLoadingActivity(false);
     }
-  }, [currentUser, toast]);
+  }, [currentUser, toast, isLoadingActivity]);
 
   useEffect(() => { if (currentUser) { fetchManagerDashboardData(); } }, [currentUser, fetchManagerDashboardData]);
 
   return (
     <>
       <PageHeader title="Store Manager Dashboard" description="Your daily operations hub for sales, customers, and inventory management." icon={LayoutDashboard} />
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {metrics.map((metric) => (
           <Card key={metric.title} className="shadow-lg rounded-xl hover:shadow-primary/20 transition-shadow">
             <Link href={metric.link || "#"} className={metric.link ? "" : "pointer-events-none"}>
@@ -190,7 +190,7 @@ export default function StoreManagerDashboardPage() {
                 <Link href={action.href} key={action.label} passHref legacyBehavior>
                     <Button variant="outline" className="w-full h-auto justify-start p-3 text-left flex items-start gap-3 hover:bg-accent/10 transition-colors group">
                         <action.icon className="h-7 w-7 text-primary mt-1 transition-transform group-hover:scale-110 shrink-0" />
-                         <div className="flex-1 min-w-0"> {/* Ensure this div allows content to shrink and wrap */}
+                         <div className="flex-1 min-w-0"> 
                             <span className="font-medium text-foreground block whitespace-normal break-words">{action.label}</span>
                             <p className="text-xs text-muted-foreground whitespace-normal break-words">{action.description}</p>
                         </div>
@@ -217,7 +217,7 @@ export default function StoreManagerDashboardPage() {
                 <div className="h-48 flex flex-col items-center justify-center bg-muted/30 rounded-md border border-dashed">
                     <AlertCircle className="h-10 w-10 text-muted-foreground mb-2" />
                     <p className="text-muted-foreground font-semibold">No Recent Activity</p>
-                    <p className="text-sm text-muted-foreground">You haven&apos;t performed any actions recently.</p>
+                    <p className="text-sm text-muted-foreground">You haven&apos;t performed any actions recently, or data is still loading.</p>
                 </div>
              ) : (
                 <ul className="space-y-2">
@@ -234,4 +234,3 @@ export default function StoreManagerDashboardPage() {
     </>
   );
 }
-

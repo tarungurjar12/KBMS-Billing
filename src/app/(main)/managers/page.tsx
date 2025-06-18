@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PageHeader } from "@/components/page-header";
-import { UserCog, PlusCircle, MoreHorizontal, ShieldAlert, ShieldCheck, KeyRound, Users as UsersIcon } from "lucide-react"; // Renamed Users to UsersIcon to avoid conflict
+import { UserCog, PlusCircle, MoreHorizontal, ShieldAlert, ShieldCheck, KeyRound, Users as UsersIcon } from "lucide-react"; 
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -31,21 +31,17 @@ import { doc, setDoc, getDocs, collection, updateDoc, serverTimestamp, query, or
  * Manager accounts are 'Frozen' rather than deleted to preserve historical data.
  */
 
-/**
- * Interface representing a Store Manager document in Firestore.
- */
 export interface Manager {
-  id: string; // Firestore document ID (should be the same as Firebase Auth UID)
+  id: string; 
   name: string;
-  email: string; // Used as User ID for login
-  status: "Active" | "Frozen"; // Application-level status
-  authUid: string; // Firebase Auth UID
-  role: "store_manager"; // Explicit role field
+  email: string; 
+  status: "Active" | "Frozen"; 
+  authUid: string; 
+  role: "store_manager"; 
   createdAt?: Timestamp; 
   updatedAt?: Timestamp;
 }
 
-// Zod schema for adding a new manager
 const managerSchema = z.object({
   name: z.string().min(3, { message: "Name must be at least 3 characters." }),
   email: z.string().email({ message: "Invalid email address. This will be their login ID."}),
@@ -54,11 +50,6 @@ const managerSchema = z.object({
 
 type ManagerFormValues = z.infer<typeof managerSchema>;
 
-/**
- * ManageManagersPage component.
- * Provides UI and logic for Admin to manage Store Manager accounts using Firebase Auth and Firestore.
- * @returns {JSX.Element} The rendered manage managers page.
- */
 export default function ManageManagersPage() {
   const [managers, setManagers] = useState<Manager[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -70,20 +61,14 @@ export default function ManageManagersPage() {
 
   const { toast } = useToast();
 
-  // Form for adding a new manager
   const form = useForm<ManagerFormValues>({
     resolver: zodResolver(managerSchema),
     defaultValues: { name: "", email: "", password: "" },
   });
 
-  /**
-   * Fetches store managers from Firestore.
-   * Filters users by role 'store_manager' and orders them by name.
-   */
   const fetchManagers = useCallback(async () => {
     setIsLoading(true);
     try {
-      // Firestore Index Required: 'users' collection, index on 'role' (ASC) and 'name' (ASC).
       const q = query(collection(db, "users"), where("role", "==", "store_manager"), orderBy("name", "asc"));
       const querySnapshot = await getDocs(q);
       const fetchedManagers = querySnapshot.docs.map(docSnapshot => {
@@ -121,18 +106,11 @@ export default function ManageManagersPage() {
     fetchManagers();
   }, [fetchManagers]);
 
-  /**
-   * Handles the submission of the 'Add New Manager' form.
-   * Creates a new user in Firebase Auth and a corresponding document in Firestore.
-   * @param {ManagerFormValues} values - The validated form values.
-   */
   const handleAddManagerSubmit = async (values: ManagerFormValues) => {
     try {
-      // Create user in Firebase Authentication
       const userCredential = await createUserWithEmailAndPassword(auth, values.email, values.password);
       const newUserId = userCredential.user.uid; 
       
-      // Create manager profile in Firestore 'users' collection
       const newManagerData = { 
         name: values.name, 
         email: values.email, 
@@ -143,16 +121,15 @@ export default function ManageManagersPage() {
         updatedAt: serverTimestamp(),
       };
       
-      // Use newUserId (which is the Firebase Auth UID) as the document ID in Firestore for consistency
       await setDoc(doc(db, "users", newUserId), newManagerData); 
       
       toast({
         title: "Manager Added Successfully",
         description: `${values.name} can now log in. They may need to reset their password to set their own.`,
       });
-      fetchManagers(); // Refresh the manager list
-      form.reset(); // Clear the form
-      setIsAddManagerDialogOpen(false); // Close the dialog
+      fetchManagers(); 
+      form.reset(); 
+      setIsAddManagerDialogOpen(false); 
     } catch (error: any) {
       console.error("Error adding manager: ", error);
       let errorMessage = `Failed to add manager: ${error.message}`;
@@ -165,18 +142,11 @@ export default function ManageManagersPage() {
     }
   };
 
-  /**
-   * Opens the confirmation dialog for toggling a manager's account status.
-   * @param {Manager} manager - The manager whose status will be toggled.
-   */
   const openToggleStatusDialog = (manager: Manager) => {
     setManagerToToggleStatus(manager);
     setIsToggleStatusConfirmOpen(true);
   };
 
-  /**
-   * Confirms and executes the toggle of a manager's account status (Active/Frozen) in Firestore.
-   */
   const confirmToggleStatus = async () => {
     if (!managerToToggleStatus) return;
     const newStatus = managerToToggleStatus.status === "Active" ? "Frozen" : "Active";
@@ -187,7 +157,7 @@ export default function ManageManagersPage() {
         title: `Manager Account ${newStatus === "Active" ? "Activated" : "Frozen"}`,
         description: `${managerToToggleStatus.name}'s account status is now ${newStatus.toLowerCase()}.`,
       });
-      fetchManagers(); // Refresh the list
+      fetchManagers(); 
     } catch (error: any) {
       console.error("Error updating manager status: ", error);
       toast({ title: "Status Update Error", description: `Failed to update manager status: ${error.message}`, variant: "destructive" });
@@ -197,18 +167,11 @@ export default function ManageManagersPage() {
     }
   };
 
-  /**
-   * Opens the confirmation dialog for sending a password reset email to a manager.
-   * @param {Manager} manager - The manager who will receive the password reset email.
-   */
   const openResetPasswordDialog = (manager: Manager) => {
     setManagerToResetPassword(manager);
     setIsResetPasswordConfirmOpen(true);
   };
 
-  /**
-   * Confirms and triggers Firebase Auth to send a password reset email.
-   */
   const confirmResetPassword = async () => {
     if (!managerToResetPassword) return;
     try {
@@ -237,7 +200,7 @@ export default function ManageManagersPage() {
         description="Administer Store Manager accounts, permissions, and status."
         icon={UserCog}
         actions={
-          <Button onClick={() => { form.reset(); setIsAddManagerDialogOpen(true); }}>
+          <Button onClick={() => { form.reset(); setIsAddManagerDialogOpen(true); }} className="mt-4 sm:mt-0">
             <PlusCircle className="mr-2 h-4 w-4" />
             Add New Manager
           </Button>
@@ -246,7 +209,7 @@ export default function ManageManagersPage() {
 
       <Dialog open={isAddManagerDialogOpen} onOpenChange={(isOpen) => {
           setIsAddManagerDialogOpen(isOpen);
-          if (!isOpen) form.reset(); // Reset form when dialog is closed
+          if (!isOpen) form.reset(); 
         }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -281,9 +244,9 @@ export default function ManageManagersPage() {
                   </FormItem>
                 )}
               />
-              <DialogFooter className="pt-4 sticky bottom-0 bg-background pb-2 border-t -mx-6 px-6">
-                <DialogClose asChild><Button type="button" variant="outline">Cancel</Button></DialogClose>
-                <Button type="submit" disabled={form.formState.isSubmitting}>
+              <DialogFooter className="pt-4 sticky bottom-0 bg-background pb-2 border-t -mx-6 px-6 flex flex-col sm:flex-row gap-2">
+                <DialogClose asChild><Button type="button" variant="outline" className="w-full sm:w-auto">Cancel</Button></DialogClose>
+                <Button type="submit" disabled={form.formState.isSubmitting} className="w-full sm:w-auto">
                   {form.formState.isSubmitting ? "Adding Manager..." : "Add Manager"}
                 </Button>
               </DialogFooter>
@@ -339,19 +302,20 @@ export default function ManageManagersPage() {
             <div className="text-center py-10 text-muted-foreground">Loading managers...</div>
           ) : !isLoading && managers.length === 0 ? ( 
             <div className="flex flex-col items-center justify-center py-10 text-center">
-                <UsersIcon className="h-16 w-16 text-muted-foreground mb-4" />
-                <p className="text-xl font-semibold text-muted-foreground">No Managers Found</p>
-                <p className="text-sm text-muted-foreground mb-6">Create manager accounts to grant access to store operations.</p>
+                <UsersIcon className="h-12 w-12 sm:h-16 sm:w-16 text-muted-foreground mb-4" />
+                <p className="text-lg sm:text-xl font-semibold text-muted-foreground">No Managers Found</p>
+                <p className="text-xs sm:text-sm text-muted-foreground mb-6">Create manager accounts to grant access to store operations.</p>
                 <Button onClick={() => { form.reset(); setIsAddManagerDialogOpen(true); }}>
                     <PlusCircle className="mr-2 h-4 w-4" /> Add New Manager
                 </Button>
             </div>
           ) : (
+            <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
-                  <TableHead>Email (Login ID)</TableHead>
+                  <TableHead className="hidden sm:table-cell">Email (Login ID)</TableHead>
                   <TableHead className="text-center">Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -360,7 +324,7 @@ export default function ManageManagersPage() {
                 {managers.map((manager) => (
                   <TableRow key={manager.id}>
                     <TableCell className="font-medium">{manager.name}</TableCell>
-                    <TableCell>{manager.email}</TableCell>
+                    <TableCell className="hidden sm:table-cell">{manager.email}</TableCell>
                     <TableCell className="text-center">
                       <Badge variant={manager.status === "Active" ? "default" : "destructive"} className={manager.status === "Active" ? "bg-accent text-accent-foreground" : ""}>
                         {manager.status}
@@ -392,10 +356,10 @@ export default function ManageManagersPage() {
                 ))}
               </TableBody>
             </Table>
+            </div>
           )}
         </CardContent>
       </Card>
     </>
   );
 }
-

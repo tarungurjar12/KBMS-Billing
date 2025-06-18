@@ -6,10 +6,10 @@ import { PageHeader } from "@/components/page-header";
 import { DollarSign, Users, FileText, PackageMinus, LayoutDashboard, Package, BarChart3, TrendingUp, AlertCircle, Activity, UserCog } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { collection, getDocs, query, where, limit, orderBy, Timestamp, getCountFromServer } from 'firebase/firestore'; // Removed parseDate as it's not used
+import { collection, getDocs, query, where, limit, orderBy, Timestamp, getCountFromServer } from 'firebase/firestore';
 import { db } from '@/lib/firebase/firebaseConfig';
 import { useEffect, useState, useCallback } from 'react';
-import { format, parseISO } from 'date-fns'; // Removed startOfDay, endOfDay as they are not used for this dashboard version
+import { format, parseISO } from 'date-fns';
 import { useToast } from "@/hooks/use-toast";
 import type { PaymentRecord } from './payments/page'; 
 
@@ -46,7 +46,7 @@ export default function AdminDashboardPage() {
   ]);
   const [recentSales, setRecentSales] = useState<any[]>([]);
   const [isLoadingSalesChart, setIsLoadingSalesChart] = useState(true);
-  const [isLoadingMetrics, setIsLoadingMetrics] = useState(true); // For overall metric loading
+  const [isLoadingMetrics, setIsLoadingMetrics] = useState(true); 
 
   const LOW_STOCK_THRESHOLD = 50;
   const formatCurrency = (num: number): string => `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -59,7 +59,7 @@ export default function AdminDashboardPage() {
       );
     };
 
-    setIsLoadingMetrics(true); // Start loading all metrics
+    setIsLoadingMetrics(true); 
     setMetrics(prevMetrics => prevMetrics.map(m => ({ ...m, isLoading: true })));
     setIsLoadingSalesChart(true);
 
@@ -120,11 +120,10 @@ export default function AdminDashboardPage() {
       } else {
         toast({ title: "Dashboard Load Error", description: "Could not load some dashboard metrics. Please try again later.", variant: "destructive" });
       }
-      // Ensure all metrics are marked as not loading on error
       setMetrics(prevMetrics => prevMetrics.map(m => ({ ...m, value: m.isLoading ? "Error" : m.value, isLoading: false })));
     } finally {
-       setMetrics(prevMetrics => prevMetrics.map(m => ({...m, isLoading: false}))); // Mark all as not loading
-       setIsLoadingMetrics(false); // Overall metric loading done
+       setMetrics(prevMetrics => prevMetrics.map(m => ({...m, isLoading: false}))); 
+       setIsLoadingMetrics(false); 
       setIsLoadingSalesChart(false);
     }
   }, [toast]);
@@ -134,7 +133,7 @@ export default function AdminDashboardPage() {
   return (
     <>
       <PageHeader title="Admin Dashboard" description="Key business metrics and quick access to common tasks." icon={LayoutDashboard} />
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {metrics.map((metric) => (
           <Card key={metric.title} className="shadow-lg rounded-xl hover:shadow-primary/20 transition-shadow">
              <Link href={metric.link || "#"} className={metric.link ? "" : "pointer-events-none"}>
@@ -150,7 +149,7 @@ export default function AdminDashboardPage() {
           </Card>
         ))}
       </div>
-      <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-3">
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2 shadow-lg rounded-xl">
           <CardHeader>
             <CardTitle className="font-headline text-foreground flex items-center"><TrendingUp className="mr-2 h-6 w-6 text-primary"/>Recent Sales Activity</CardTitle>
@@ -158,26 +157,16 @@ export default function AdminDashboardPage() {
           </CardHeader>
           <CardContent>
             {isLoadingSalesChart ? (
-                 <div className="h-64 flex items-center justify-center bg-muted/30 rounded-md border border-dashed">
+                 <div className="h-[250px] flex items-center justify-center bg-muted/30 rounded-md border border-dashed">
                     <Activity className="h-10 w-10 text-muted-foreground animate-spin mr-3" />
                     <p className="text-muted-foreground">Loading sales data for chart...</p>
                  </div>
             ) : recentSales.length > 0 ? (
-              <div className="h-64 flex items-center justify-center bg-muted/20 dark:bg-muted/10 rounded-md border border-dashed">
+              <div className="h-[250px] flex items-center justify-center bg-muted/20 dark:bg-muted/10 rounded-md border border-dashed">
                 <p className="text-muted-foreground p-4 text-center">Sales chart data loaded ({recentSales.length} entries). Actual chart component to be implemented here using Recharts or similar.</p>
-                 {/* Placeholder for future chart implementation. Example:
-                <ResponsiveContainer width="100%" height={250}>
-                  <BarChart data={recentSales}>
-                    <XAxis dataKey="name" stroke="#888888" fontSize={12} tickLine={false} axisLine={false}/>
-                    <YAxis stroke="#888888" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(value) => `₹${value / 1000}k`}/>
-                    <Tooltip formatter={(value) => [formatCurrency(value as number), "Sales"]} />
-                    <Bar dataKey="uv" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-                */}
               </div>
             ) : (
-              <div className="h-64 flex flex-col items-center justify-center bg-muted/30 rounded-md border border-dashed">
+              <div className="h-[250px] flex flex-col items-center justify-center bg-muted/30 rounded-md border border-dashed">
                 <AlertCircle className="h-8 w-8 text-muted-foreground mb-2"/>
                 <p className="text-muted-foreground font-semibold">No Recent Sales Data</p>
                 <p className="text-sm text-muted-foreground">No paid invoices found to display recent sales trends.</p>
@@ -195,7 +184,7 @@ export default function AdminDashboardPage() {
                 <Link href={action.href} key={action.label} passHref legacyBehavior>
                     <Button variant="outline" className="w-full h-auto justify-start p-3 text-left flex items-start gap-3 hover:bg-accent/10 transition-colors group">
                         <action.icon className="h-6 w-6 text-primary mt-1 transition-transform group-hover:scale-110 shrink-0" />
-                        <div className="flex-1 min-w-0"> {/* Ensure this div allows content to shrink and wrap */}
+                        <div className="flex-1 min-w-0">
                             <span className="font-medium text-foreground block whitespace-normal break-words">{action.label}</span>
                             <p className="text-xs text-muted-foreground whitespace-normal break-words">{action.description}</p>
                         </div>
@@ -217,4 +206,3 @@ export default function AdminDashboardPage() {
     </>
   );
 }
-

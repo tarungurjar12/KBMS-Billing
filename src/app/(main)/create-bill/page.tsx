@@ -29,25 +29,14 @@ import { format } from 'date-fns';
  * and generating/updating the bill which deducts/adjusts stock in Firebase Firestore.
  */
 
-/**
- * Interface for items listed in the current bill being created/edited.
- * Extends the base Product interface with quantity and total for the bill.
- */
 interface BillItem extends Product { 
   quantity: number;
-  total: number; // Calculated as quantity * numericPrice
+  total: number; 
 }
 
-// Business-specific constants (example values, make configurable if needed)
-const BUSINESS_STATE_CODE = "29"; // Example: Karnataka state code for GST calculation
-const GST_RATE = 0.18; // Default GST rate (e.g., 18%)
+const BUSINESS_STATE_CODE = "29"; 
+const GST_RATE = 0.18; 
 
-/**
- * CreateBillPage component.
- * Provides UI and logic for creating or editing bills/invoices.
- * Handles customer selection, product addition, GST calculation, and Firestore transactions for stock and invoice data.
- * @returns {JSX.Element} The rendered create/edit bill page.
- */
 export default function CreateBillPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -233,7 +222,6 @@ export default function CreateBillPage() {
 
     try {
       await runTransaction(db, async (transaction) => {
-        // --- READ PHASE ---
         let existingInvoiceNumber: string | undefined;
         if (editInvoiceId) {
             const invoiceToEditRef = doc(db, "invoices", editInvoiceId);
@@ -261,7 +249,6 @@ export default function CreateBillPage() {
             productSnapshots.set(productId, productSnap);
         }
 
-        // --- CALCULATION & LOGIC PHASE (No Firestore reads/writes here) ---
         const productUpdates: { ref: any, newStock: number }[] = [];
 
         for (const productId of allProductIdsInvolved) {
@@ -302,7 +289,6 @@ export default function CreateBillPage() {
           createdBy: currentFirebaseUser.uid, 
         };
 
-        // --- WRITE PHASE ---
         for (const pu of productUpdates) {
             transaction.update(pu.ref, { stock: pu.newStock, updatedAt: serverTimestamp() });
         }
@@ -358,7 +344,7 @@ export default function CreateBillPage() {
             <CardContent className="space-y-4">
               <div>
                 <Label htmlFor="customer-select">Select Customer</Label>
-                <div className="flex gap-2 mt-1">
+                <div className="flex flex-col sm:flex-row gap-2 mt-1">
                     <Select value={selectedCustomerId} onValueChange={setSelectedCustomerId} disabled={isSubmitting}>
                     <SelectTrigger id="customer-select" className={selectedCustomerId ? "" : "text-muted-foreground"}><SelectValue placeholder="Choose an existing customer" /></SelectTrigger>
                     <SelectContent>
@@ -369,7 +355,7 @@ export default function CreateBillPage() {
                         ))}
                     </SelectContent>
                     </Select>
-                    <Button variant="outline" onClick={() => router.push("/customers?addNew=true")} disabled={isSubmitting}>
+                    <Button variant="outline" onClick={() => router.push("/customers?addNew=true")} disabled={isSubmitting} className="w-full sm:w-auto">
                         <PlusCircle className="mr-2 h-4 w-4" /> Add New
                     </Button>
                 </div>
@@ -398,14 +384,14 @@ export default function CreateBillPage() {
                     {filteredProducts.map(product => (
                       <div 
                         key={product.id} 
-                        className="p-3 hover:bg-accent/80 dark:hover:bg-accent/20 cursor-pointer flex justify-between items-center"
+                        className="p-3 hover:bg-accent/80 dark:hover:bg-accent/20 cursor-pointer flex flex-col sm:flex-row justify-between items-start sm:items-center"
                         onClick={() => !isSubmitting && handleAddProductToBill(product)}
                       >
                         <div>
                             <p className="font-medium">{product.name} <span className="text-xs text-muted-foreground">({product.unitOfMeasure})</span></p>
                             <p className="text-sm text-muted-foreground">Price: {product.displayPrice} - Stock: {product.stock}</p>
                         </div>
-                        <Button variant="ghost" size="sm" disabled={product.stock <= 0 || isSubmitting} onClick={(e) => { e.stopPropagation(); if(!isSubmitting) handleAddProductToBill(product); }}>
+                        <Button variant="ghost" size="sm" disabled={product.stock <= 0 || isSubmitting} onClick={(e) => { e.stopPropagation(); if(!isSubmitting) handleAddProductToBill(product); }} className="mt-2 sm:mt-0 self-start sm:self-center">
                             {product.stock > 0 ? "Add" : "Out of Stock"}
                         </Button>
                       </div>
@@ -425,12 +411,13 @@ export default function CreateBillPage() {
             </CardHeader>
             <CardContent>
               {billItems.length > 0 ? (
+                <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Product</TableHead>
-                      <TableHead className="w-[120px]">Quantity</TableHead>
-                      <TableHead className="text-right">Unit Price</TableHead>
+                      <TableHead className="w-[100px] sm:w-[120px]">Quantity</TableHead>
+                      <TableHead className="text-right hidden sm:table-cell">Unit Price</TableHead>
                       <TableHead className="text-right">Total</TableHead>
                       <TableHead className="w-[50px]"> </TableHead> 
                     </TableRow>
@@ -447,11 +434,11 @@ export default function CreateBillPage() {
                             max={(products.find(p=>p.id === item.id)?.stock || 0) + (originalBillItemsForEdit.find(oi => oi.id === item.id)?.quantity || 0) } 
                             onChange={(e) => handleQuantityChange(item.id, e.target.value)}
                             onBlur={(e) => { const val = parseInt(e.target.value, 10); if (isNaN(val) || val < 1) handleQuantityChange(item.id, "0");}}
-                            className="h-8 w-24"
+                            className="h-8 w-20 sm:w-24"
                             disabled={isSubmitting}
                           />
                         </TableCell>
-                        <TableCell className="text-right">{item.displayPrice}</TableCell>
+                        <TableCell className="text-right hidden sm:table-cell">{item.displayPrice}</TableCell>
                         <TableCell className="text-right">{formatCurrency(item.total)}</TableCell>
                         <TableCell>
                           <Button variant="ghost" size="icon" onClick={() => !isSubmitting && handleRemoveItem(item.id)} title={`Remove ${item.name}`} disabled={isSubmitting}>
@@ -462,6 +449,7 @@ export default function CreateBillPage() {
                     ))}
                   </TableBody>
                 </Table>
+                </div>
               ) : ( 
                 <div className="p-6 bg-muted/30 rounded-md text-center border border-dashed">
                   <p className="text-muted-foreground">Search and add products to build the bill.</p>

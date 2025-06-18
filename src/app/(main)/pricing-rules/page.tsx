@@ -26,27 +26,22 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
  * This page focuses on CRUD for rule definitions.
  */
 
-/**
- * Interface representing a Pricing Rule document in Firestore.
- */
 export interface PricingRule {
   id: string; 
   name: string; 
   type: "Tiered Pricing" | "Bulk Pricing" | "Volume Pricing" | "Manual Override"; 
   description: string; 
   status: "Active" | "Inactive"; 
-  conditions: string; // Descriptive text for conditions
-  action: string;     // Descriptive text for actions
-  priority?: number; // Lower numbers mean higher priority
+  conditions: string; 
+  action: string;     
+  priority?: number; 
   createdAt?: Timestamp; 
   updatedAt?: Timestamp; 
 }
 
-// Constants for form dropdowns
 const PRICING_RULE_TYPES = ["Tiered Pricing", "Bulk Pricing", "Volume Pricing", "Manual Override"] as const;
 const PRICING_RULE_STATUSES = ["Active", "Inactive"] as const;
 
-// Zod schema for pricing rule form validation
 const pricingRuleSchema = z.object({
   name: z.string().min(3, { message: "Rule name must be at least 3 characters." }),
   type: z.enum(PRICING_RULE_TYPES, { required_error: "Please select a rule type." }),
@@ -55,18 +50,13 @@ const pricingRuleSchema = z.object({
   conditions: z.string().min(5, {message: "Conditions field must be at least 5 characters."}).describe("e.g., Product SKU: PW-001, Min Qty: 10, Customer Group: Wholesale"),
   action: z.string().min(5, {message: "Action field must be at least 5 characters."}).describe("e.g., Discount: 10% OR Set Price: ₹1800 OR Add free item: SKU-FREEBIE"),
   priority: z.preprocess(
-    (val) => (String(val).trim() === "" ? undefined : parseInt(String(val), 10)), // Convert empty string to undefined
-    z.number().int().min(0).optional() // Priority is optional, must be integer >= 0
+    (val) => (String(val).trim() === "" ? undefined : parseInt(String(val), 10)), 
+    z.number().int().min(0).optional() 
   ),
 });
 
 type PricingRuleFormValues = z.infer<typeof pricingRuleSchema>;
 
-/**
- * PricingRulesPage component.
- * Provides UI for Admin to view, create, edit, and delete pricing rules in Firestore.
- * @returns {JSX.Element} The rendered pricing rules page.
- */
 export default function PricingRulesPage() {
   const [pricingRules, setPricingRules] = useState<PricingRule[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -76,20 +66,14 @@ export default function PricingRulesPage() {
   const [ruleToDelete, setRuleToDelete] = useState<PricingRule | null>(null);
   const { toast } = useToast();
 
-  // React Hook Form setup
   const form = useForm<PricingRuleFormValues>({
     resolver: zodResolver(pricingRuleSchema),
     defaultValues: { type: "Bulk Pricing", status: "Active", name: "", description: "", conditions: "", action: "", priority: undefined },
   });
 
-  /**
-   * Fetches pricing rules from Firestore, ordered by priority and then by name.
-   * Firestore Index Required: 'pricingRules' collection, index on 'priority' (ASC) and 'name' (ASC).
-   */
   const fetchRules = useCallback(async () => {
     setIsLoading(true);
     try {
-      // Firestore Index Required: 'pricingRules' collection, index on 'priority' (ASC) and 'name' (ASC).
       const q = query(collection(db, "pricingRules"), orderBy("priority", "asc"), orderBy("name", "asc")); 
       const querySnapshot = await getDocs(q);
       const fetchedRules = querySnapshot.docs.map(docSnapshot => ({ id: docSnapshot.id, ...docSnapshot.data() } as PricingRule));
@@ -115,22 +99,16 @@ export default function PricingRulesPage() {
     fetchRules();
   }, [fetchRules]);
 
-  // Resets form when dialog opens or editingRule changes
   useEffect(() => {
     if (isFormDialogOpen) {
       if (editingRule) {
-        form.reset(editingRule); // Pre-fill form with editing rule data
+        form.reset(editingRule); 
       } else { 
-        // Default values for new rule
         form.reset({ type: "Bulk Pricing", status: "Active", name: "", description: "", conditions: "", action: "", priority: undefined });
       }
     }
   }, [editingRule, isFormDialogOpen, form]);
 
-  /**
-   * Handles submission of the pricing rule form (for both add and edit).
-   * @param {PricingRuleFormValues} values - The validated form values.
-   */
   const handleFormSubmit = async (values: PricingRuleFormValues) => {
     try {
       const dataToSave = { ...values, updatedAt: serverTimestamp() };
@@ -142,10 +120,10 @@ export default function PricingRulesPage() {
         await addDoc(collection(db, "pricingRules"), { ...dataToSave, createdAt: serverTimestamp() });
         toast({ title: "Rule Added", description: `New pricing rule "${values.name}" has been added successfully.` });
       }
-      fetchRules(); // Refresh the list
+      fetchRules(); 
       setIsFormDialogOpen(false); 
       setEditingRule(null); 
-      form.reset(); // Explicitly reset form
+      form.reset(); 
     } catch (error: any) {
       console.error("Error saving pricing rule: ", error);
       toast({ title: "Save Error", description: `Could not save pricing rule: ${error.message}`, variant: "destructive" });
@@ -182,10 +160,6 @@ export default function PricingRulesPage() {
     }
   };
 
-  /**
-   * Toggles the status (Active/Inactive) of a pricing rule in Firestore.
-   * @param {PricingRule} rule - The rule whose status to toggle.
-   */
   const handleToggleStatus = async (rule: PricingRule) => {
     const newStatus = rule.status === "Active" ? "Inactive" : "Active";
     try {
@@ -209,7 +183,7 @@ export default function PricingRulesPage() {
         title="Pricing Rules Engine"
         description="Define and manage automated pricing adjustments. (Admin Only)"
         icon={SlidersHorizontal}
-        actions={<Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add New Pricing Rule</Button>}
+        actions={<Button onClick={openAddDialog} className="mt-4 sm:mt-0"><PlusCircle className="mr-2 h-4 w-4" />Add New Pricing Rule</Button>}
       />
       
       <Card className="mb-6 bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-700 shadow-md">
@@ -223,7 +197,6 @@ export default function PricingRulesPage() {
             <p className="mt-1">This page allows you to define and manage the rule definitions themselves.</p>
         </CardContent>
       </Card>
-
 
       <Dialog open={isFormDialogOpen} onOpenChange={(isOpen) => { 
           if(!isOpen) { 
@@ -270,9 +243,9 @@ export default function PricingRulesPage() {
               />
               <FormField control={form.control} name="conditions" render={({ field }) => (<FormItem><FormLabel>Conditions (Descriptive Text)</FormLabel><FormControl><Textarea placeholder="e.g., Product SKU: WIDGET-001, Minimum Quantity: 10 units, Customer Group: Wholesale" {...field} rows={3} /></FormControl><FormDescription>Describe when this rule should apply. Actual logic is TBD.</FormDescription><FormMessage /></FormItem>)} />
               <FormField control={form.control} name="action" render={({ field }) => (<FormItem><FormLabel>Action (Descriptive Text)</FormLabel><FormControl><Textarea placeholder="e.g., Apply 10% discount on item OR Set item price to ₹500.00" {...field} rows={3} /></FormControl><FormDescription>Describe what happens when conditions are met. Actual logic is TBD.</FormDescription><FormMessage /></FormItem>)} />
-              <DialogFooter className="pt-4 sticky bottom-0 bg-background pb-2 border-t -mx-6 px-6">
-                <DialogClose asChild><Button type="button" variant="outline">Cancel</Button></DialogClose>
-                <Button type="submit" disabled={form.formState.isSubmitting}>
+              <DialogFooter className="pt-4 sticky bottom-0 bg-background pb-2 border-t -mx-6 px-6 flex flex-col sm:flex-row gap-2">
+                <DialogClose asChild><Button type="button" variant="outline" className="w-full sm:w-auto">Cancel</Button></DialogClose>
+                <Button type="submit" disabled={form.formState.isSubmitting} className="w-full sm:w-auto">
                   {form.formState.isSubmitting ? (editingRule ? "Saving..." : "Adding...") : (editingRule ? "Save Changes" : "Add Rule")}
                 </Button>
               </DialogFooter>
@@ -302,13 +275,13 @@ export default function PricingRulesPage() {
          <div className="text-center py-10 text-muted-foreground">Loading pricing rules...</div>
       ): !isLoading && pricingRules.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-10 text-center">
-            <FileWarning className="h-16 w-16 text-muted-foreground mb-4" />
-            <p className="text-xl font-semibold text-muted-foreground mb-2">No Pricing Rules Yet</p>
-            <p className="text-sm text-muted-foreground mb-6">Get started by defining your first pricing rule to automate discounts or special prices.</p>
+            <FileWarning className="h-12 w-12 sm:h-16 sm:w-16 text-muted-foreground mb-4" />
+            <p className="text-lg sm:text-xl font-semibold text-muted-foreground mb-2">No Pricing Rules Yet</p>
+            <p className="text-xs sm:text-sm text-muted-foreground mb-6">Get started by defining your first pricing rule to automate discounts or special prices.</p>
             <Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add New Pricing Rule</Button>
         </div>
       ) : (
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6">
             {pricingRules.map((rule) => (
             <Card key={rule.id} className="shadow-lg rounded-xl flex flex-col justify-between hover:shadow-primary/10 transition-shadow">
                 <CardHeader className="pb-3">
@@ -330,7 +303,7 @@ export default function PricingRulesPage() {
                 <p className="text-muted-foreground"><strong className="text-foreground/70">Action:</strong> <span className="text-xs">{rule.action}</span></p>
                 </CardContent>
                 <CardFooter className="pt-3 pb-4 border-t mt-3">
-                <div className="flex space-x-2 w-full">
+                <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2 w-full">
                     <Button variant="outline" size="sm" className="w-full" onClick={() => openEditDialog(rule)}>
                     <Edit className="mr-2 h-3 w-3" /> Edit
                     </Button>
@@ -358,4 +331,3 @@ export default function PricingRulesPage() {
     </>
   );
 }
-

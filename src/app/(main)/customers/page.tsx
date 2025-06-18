@@ -20,7 +20,6 @@ import { collection, addDoc, getDocs, doc, updateDoc, deleteDoc, serverTimestamp
 import { db, auth } from '@/lib/firebase/firebaseConfig'; 
 import { useRouter, useSearchParams } from 'next/navigation';
 
-
 /**
  * @fileOverview Page for managing customer profiles.
  * Allows Admin to perform full CRUD operations on customers in Firestore.
@@ -32,23 +31,19 @@ import { useRouter, useSearchParams } from 'next/navigation';
  * Store Managers cannot delete customers. Data is managed in Firebase Firestore.
  */
 
-/**
- * Interface representing a Customer document in Firestore.
- */
 export interface Customer {
-  id: string; // Firestore document ID
+  id: string; 
   name: string;
   email: string | null; 
   phone: string;
   gstin?: string | null; 
-  totalSpent: string; // Placeholder, calculated or updated separately
+  totalSpent: string; 
   address?: string | null; 
   createdAt?: Timestamp; 
-  createdBy?: string; // UID of the user who created the customer
+  createdBy?: string; 
   updatedAt?: Timestamp; 
 }
 
-// Zod schema for customer form validation
 const customerSchema = z.object({
   name: z.string().min(2, { message: "Name must be at least 2 characters." }),
   email: z.string().email({ message: "Invalid email address." }).optional().or(z.literal('')),
@@ -61,11 +56,6 @@ const customerSchema = z.object({
 
 type CustomerFormValues = z.infer<typeof customerSchema>;
 
-/**
- * Retrieves a cookie value by name.
- * @param {string} name - The name of the cookie.
- * @returns {string | undefined} The cookie value or undefined if not found.
- */
 const getCookie = (name: string): string | undefined => {
   if (typeof window === 'undefined') return undefined; 
   const value = `; ${document.cookie}`;
@@ -74,19 +64,13 @@ const getCookie = (name: string): string | undefined => {
   return undefined;
 };
 
-/**
- * CustomersPage component.
- * Provides UI and logic for managing customer data in Firestore.
- * Handles CRUD operations, dialogs for add/edit, and role-based action availability.
- * @returns {JSX.Element} The rendered customers page.
- */
 export default function CustomersPage() {
   const router = useRouter();
   const searchParams = useSearchParams(); 
 
   const [customerList, setCustomerList] = useState<Customer[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [isFormDialogOpen, setIsFormDialogOpen] = useState(false); // Single state for both add/edit
+  const [isFormDialogOpen, setIsFormDialogOpen] = useState(false); 
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [customerToDelete, setCustomerToDelete] = useState<Customer | null>(null);
@@ -261,7 +245,7 @@ export default function CustomersPage() {
         description="View, add, and edit customer profiles. Admins can also delete."
         icon={Users}
         actions={
-          <Button onClick={openAddDialog}>
+          <Button onClick={openAddDialog} className="mt-4 sm:mt-0">
             <PlusCircle className="mr-2 h-4 w-4" />
             Add New Customer
           </Button>
@@ -332,9 +316,9 @@ export default function CustomersPage() {
                   </FormItem>
                 )}
               />
-              <DialogFooter className="pt-4 sticky bottom-0 bg-background pb-2 border-t -mx-6 px-6">
-                <DialogClose asChild><Button type="button" variant="outline">Cancel</Button></DialogClose>
-                <Button type="submit" disabled={form.formState.isSubmitting}>{form.formState.isSubmitting ? (editingCustomer ? "Saving..." : "Adding...") : (editingCustomer ? "Save Changes" : "Add Customer")}</Button>
+              <DialogFooter className="pt-4 sticky bottom-0 bg-background pb-2 border-t -mx-6 px-6 flex flex-col sm:flex-row gap-2">
+                <DialogClose asChild><Button type="button" variant="outline" className="w-full sm:w-auto">Cancel</Button></DialogClose>
+                <Button type="submit" disabled={form.formState.isSubmitting} className="w-full sm:w-auto">{form.formState.isSubmitting ? (editingCustomer ? "Saving..." : "Adding...") : (editingCustomer ? "Save Changes" : "Add Customer")}</Button>
               </DialogFooter>
             </form>
           </Form>
@@ -368,20 +352,21 @@ export default function CustomersPage() {
             <div className="text-center py-10 text-muted-foreground">Loading customers...</div>
           ) : !isLoading && customerList.length === 0 ? (
              <div className="flex flex-col items-center justify-center py-10 text-center">
-                <UserPlus className="h-16 w-16 text-muted-foreground mb-4" />
-                <p className="text-xl font-semibold text-muted-foreground">No Customers Found</p>
-                <p className="text-sm text-muted-foreground mb-6">It looks like there are no customers in your database yet.</p>
+                <UserPlus className="h-12 w-12 sm:h-16 sm:w-16 text-muted-foreground mb-4" />
+                <p className="text-lg sm:text-xl font-semibold text-muted-foreground">No Customers Found</p>
+                <p className="text-xs sm:text-sm text-muted-foreground mb-6">It looks like there are no customers in your database yet.</p>
                 <Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add New Customer</Button>
             </div>
            ) : (
+            <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
-                  <TableHead>Email</TableHead>
+                  <TableHead className="hidden sm:table-cell">Email</TableHead>
                   <TableHead>Phone</TableHead>
-                  <TableHead>GSTIN</TableHead>
-                  <TableHead className="text-right hidden sm:table-cell">Total Spent</TableHead>
+                  <TableHead className="hidden md:table-cell">GSTIN</TableHead>
+                  <TableHead className="text-right hidden lg:table-cell">Total Spent</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -389,10 +374,10 @@ export default function CustomersPage() {
                 {customerList.map((customer) => (
                   <TableRow key={customer.id}>
                     <TableCell className="font-medium">{customer.name}</TableCell>
-                    <TableCell>{customer.email || "N/A"}</TableCell>
+                    <TableCell className="hidden sm:table-cell">{customer.email || "N/A"}</TableCell>
                     <TableCell>{customer.phone}</TableCell>
-                    <TableCell>{customer.gstin || "N/A"}</TableCell>
-                    <TableCell className="text-right hidden sm:table-cell">{customer.totalSpent}</TableCell>
+                    <TableCell className="hidden md:table-cell">{customer.gstin || "N/A"}</TableCell>
+                    <TableCell className="text-right hidden lg:table-cell">{customer.totalSpent}</TableCell>
                     <TableCell className="text-right">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -425,10 +410,10 @@ export default function CustomersPage() {
                 ))}
               </TableBody>
             </Table>
+            </div>
            )}
         </CardContent>
       </Card>
     </>
   );
 }
-

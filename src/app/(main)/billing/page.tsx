@@ -25,9 +25,6 @@ import { format, parseISO } from 'date-fns';
  * Data is fetched from and saved to Firebase Firestore.
  */
 
-/**
- * Interface for individual items within an invoice.
- */
 export interface InvoiceItem {
   productId: string;
   name: string;
@@ -37,43 +34,29 @@ export interface InvoiceItem {
   unitOfMeasure: string;
 }
 
-/**
- * Interface representing an invoice document stored in Firestore.
- */
 export interface Invoice {
-  id: string; // Firestore document ID
+  id: string; 
   invoiceNumber: string;
   customerName: string;
   customerId: string;
-  date: string; // Formatted date string for display, e.g., "Jul 15, 2024"
-  isoDate: string; // ISO date string for sorting and consistent Firestore Timestamp storage
-  totalAmount: number; // The grand total of the invoice
-  displayTotal: string; // Formatted currency string for display, e.g., "₹20,000.00"
+  date: string; 
+  isoDate: string; 
+  totalAmount: number; 
+  displayTotal: string; 
   status: "Paid" | "Pending" | "Overdue" | "Partially Paid" | "Cancelled";
   items: InvoiceItem[];
   cgst: number;
   sgst: number;
   igst: number;
   subTotal: number;
-  createdBy?: string; // UID of the user who created the invoice
-  createdAt?: Timestamp; // Firestore Timestamp of creation
-  dueDate?: string; // Optional ISO date string for due date
-  updatedAt?: Timestamp; // Firestore Timestamp of last update
+  createdBy?: string; 
+  createdAt?: Timestamp; 
+  dueDate?: string; 
+  updatedAt?: Timestamp; 
 }
 
-/**
- * Formats a number as an Indian Rupee string.
- * @param {number} num - The number to format.
- * @returns {string} A string representing the currency, e.g., "₹1,234.56".
- */
 const formatCurrency = (num: number): string => `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-
-/**
- * BillingPage component.
- * Provides UI and logic for Admin to manage bills and invoices using Firestore.
- * @returns {JSX.Element} The rendered billing page.
- */
 export default function BillingPage() {
   const router = useRouter();
   const { toast } = useToast();
@@ -83,14 +66,12 @@ export default function BillingPage() {
   const fetchInvoices = useCallback(async () => {
     setIsLoading(true);
     try {
-      // Firestore Index Required: 'invoices' collection, index on 'isoDate' (DESC).
-      // This is needed for the orderBy clause.
       const q = query(collection(db, "invoices"), orderBy("isoDate", "desc"));
       const querySnapshot = await getDocs(q);
       const fetchedInvoices = querySnapshot.docs.map(docSnapshot => {
         const data = docSnapshot.data();
         let invoiceDate = "Date N/A";
-        let finalIsoDate = new Date().toISOString(); // Default for sorting if all else fails
+        let finalIsoDate = new Date().toISOString(); 
 
         if (data.isoDate) {
             if (typeof data.isoDate === 'string') {
@@ -100,7 +81,6 @@ export default function BillingPage() {
                 } catch (e) {
                     console.warn("Invalid isoDate string format:", data.isoDate, e);
                     invoiceDate = "Invalid Date";
-                    // Try createdAt as fallback for finalIsoDate if isoDate parse fails
                     if (data.createdAt instanceof Timestamp) finalIsoDate = data.createdAt.toDate().toISOString();
                 }
             } else if (data.isoDate instanceof Timestamp) {
@@ -110,7 +90,7 @@ export default function BillingPage() {
                  invoiceDate = "Unknown Date"; 
                  if (data.createdAt instanceof Timestamp) finalIsoDate = data.createdAt.toDate().toISOString();
             }
-        } else if (data.createdAt instanceof Timestamp) { // Fallback to createdAt if isoDate is missing
+        } else if (data.createdAt instanceof Timestamp) { 
             invoiceDate = format(data.createdAt.toDate(), "MMM dd, yyyy");
             finalIsoDate = data.createdAt.toDate().toISOString();
         }
@@ -222,7 +202,7 @@ export default function BillingPage() {
     }
   };
 
-  if (isLoading && invoices.length === 0) { // Show loading header only if no data yet
+  if (isLoading && invoices.length === 0) {
     return <PageHeader title="Billing & Invoicing" description="Loading invoices from database..." icon={FileText} />;
   }
 
@@ -233,7 +213,7 @@ export default function BillingPage() {
         description="Create and manage GST-compliant bills and invoices. (Admin Access)"
         icon={FileText}
         actions={
-          <Button onClick={handleCreateNewInvoice}>
+          <Button onClick={handleCreateNewInvoice} className="mt-4 sm:mt-0">
             <PlusCircle className="mr-2 h-4 w-4" />
             Create New Invoice
           </Button>
@@ -249,20 +229,21 @@ export default function BillingPage() {
              <div className="text-center py-10 text-muted-foreground">Loading invoices...</div>
           ) : !isLoading && invoices.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-10 text-center">
-                <AlertCircle className="h-16 w-16 text-muted-foreground mb-4" />
-                <p className="text-xl font-semibold text-muted-foreground">No Invoices Found</p>
-                <p className="text-sm text-muted-foreground mb-6">It seems there are no invoices in the database yet.</p>
+                <AlertCircle className="h-12 w-12 sm:h-16 sm:w-16 text-muted-foreground mb-4" />
+                <p className="text-lg sm:text-xl font-semibold text-muted-foreground">No Invoices Found</p>
+                <p className="text-xs sm:text-sm text-muted-foreground mb-6">It seems there are no invoices in the database yet.</p>
                 <Button onClick={handleCreateNewInvoice}>
                     <PlusCircle className="mr-2 h-4 w-4" /> Create First Invoice
                 </Button>
             </div>
           ) : (
+            <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Invoice #</TableHead>
                   <TableHead>Customer</TableHead>
-                  <TableHead>Date</TableHead>
+                  <TableHead className="hidden sm:table-cell">Date</TableHead>
                   <TableHead className="text-right">Total</TableHead>
                   <TableHead className="text-center">Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
@@ -273,7 +254,7 @@ export default function BillingPage() {
                   <TableRow key={invoice.id}>
                     <TableCell className="font-medium">{invoice.invoiceNumber}</TableCell>
                     <TableCell>{invoice.customerName}</TableCell>
-                    <TableCell>{invoice.date}</TableCell>
+                    <TableCell className="hidden sm:table-cell">{invoice.date}</TableCell>
                     <TableCell className="text-right">{invoice.displayTotal}</TableCell>
                     <TableCell className="text-center">
                       <Badge 
@@ -324,10 +305,10 @@ export default function BillingPage() {
                 ))}
               </TableBody>
             </Table>
+            </div>
           )}
         </CardContent>
       </Card>
     </>
   );
 }
-
