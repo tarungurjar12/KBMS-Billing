@@ -107,9 +107,18 @@ export default function ManageManagersPage() {
   }, [fetchManagers]);
 
   const handleAddManagerSubmit = async (values: ManagerFormValues) => {
+    let newUserId = null; // To store UID for logging in catch block if Auth creation succeeds but Firestore fails
     try {
+      console.log(`ManageManagersPage: Attempting to create Firebase Auth user for email: ${values.email}`);
       const userCredential = await createUserWithEmailAndPassword(auth, values.email, values.password);
-      const newUserId = userCredential.user.uid; 
+      newUserId = userCredential.user.uid;
+      console.log(`ManageManagersPage: Firebase Auth user created successfully. UID: ${newUserId}`);
+
+      if (!newUserId) {
+        // This case should ideally be caught by createUserWithEmailAndPassword throwing an error
+        console.error("ManageManagersPage: Firebase Auth user UID is unexpectedly null or empty after creation.");
+        throw new Error("Firebase Auth user UID is unexpectedly null or empty after creation.");
+      }
       
       const newManagerData = { 
         name: values.name, 
@@ -121,24 +130,27 @@ export default function ManageManagersPage() {
         updatedAt: serverTimestamp(),
       };
       
-      await setDoc(doc(db, "users", newUserId), newManagerData); 
+      const userDocRef = doc(db, "users", newUserId);
+      console.log(`ManageManagersPage: Attempting to set Firestore document at path: users/${newUserId} with data:`, newManagerData);
+      await setDoc(userDocRef, newManagerData); 
+      console.log(`ManageManagersPage: Firestore document successfully set for manager ${values.name} (UID: ${newUserId}).`);
       
       toast({
         title: "Manager Added Successfully",
-        description: `${values.name} can now log in. They may need to reset their password to set their own.`,
+        description: `${values.name} can now log in.`,
       });
       fetchManagers(); 
       form.reset(); 
       setIsAddManagerDialogOpen(false); 
     } catch (error: any) {
-      console.error("Error adding manager: ", error);
-      let errorMessage = `Failed to add manager: ${error.message}`;
+      console.error(`ManageManagersPage: Error adding manager for email ${values.email}. Auth UID (if created): ${newUserId || 'N/A'}. Full Error:`, error);
+      let errorMessage = `Failed to add manager. Code: ${error.code || 'UNKNOWN'}. Message: ${error.message || 'An unexpected error occurred.'}`;
       if (error.code === 'auth/email-already-in-use') {
         errorMessage = "This email address is already registered. Please use a different email.";
       } else if (error.code === 'auth/weak-password') {
         errorMessage = "The password is too weak. Please use a stronger password (at least 6 characters).";
       }
-      toast({ title: "Adding Manager Failed", description: errorMessage, variant: "destructive" });
+      toast({ title: "Adding Manager Failed", description: errorMessage, variant: "destructive", duration: 9000 });
     }
   };
 
@@ -363,3 +375,4 @@ export default function ManageManagersPage() {
     </>
   );
 }
+
