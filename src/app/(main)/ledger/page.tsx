@@ -298,7 +298,7 @@ export default function DailyLedgerPage() {
       setIsLoading(false);
     }
   }, [toast, formatCurrency]);
-
+  
   const currentEntityTypeOptions = useMemo(() => {
     const type = form.watch("type");
     if (type === 'sale') { 
@@ -312,7 +312,7 @@ export default function DailyLedgerPage() {
             { value: 'unknown_seller', label: 'Unknown Seller' }
         ];
     }
-  }, [form.watch("type")]); 
+  }, [form]); 
 
   useEffect(() => { 
     const currentType = form.getValues("type");
@@ -322,7 +322,7 @@ export default function DailyLedgerPage() {
     } else if (currentType === 'purchase' && (currentEntityType === 'customer' || currentEntityType === 'unknown_customer')) {
         form.setValue("entityType", "seller");
     }
-  }, [form.watch("type"), form]);
+  }, [form]);
 
 
   const handleAddProductToLedger = useCallback((product: Product) => {
@@ -1310,7 +1310,7 @@ export default function DailyLedgerPage() {
         </CardHeader>
         <CardContent>
           <Tabs value={activeLedgerTab} onValueChange={(value) => setActiveLedgerTab(value as any)} className="w-full mb-4">
-            <TabsList className="flex flex-wrap items-center justify-start gap-1 sm:gap-2">
+            <TabsList>
                 <TabsTrigger value="all"><Filter className="mr-2 h-4 w-4 opacity-70"/>All Entries</TabsTrigger>
                 <TabsTrigger value="customer_sales"><Users className="mr-2 h-4 w-4 opacity-70"/>Customer (Sales/Pymt Rcvd)</TabsTrigger>
                 <TabsTrigger value="seller_purchases"><Truck className="mr-2 h-4 w-4 opacity-70"/>Seller (Purchases/Pymt Sent)</TabsTrigger>
