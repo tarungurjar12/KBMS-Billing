@@ -162,7 +162,7 @@ export default function ManageManagersPage() {
       }
       
       // Ensure Manager interface matches this structure, especially companyId
-      const newManagerData: Omit<Manager, 'id' | 'createdAt' | 'updatedAt'> &amp; { createdAt: Timestamp, updatedAt: Timestamp } = { 
+      const newManagerData: Omit<Manager, 'id' | 'createdAt' | 'updatedAt'> & { createdAt: Timestamp, updatedAt: Timestamp } = { 
         name: values.name, 
         email: values.email, 
         status: "Active", 
@@ -433,3 +433,4 @@ export default function ManageManagersPage() {
   );
 }
     
+
