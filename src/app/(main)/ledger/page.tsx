@@ -1,7 +1,7 @@
 
 "use client";
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { PageHeader } from '@/components/page-header';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -15,7 +15,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDes
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { BookOpen, PlusCircle, Trash2, Search, Users, Truck, XCircle, Filter, FileWarning, Calculator, Edit, MoreHorizontal, UserCircle2 } from 'lucide-react';
+import { BookOpen, PlusCircle, Trash2, Search, Users, Truck, XCircle, Filter, FileWarning, Calculator, Edit, MoreHorizontal, UserCircle2, Eye, UserX } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { collection, getDocs, addDoc, serverTimestamp, query, orderBy, where, doc, runTransaction, Timestamp, deleteDoc, getDoc } from 'firebase/firestore';
@@ -29,6 +29,7 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from '@/components/ui/badge';
 import type { PaymentRecord, PAYMENT_METHODS as PAYMENT_METHODS_PAYMENT_PAGE, PAYMENT_STATUSES as PAYMENT_STATUSES_PAYMENT_PAGE } from './../payments/page';
+import { ScrollArea } from '@/components/ui/scroll-area';
 
 
 /**
@@ -41,7 +42,10 @@ import type { PaymentRecord, PAYMENT_METHODS as PAYMENT_METHODS_PAYMENT_PAGE, PA
  * Automatically creates a PaymentRecord if ledger entry is Paid or Partial.
  * Admins can edit and delete ledger entries, with stock and payment records adjusted accordingly.
  * Data is fetched from and saved to Firebase Firestore.
- * Tracks creator and last modifier of ledger entries.
+ * Tracks creator and last modifier of ledger entries (names displayed).
+ * Users can filter ledger entries by clicking on creator/modifier names.
+ * Search bar filters by entity, product, notes, payment method, ID, and creator/modifier names.
+ * A "View Full Details" dialog shows all information for an entry to reduce horizontal scrolling.
  */
 
 export interface LedgerItem {
@@ -70,7 +74,7 @@ export interface LedgerEntry {
   grandTotal: number;
   paymentMethod: typeof PAYMENT_METHODS_LEDGER[number] | null;
   paymentStatus: typeof PAYMENT_STATUSES_LEDGER[number];
-  notes: string | null; // Can be "N/A"
+  notes: string | null; 
   createdByUid: string;
   createdByName: string;
   createdAt: Timestamp;
@@ -174,6 +178,11 @@ export default function DailyLedgerPage() {
   const [productSearchTerm, setProductSearchTerm] = useState('');
   const [ledgerSearchTerm, setLedgerSearchTerm] = useState('');
   const [activeLedgerTab, setActiveLedgerTab] = useState<'all' | 'customer_sales' | 'seller_purchases'>('all');
+  
+  const [selectedUserFilterName, setSelectedUserFilterName] = useState<string | null>(null);
+  const [isEntryDetailsDialogOpen, setIsEntryDetailsDialogOpen] = useState(false);
+  const [selectedEntryForDetails, setSelectedEntryForDetails] = useState<LedgerEntry | null>(null);
+
 
   const [currentUserRole, setCurrentUserRole] = useState<'admin' | 'store_manager' | undefined>();
 
@@ -191,7 +200,7 @@ export default function DailyLedgerPage() {
       items: [], applyGst: false,
       paymentStatus: 'paid', paymentMethod: 'Cash',
       amountPaidNow: undefined, 
-      notes: "", // Default to empty string for Zod transform to "N/A"
+      notes: "", 
       entityId: null,
     },
   });
@@ -222,7 +231,7 @@ export default function DailyLedgerPage() {
         return {
             id: d.id, 
             ...data,
-            createdByUid: data.createdByUid || data.createdBy, // Backward compatibility
+            createdByUid: data.createdByUid || data.createdBy, 
             createdByName: data.createdByName || "Unknown User",
             updatedByUid: data.updatedByUid || null,
             updatedByName: data.updatedByName || null,
@@ -309,12 +318,11 @@ export default function DailyLedgerPage() {
             form.setValue("entityType", 'customer', { shouldDirty: true });
             form.setValue("paymentStatus", 'paid', { shouldDirty: true }); 
             form.setValue("paymentMethod", 'Cash', { shouldDirty: true });
-        } else { // purchase
+        } else { 
             form.setValue("entityType", 'seller', { shouldDirty: true });
             form.setValue("paymentStatus", 'pending', { shouldDirty: true }); 
             form.setValue("paymentMethod", null, { shouldDirty: true });
         }
-        // Always reset these when type changes and not unknown
         if (currentEntityType !== "unknown_customer" && currentEntityType !== "unknown_seller") {
             form.setValue("entityId", null, { shouldDirty: true });
             form.setValue("entityName", "", { shouldDirty: true });
@@ -334,21 +342,20 @@ export default function DailyLedgerPage() {
             form.setValue("entityId", null, { shouldDirty: true });
             form.setValue("entityName", "Unknown Customer", { shouldDirty: true });
             form.setValue("paymentStatus", "paid", { shouldDirty: true });
-            form.setValue("paymentMethod", form.getValues("paymentMethod") || "Cash", { shouldDirty: true }); // Keep existing or default
+            form.setValue("paymentMethod", form.getValues("paymentMethod") || "Cash", { shouldDirty: true }); 
         } else if (entityTypeWatcher === "unknown_seller") {
             form.setValue("entityId", null, { shouldDirty: true });
             form.setValue("entityName", "Unknown Seller", { shouldDirty: true });
             form.setValue("paymentStatus", "paid", { shouldDirty: true }); 
-            form.setValue("paymentMethod", form.getValues("paymentMethod") || "Cash", { shouldDirty: true }); // Keep existing or default
+            form.setValue("paymentMethod", form.getValues("paymentMethod") || "Cash", { shouldDirty: true }); 
         } else if ((form.getValues("entityName") === "Unknown Customer" || form.getValues("entityName") === "Unknown Seller") &&
                 (entityTypeWatcher === "customer" || entityTypeWatcher === "seller")) {
-            // User switched FROM an unknown type TO a known type
             form.setValue("entityName", "", { shouldDirty: true });
             form.setValue("entityId", null, { shouldDirty: true }); 
             if(currentTransactionType === 'sale') {
                 form.setValue("paymentStatus", "paid", { shouldDirty: true });
                 form.setValue("paymentMethod", "Cash", { shouldDirty: true });
-            } else { // purchase
+            } else { 
                 form.setValue("paymentStatus", "pending", { shouldDirty: true });
                 form.setValue("paymentMethod", null, { shouldDirty: true });
             }
@@ -364,12 +371,9 @@ export default function DailyLedgerPage() {
 
   useEffect(() => {
     if (form.formState.isDirty || editingLedgerEntry) {
-        const currentEntityType = form.getValues("entityType");
         if (!shouldShowPaymentMethod) {
             form.setValue("paymentMethod", null, { shouldDirty: true });
         } else if (shouldShowPaymentMethod && !form.getValues("paymentMethod")) {
-            // If method should be shown but isn't set, default it.
-            // This handles cases where status becomes 'paid' or 'partial' and method was previously null.
             form.setValue("paymentMethod", 'Cash', { shouldDirty: true });
         }
         
@@ -378,10 +382,10 @@ export default function DailyLedgerPage() {
             form.clearErrors("amountPaidNow"); 
         } else {
            if(form.getValues("amountPaidNow") === undefined && form.getFieldState("amountPaidNow").isDirty) {
-              form.trigger("amountPaidNow"); // Re-trigger validation if it's now required and empty
+              form.trigger("amountPaidNow"); 
            }
         }
-        form.clearErrors("paymentMethod"); // Clear existing errors as state might have changed
+        form.clearErrors("paymentMethod"); 
     }
   }, [shouldShowPaymentMethod, paymentStatusWatcher, form, editingLedgerEntry]);
 
@@ -484,7 +488,7 @@ export default function DailyLedgerPage() {
         amountPaidForSave = data.amountPaidNow || 0; 
         remainingAmountForSave = grandTotal - amountPaidForSave;
         if (remainingAmountForSave < 0) remainingAmountForSave = 0;
-    } else { // 'pending'
+    } else { 
         amountPaidForSave = 0;
         remainingAmountForSave = grandTotal;
     }
@@ -514,13 +518,13 @@ export default function DailyLedgerPage() {
     if (editingLedgerEntry) {
         ledgerDataForSave.createdByUid = editingLedgerEntry.createdByUid;
         ledgerDataForSave.createdByName = editingLedgerEntry.createdByName;
-        ledgerDataForSave.createdAt = editingLedgerEntry.createdAt; // Keep original creation timestamp
+        ledgerDataForSave.createdAt = editingLedgerEntry.createdAt; 
         ledgerDataForSave.updatedByUid = currentUser.uid;
         ledgerDataForSave.updatedByName = currentUserName;
     } else {
         ledgerDataForSave.createdByUid = currentUser.uid;
         ledgerDataForSave.createdByName = currentUserName;
-        ledgerDataForSave.createdAt = serverTimestamp() as Timestamp; // Cast for new entries
+        ledgerDataForSave.createdAt = serverTimestamp() as Timestamp; 
         ledgerDataForSave.updatedByUid = null;
         ledgerDataForSave.updatedByName = null;
     }
@@ -532,7 +536,6 @@ export default function DailyLedgerPage() {
         let originalLedgerEntryData: LedgerEntry | null = null;
         let originalAssociatedPaymentRecordId: string | null = null;
         
-        // --- READ PHASE ---
         if (editingLedgerEntry) {
           ledgerDocRef = doc(db, "ledgerEntries", editingLedgerEntry.id);
           const originalLedgerSnap = await transaction.get(ledgerDocRef);
@@ -551,7 +554,7 @@ export default function DailyLedgerPage() {
 
         const productSnapshots = new Map<string, DocumentSnapshot<DocumentData>>();
         for (const productId of productIdsInvolved) {
-          const productRefFromDb = doc(db, "products", productId); // Use a fresh ref for transaction.get
+          const productRefFromDb = doc(db, "products", productId); 
           const productSnap = await transaction.get(productRefFromDb);
           if (!productSnap.exists()) {
             const productName = originalLedgerEntryData?.items.find(i => i.productId === productId)?.productName || 
@@ -561,9 +564,7 @@ export default function DailyLedgerPage() {
           }
           productSnapshots.set(productId, productSnap);
         }
-        // --- END OF READ PHASE ---
 
-        // --- CALCULATION & LOGIC PHASE ---
         const productStockUpdates: Array<{
             ref: DocumentReference; 
             newStock: number;
@@ -619,10 +620,8 @@ export default function DailyLedgerPage() {
                 });
             }
         }
-        // --- END OF CALCULATION PHASE ---
 
 
-        // --- WRITE PHASE ---
         if (editingLedgerEntry && originalAssociatedPaymentRecordId) {
             const oldPaymentRef = doc(db, "payments", originalAssociatedPaymentRecordId);
             transaction.delete(oldPaymentRef);
@@ -703,7 +702,6 @@ export default function DailyLedgerPage() {
         } else {
             transaction.set(ledgerDocRef, finalLedgerDataToCommit as DocumentData);
         }
-        // --- END OF WRITE PHASE ---
       });
 
       toast({ title: editingLedgerEntry ? "Ledger Entry Updated" : "Ledger Entry Saved", description: "Transaction recorded, stock updated, and payment record handled." });
@@ -773,20 +771,17 @@ export default function DailyLedgerPage() {
             if (!ledgerSnap.exists()) throw new Error("Ledger entry not found for deletion.");
             const entryData = ledgerSnap.data() as LedgerEntry;
 
-            // --- READ PHASE ---
             const productIdsInvolved = new Set<string>();
             entryData.items.forEach(item => productIdsInvolved.add(item.productId));
 
             const productSnapshots = new Map<string, DocumentSnapshot<DocumentData>>();
             for (const productId of productIdsInvolved) {
-                const productRefFromDb = doc(db, "products", productId); // Use a fresh ref
+                const productRefFromDb = doc(db, "products", productId); 
                 const productSnap = await transaction.get(productRefFromDb);
                 if (!productSnap.exists()) throw new Error(`Product from entry not found (ID: ${productId}).`);
                 productSnapshots.set(productId, productSnap);
             }
-            // --- END OF READ PHASE ---
 
-            // --- WRITE PHASE ---
             for (const item of entryData.items) {
                 const productSnap = productSnapshots.get(item.productId)!;
                 if (!productSnap.ref || !productSnap.ref.firestore) { 
@@ -815,7 +810,6 @@ export default function DailyLedgerPage() {
             }
 
             transaction.delete(ledgerDocRef);
-             // --- END OF WRITE PHASE ---
         });
         toast({ title: "Ledger Entry Deleted", description: `Entry ID ${ledgerEntryToDelete.id.substring(0,6)}... and associated records deleted.` });
         fetchData(selectedDate); 
@@ -833,11 +827,18 @@ export default function DailyLedgerPage() {
     ? products.filter(p => p.name.toLowerCase().includes(productSearchTerm.toLowerCase()) || (p.sku && p.sku.toLowerCase().includes(productSearchTerm.toLowerCase())))
     : [];
 
-  const displayedLedgerEntries = ledgerEntries
+  const displayedLedgerEntries = useMemo(() => {
+    return ledgerEntries
     .filter(entry => {
         if (activeLedgerTab === 'customer_sales') return entry.type === 'sale';
         if (activeLedgerTab === 'seller_purchases') return entry.type === 'purchase';
         return true; 
+    })
+    .filter(entry => {
+        if (selectedUserFilterName) {
+            return (entry.createdByName === selectedUserFilterName || entry.updatedByName === selectedUserFilterName);
+        }
+        return true;
     })
     .filter(entry => {
         if (!ledgerSearchTerm) return true;
@@ -856,6 +857,21 @@ export default function DailyLedgerPage() {
         const matchesUpdater = entry.updatedByName?.toLowerCase().includes(searchTermLower);
         return matchesEntity || matchesItems || matchesNotes || matchesPaymentMethod || matchesId || matchesCreator || matchesUpdater;
     });
+  }, [ledgerEntries, activeLedgerTab, ledgerSearchTerm, selectedUserFilterName, formatCurrency]);
+
+  const handleUserFilterClick = (userName: string) => {
+    if (selectedUserFilterName === userName) {
+      setSelectedUserFilterName(null); // Toggle off if same name clicked
+    } else {
+      setSelectedUserFilterName(userName);
+    }
+  };
+
+  const openEntryDetailsDialog = (entry: LedgerEntry) => {
+    setSelectedEntryForDetails(entry);
+    setIsEntryDetailsDialogOpen(true);
+  };
+
 
   if (isLoading && !customers.length && !products.length && !sellers.length && !ledgerEntries.length) {
     return <PageHeader title="Daily Ledger" description="Loading essential data..." icon={BookOpen} />;
@@ -1093,22 +1109,106 @@ export default function DailyLedgerPage() {
         </AlertDialogContent>
       </AlertDialog>
 
+      <Dialog open={isEntryDetailsDialogOpen} onOpenChange={setIsEntryDetailsDialogOpen}>
+        <DialogContent className="max-w-2xl">
+            <DialogHeader>
+                <DialogTitle>Ledger Entry Details</DialogTitle>
+                <DialogDescription>
+                    Detailed view for Ledger ID: {selectedEntryForDetails?.id.substring(0, 8)}...
+                </DialogDescription>
+            </DialogHeader>
+            {selectedEntryForDetails && (
+                <ScrollArea className="max-h-[70vh] pr-5">
+                    <div className="space-y-4 text-sm py-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2">
+                            <div><strong className="text-muted-foreground">Date:</strong> {selectedEntryForDetails.date ? format(parseISO(selectedEntryForDetails.date), "MMM dd, yyyy") : 'N/A'}</div>
+                            <div><strong className="text-muted-foreground">Type:</strong> <Badge variant={selectedEntryForDetails.type === 'sale' ? 'default' : 'secondary'} className={selectedEntryForDetails.type === 'sale' ? 'bg-green-100 text-green-700 dark:bg-green-700/80 dark:text-green-100' : 'bg-blue-100 text-blue-700 dark:bg-blue-700/80 dark:text-blue-100'}>{selectedEntryForDetails.type.charAt(0).toUpperCase() + selectedEntryForDetails.type.slice(1)}</Badge></div>
+                            <div><strong className="text-muted-foreground">Entity Name:</strong> {selectedEntryForDetails.entityName}</div>
+                            <div><strong className="text-muted-foreground">Entity ID:</strong> {selectedEntryForDetails.entityId || "N/A"}</div>
+                            <div><strong className="text-muted-foreground">Entity Type:</strong> {selectedEntryForDetails.entityType.replace('_', ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}</div>
+                        </div>
+                        <Separator />
+                        <div>
+                            <h4 className="font-semibold mb-1">Items:</h4>
+                            <Table className="text-xs">
+                                <TableHeader><TableRow><TableHead>Product</TableHead><TableHead className="text-right">Qty</TableHead><TableHead className="text-right">Unit Price</TableHead><TableHead className="text-right">Total</TableHead></TableRow></TableHeader>
+                                <TableBody>
+                                    {selectedEntryForDetails.items.map((item, idx) => (
+                                        <TableRow key={idx}><TableCell>{item.productName} ({item.unitOfMeasure})</TableCell><TableCell className="text-right">{item.quantity}</TableCell><TableCell className="text-right">{formatCurrency(item.unitPrice)}</TableCell><TableCell className="text-right">{formatCurrency(item.totalPrice)}</TableCell></TableRow>
+                                    ))}
+                                </TableBody>
+                            </Table>
+                        </div>
+                        <Separator />
+                        <div>
+                            <h4 className="font-semibold mb-1">Financials:</h4>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1">
+                                <div><strong className="text-muted-foreground">Subtotal:</strong> {formatCurrency(selectedEntryForDetails.subTotal)}</div>
+                                <div><strong className="text-muted-foreground">GST Applied:</strong> {selectedEntryForDetails.gstApplied ? `Yes (${GST_RATE*100}%)` : 'No'}</div>
+                                {selectedEntryForDetails.gstApplied && <div><strong className="text-muted-foreground">Tax Amount:</strong> {formatCurrency(selectedEntryForDetails.taxAmount)}</div>}
+                                <div className="font-bold"><strong className="text-muted-foreground">Grand Total:</strong> {formatCurrency(selectedEntryForDetails.grandTotal)}</div>
+                                <div><strong className="text-muted-foreground">Original Trans. Amount:</strong> {formatCurrency(selectedEntryForDetails.originalTransactionAmount)}</div>
+                                <div><strong className="text-muted-foreground">Amount Paid:</strong> {formatCurrency(selectedEntryForDetails.amountPaidNow)}</div>
+                                <div><strong className="text-muted-foreground">Remaining Due:</strong> {formatCurrency(selectedEntryForDetails.remainingAmount)}</div>
+                            </div>
+                        </div>
+                        <Separator />
+                        <div>
+                             <h4 className="font-semibold mb-1">Payment Details:</h4>
+                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1">
+                                <div><strong className="text-muted-foreground">Status:</strong> {selectedEntryForDetails.paymentStatus.charAt(0).toUpperCase() + selectedEntryForDetails.paymentStatus.slice(1)}</div>
+                                <div><strong className="text-muted-foreground">Method:</strong> {selectedEntryForDetails.paymentMethod || "N/A"}</div>
+                             </div>
+                        </div>
+                        {selectedEntryForDetails.notes && selectedEntryForDetails.notes !== "N/A" && (
+                            <> <Separator /> <div><strong className="text-muted-foreground">Notes:</strong> {selectedEntryForDetails.notes}</div></>
+                        )}
+                        <Separator />
+                         <div>
+                             <h4 className="font-semibold mb-1">Audit Information:</h4>
+                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1">
+                                <div><strong className="text-muted-foreground">Created By:</strong> {selectedEntryForDetails.createdByName}</div>
+                                <div><strong className="text-muted-foreground">Created At:</strong> {selectedEntryForDetails.createdAt ? format(selectedEntryForDetails.createdAt.toDate(), "MMM dd, yyyy HH:mm") : 'N/A'}</div>
+                                {selectedEntryForDetails.updatedByName && <div><strong className="text-muted-foreground">Modified By:</strong> {selectedEntryForDetails.updatedByName}</div>}
+                                {selectedEntryForDetails.updatedAt && <div><strong className="text-muted-foreground">Modified At:</strong> {format(selectedEntryForDetails.updatedAt.toDate(), "MMM dd, yyyy HH:mm")}</div>}
+                             </div>
+                        </div>
+                        {selectedEntryForDetails.associatedPaymentRecordId && (
+                             <> <Separator /> <div><strong className="text-muted-foreground">Payment Record ID:</strong> {selectedEntryForDetails.associatedPaymentRecordId}</div></>
+                        )}
+                    </div>
+                </ScrollArea>
+            )}
+            <DialogFooter className="pt-4">
+                <DialogClose asChild><Button type="button" variant="outline">Close</Button></DialogClose>
+            </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
 
       <Card className="mt-6 shadow-lg rounded-xl">
         <CardHeader>
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
               <CardTitle className="font-headline text-foreground">Ledger Entries for {format(parseISO(selectedDate), "MMMM dd, yyyy")}</CardTitle>
-              <CardDescription>Browse recorded transactions for the selected date. Admins can edit/delete.</CardDescription>
+              <CardDescription>Browse recorded transactions for the selected date. {currentUserRole === 'admin' && "Admins can edit/delete."}</CardDescription>
             </div>
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
-                 <Input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} className="w-full sm:w-auto h-10"/>
+                 <Input type="date" value={selectedDate} onChange={e => {setSelectedDate(e.target.value); setSelectedUserFilterName(null);}} className="w-full sm:w-auto h-10"/>
                  <div className="relative w-full sm:w-64">
                      <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                     <Input placeholder="Search by ID, entity, product..." className="pl-8 h-10" value={ledgerSearchTerm} onChange={e => setLedgerSearchTerm(e.target.value)} />
+                     <Input placeholder="Search by ID, entity, product, user..." className="pl-8 h-10" value={ledgerSearchTerm} onChange={e => setLedgerSearchTerm(e.target.value)} />
                  </div>
             </div>
           </div>
+          {selectedUserFilterName && (
+            <div className="mt-3">
+                <Button variant="outline" size="sm" onClick={() => setSelectedUserFilterName(null)}>
+                    <UserX className="mr-2 h-4 w-4" />
+                    Clear filter for: {selectedUserFilterName}
+                </Button>
+            </div>
+           )}
         </CardHeader>
         <CardContent>
           <Tabs value={activeLedgerTab} onValueChange={(value) => setActiveLedgerTab(value as any)} className="w-full mb-4">
@@ -1131,6 +1231,7 @@ export default function DailyLedgerPage() {
                 <p className="text-sm">
                     {ledgerSearchTerm
                         ? `No entries match your search for "${ledgerSearchTerm}" on this date.`
+                        : selectedUserFilterName ? `No entries for user "${selectedUserFilterName}" on this date or for this tab.`
                         : `There are no ledger entries recorded for ${format(parseISO(selectedDate), "MMMM dd, yyyy")}.`
                     }
                 </p>
@@ -1142,15 +1243,13 @@ export default function DailyLedgerPage() {
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader><TableRow>
-                  <TableHead>Type</TableHead><TableHead>Entity</TableHead><TableHead className="min-w-[150px] sm:min-w-[200px]">Items</TableHead>
-                  <TableHead className="text-right hidden md:table-cell">Total (₹)</TableHead>
-                  <TableHead className="text-right hidden lg:table-cell">Paid (₹)</TableHead>
-                  <TableHead className="text-right hidden lg:table-cell">Due (₹)</TableHead>
-                  <TableHead className="hidden sm:table-cell">Payment</TableHead>
-                  <TableHead className="hidden xl:table-cell">Notes</TableHead>
-                  <TableHead className="hidden md:table-cell">Created By</TableHead>
-                  <TableHead className="hidden lg:table-cell">Modified By</TableHead>
-                  {currentUserRole === 'admin' && <TableHead className="text-right">Actions</TableHead>}
+                  <TableHead className="w-20">Type</TableHead>
+                  <TableHead className="min-w-[150px]">Entity</TableHead>
+                  <TableHead className="min-w-[200px]">Items (Summary)</TableHead>
+                  <TableHead className="text-right min-w-[100px]">Total (₹)</TableHead>
+                  <TableHead className="min-w-[150px]">Payment</TableHead>
+                  <TableHead className="min-w-[120px]">Created By</TableHead>
+                  <TableHead className="text-right w-28">Actions</TableHead>
                 </TableRow></TableHeader>
                 <TableBody>
                   {displayedLedgerEntries.map(entry => (
@@ -1161,50 +1260,46 @@ export default function DailyLedgerPage() {
                         </Badge>
                       </TableCell>
                       <TableCell>{entry.entityName}</TableCell>
-                      <TableCell className="text-xs">{entry.items.map(i => `${i.productName} (x${i.quantity})`).join(', ')}</TableCell>
-                      <TableCell className="text-right font-semibold hidden md:table-cell">{formatCurrency(entry.grandTotal)}</TableCell>
-                      <TableCell className="text-right hidden lg:table-cell">{formatCurrency(entry.amountPaidNow)}</TableCell>
-                      <TableCell className="text-right hidden lg:table-cell">{formatCurrency(entry.remainingAmount)}</TableCell>
-                      <TableCell className="capitalize hidden sm:table-cell">
+                      <TableCell className="text-xs">{entry.items.map(i => `${i.productName} (x${i.quantity})`).join(', ').substring(0, 50) + (entry.items.map(i => `${i.productName} (x${i.quantity})`).join(', ').length > 50 ? '...' : '')}</TableCell>
+                      <TableCell className="text-right font-semibold">{formatCurrency(entry.grandTotal)}</TableCell>
+                      <TableCell className="capitalize">
                         {entry.paymentStatus ? entry.paymentStatus.charAt(0).toUpperCase() + entry.paymentStatus.slice(1) : "N/A"}
                         {entry.paymentMethod ? ` (${entry.paymentMethod})` : ''}
                       </TableCell>
-                      <TableCell className="text-xs max-w-[100px] truncate hidden xl:table-cell" title={entry.notes || undefined}>{entry.notes || "N/A"}</TableCell>
-                      <TableCell className="text-xs hidden md:table-cell">
-                        <div className="flex items-center gap-1.5">
-                            <UserCircle2 className="h-3.5 w-3.5 text-muted-foreground shrink-0"/>
-                            {entry.createdByName || "N/A"}
-                        </div>
-                      </TableCell>
-                       <TableCell className="text-xs hidden lg:table-cell">
-                        {entry.updatedByName ? (
+                      <TableCell className="text-xs">
+                        <Button variant="link" size="sm" className="p-0 h-auto text-xs font-normal text-current hover:text-primary" onClick={() => handleUserFilterClick(entry.createdByName || 'Unknown User')}>
                             <div className="flex items-center gap-1.5">
                                 <UserCircle2 className="h-3.5 w-3.5 text-muted-foreground shrink-0"/>
-                                {entry.updatedByName}
+                                {entry.createdByName || "N/A"}
                             </div>
-                        ) : "N/A"}
+                        </Button>
                       </TableCell>
-                       {currentUserRole === 'admin' && (
-                        <TableCell className="text-right">
-                           <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon">
-                                <MoreHorizontal className="h-4 w-4" />
-                                <span className="sr-only">Actions for {entry.id}</span>
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => handleEditLedgerEntry(entry)}>
-                                  <Edit className="mr-2 h-4 w-4" /> Edit Entry
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator/>
-                              <DropdownMenuItem onClick={() => openDeleteConfirmation(entry)} className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground">
-                                  <Trash2 className="mr-2 h-4 w-4" /> Delete Entry
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
+                       <TableCell className="text-right">
+                           <div className="flex items-center justify-end gap-1">
+                            <Button variant="ghost" size="icon" onClick={() => openEntryDetailsDialog(entry)} title="View Full Details">
+                                <Eye className="h-4 w-4"/> <span className="sr-only">View Details</span>
+                            </Button>
+                            {currentUserRole === 'admin' && (
+                               <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button variant="ghost" size="icon">
+                                    <MoreHorizontal className="h-4 w-4" />
+                                    <span className="sr-only">More actions for {entry.id}</span>
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem onClick={() => handleEditLedgerEntry(entry)}>
+                                      <Edit className="mr-2 h-4 w-4" /> Edit Entry
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator/>
+                                  <DropdownMenuItem onClick={() => openDeleteConfirmation(entry)} className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground">
+                                      <Trash2 className="mr-2 h-4 w-4" /> Delete Entry
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            )}
+                           </div>
                         </TableCell>
-                      )}
                     </TableRow>
                   ))}
                 </TableBody>
@@ -1217,3 +1312,4 @@ export default function DailyLedgerPage() {
   );
 }
 
+    
