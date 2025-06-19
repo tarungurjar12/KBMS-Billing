@@ -35,7 +35,7 @@ const adminRegistrationSchema = z.object({
   companyGstin: z.string().optional().or(z.literal('')).refine(val => !val || /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(val), {
     message: "Invalid GSTIN format (e.g., 29ABCDE1234F1Z5) or leave blank.",
   }),
-  companyLogoUrl: z.string().url("Must be a valid URL (e.g., https://example.com/logo.png) or leave blank.").optional().or(z.literal('')),
+  companyLogoUrl: z.string().url({ message: "Must be a valid URL (e.g., https://example.com/logo.png) or leave blank."}).optional().or(z.literal('')),
 }).refine(data => data.adminPassword === data.adminConfirmPassword, {
   message: "Passwords don't match.",
   path: ["adminConfirmPassword"], 
@@ -99,12 +99,12 @@ export default function RegisterAdminPage() {
         email: values.adminEmail,
         contactNumber: values.adminPhone, 
         role: 'admin',
-        companyId: companyId, // Crucial for multi-tenancy
+        companyId: companyId,
         companyName: values.companyName,
         companyAddress: values.companyAddress,
         companyContact: values.companyContactPhone, 
-        companyGstin: values.companyGstin || undefined, 
-        companyLogoUrl: values.companyLogoUrl || undefined, 
+        companyGstin: values.companyGstin && values.companyGstin.trim() !== "" ? values.companyGstin.trim() : null, 
+        companyLogoUrl: values.companyLogoUrl && values.companyLogoUrl.trim() !== "" ? values.companyLogoUrl.trim() : null, 
         createdAt: serverTimestamp() as Timestamp,
         updatedAt: serverTimestamp() as Timestamp,
         status: "Active",
@@ -119,7 +119,6 @@ export default function RegisterAdminPage() {
         duration: 5000,
       });
       
-      // Redirect to login page with a success query parameter
       router.push('/login?registrationSuccess=true');
 
     } catch (error: any) {
@@ -151,7 +150,6 @@ export default function RegisterAdminPage() {
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)}>
             <CardContent className="space-y-8 pt-6 pb-2 max-h-[70vh] overflow-y-auto px-3 sm:px-6">
-              {/* Admin Details Section */}
               <section className="space-y-4 p-3 sm:p-4 border rounded-lg shadow-sm">
                 <h3 className="text-lg font-semibold text-primary flex items-center"><UserCircle className="mr-2 h-5 w-5"/>Your Admin Details</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -170,7 +168,6 @@ export default function RegisterAdminPage() {
                     <FormItem><FormLabel>Your Personal Phone Number</FormLabel><FormControl><Input placeholder="e.g., 9876543210" {...field} /></FormControl><FormMessage /></FormItem>)} />
               </section>
 
-              {/* Company Information Section */}
               <section className="space-y-4 p-3 sm:p-4 border rounded-lg shadow-sm">
                 <h3 className="text-lg font-semibold text-primary flex items-center"><Building className="mr-2 h-5 w-5"/>Your Company Information</h3>
                 <FormField control={form.control} name="companyName" render={({ field }) => (
