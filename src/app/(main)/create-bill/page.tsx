@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useSearchParams, useRouter } from 'next/navigation';
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -113,7 +113,7 @@ export default function CreateBillPage() {
       const q = query(collection(db, "ledgerEntries"), 
         where("entityId", "==", customerId), 
         where("type", "==", "sale"), 
-        where("entryPurpose", "==", "Transactional"),
+        where("entryPurpose", "==", "Ledger Record"),
         where("paymentStatus", "in", ["pending", "partial"])
       );
       const snapshot = await getDocs(q);
@@ -392,7 +392,7 @@ export default function CreateBillPage() {
             </CardContent>
             <CardFooter>
               <Button size="lg" className="w-full" onClick={handleGenerateOrUpdateBill} disabled={isLoading || isSubmitting || !selectedCustomerId || (billCreationMode === 'standard' && billItems.length === 0) || (billCreationMode === 'from_pending_ledger' && !pendingLedgerItems.some(i=>i.isSelected))}>
-                {isSubmitting ? (editInvoiceId ? "Updating Bill..." : "Generating Bill...") : (editInvoiceId ? "Update Bill" : "Generate Bill")}
+                {isSubmitting ? (editInvoiceId && billCreationMode === 'standard' ? "Updating Bill..." : "Generating Bill...") : (editInvoiceId && billCreationMode === 'standard' ? "Update Bill" : "Generate Bill")}
               </Button>
             </CardFooter>
           </Card>
