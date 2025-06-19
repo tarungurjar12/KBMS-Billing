@@ -117,7 +117,17 @@ export default function CreateBillPage() {
         where("paymentStatus", "in", ["pending", "partial"])
       );
       const snapshot = await getDocs(q);
-      const items = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, isSelected: false } as PendingLedgerItemToInvoice));
+      const items = snapshot.docs.map(docSnap => {
+        const data = docSnap.data();
+        return { 
+          ...data, 
+          id: docSnap.id, 
+          isSelected: false,
+          date: data.date, // Ensure date is passed through
+          items: data.items || [], // Ensure items are passed through
+          remainingAmount: data.remainingAmount || 0, // Ensure remainingAmount is passed
+        } as PendingLedgerItemToInvoice;
+      });
       setPendingLedgerItems(items);
       if (items.length === 0) {
         toast({title: "No Pending Items", description: "This customer has no pending or partially paid sales ledger entries.", variant: "default"});
@@ -251,11 +261,13 @@ export default function CreateBillPage() {
             invoiceItemsForSave = billItems.map(i => ({ productId: i.id, name: i.name, quantity: i.quantity, unitPrice: i.numericPrice, total: i.total, unitOfMeasure: i.unitOfMeasure }));
         } else { // from_pending_ledger
              invoiceItemsForSave = pendingLedgerItems.filter(i => i.isSelected).map(li => ({
-                productId: `PENDING_REF:${li.id}`, // Special ID to indicate it's from a ledger entry
-                name: `Ref: Ledger ${li.id.substring(0,6)} (${format(new Date(li.date), "dd/MM/yy")}) - ${li.items.map(i=>i.productName).join(', ').substring(0,20)}...`,
-                quantity: 1, unitPrice: li.remainingAmount || 0, total: li.remainingAmount || 0, unitOfMeasure: "summary"
+                productId: `PENDING_LEDGER_REF:${li.id}`, 
+                name: `Pending items from ${format(new Date(li.date), "dd/MM/yy")}: ${li.items.map(item => item.productName).join(', ').substring(0, 40)}...`,
+                quantity: 1, 
+                unitPrice: li.remainingAmount || 0, 
+                total: li.remainingAmount || 0, 
+                unitOfMeasure: "summary"
             }));
-            // No stock adjustment for "from_pending_ledger" mode
         }
         
         const billData: Omit<Invoice, 'id' | 'createdAt' | 'updatedAt'> & {createdAt?: any, updatedAt?: any, createdBy: string} = { 
@@ -366,9 +378,11 @@ export default function CreateBillPage() {
                                 <Checkbox id={`item-${item.id}`} checked={item.isSelected} onCheckedChange={() => handleTogglePendingItemSelection(item.id)} disabled={isSubmitting} />
                                 <div className="flex-grow text-sm">
                                     <Label htmlFor={`item-${item.id}`} className="font-medium cursor-pointer">
-                                        Ledger ID: {item.id.substring(0,6)}... (Date: {format(new Date(item.date), "dd/MM/yy")})
+                                        Date: {format(new Date(item.date), "dd/MM/yy")} - Items: {item.items.map(i => i.productName).join(', ').substring(0, 30)}{item.items.map(i => i.productName).join(', ').length > 30 ? '...' : ''}
                                     </Label>
-                                    <p className="text-xs text-muted-foreground">Items: {item.items.map(i => `${i.productName} (x${i.quantity})`).join(', ').substring(0,50)}...</p>
+                                    <p className="text-xs text-muted-foreground">
+                                      Full Details: {item.items.map(i => `${i.productName} (x${i.quantity})`).join(', ').substring(0,50)}...
+                                    </p>
                                     <p className="text-xs font-semibold">Pending Amt: {formatCurrency(item.remainingAmount || 0)}</p>
                                 </div>
                             </Card>
