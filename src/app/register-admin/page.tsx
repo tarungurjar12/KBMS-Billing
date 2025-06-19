@@ -7,12 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label"; // Not directly used with RHF, but good to keep for potential direct use
 import { Building, UserPlus, UserCircle, KeyRound, Phone, Globe, FileTextIcon, Image as ImageIcon } from 'lucide-react';
 import { auth, db } from '@/lib/firebase/firebaseConfig';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { doc, setDoc, getDocs, collection, query, where, serverTimestamp, Timestamp } from 'firebase/firestore';
-import { useForm } from "react-hook-form"; // Removed Controller as not explicitly used in this version
+import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
@@ -60,8 +59,7 @@ export default function RegisterAdminPage() {
   const onSubmit = async (values: AdminRegistrationFormValues) => {
     setLoading(true);
     try {
-      // 1. Check for unique admin email (globally unique due to Firebase Auth)
-      // Firebase createUserWithEmailAndPassword will handle this, but an early check can be good UX
+      // 1. Check for unique admin email (Firebase Auth will also enforce this globally)
       const emailQuery = query(collection(db, "users"), where("email", "==", values.adminEmail));
       const emailSnapshot = await getDocs(emailQuery);
       if (!emailSnapshot.empty) {
@@ -101,7 +99,7 @@ export default function RegisterAdminPage() {
         email: values.adminEmail,
         contactNumber: values.adminPhone, 
         role: 'admin',
-        companyId: companyId,
+        companyId: companyId, // Crucial for multi-tenancy
         companyName: values.companyName,
         companyAddress: values.companyAddress,
         companyContact: values.companyContactPhone, 
@@ -118,8 +116,10 @@ export default function RegisterAdminPage() {
       toast({
         title: "Admin Account Created!",
         description: "Your admin account and company profile have been successfully created.",
+        duration: 5000,
       });
       
+      // Redirect to login page with a success query parameter
       router.push('/login?registrationSuccess=true');
 
     } catch (error: any) {
@@ -146,53 +146,53 @@ export default function RegisterAdminPage() {
             <UserPlus className="h-10 w-10 text-primary" />
           </div>
           <CardTitle className="text-3xl font-bold font-headline text-foreground">Create Admin Account</CardTitle>
-          <CardDescription>Set up your company profile and admin credentials.</CardDescription>
+          <CardDescription>Set up your company profile and admin credentials to get started.</CardDescription>
         </CardHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)}>
             <CardContent className="space-y-8 pt-6 pb-2 max-h-[70vh] overflow-y-auto px-3 sm:px-6">
               {/* Admin Details Section */}
               <section className="space-y-4 p-3 sm:p-4 border rounded-lg shadow-sm">
-                <h3 className="text-lg font-semibold text-primary flex items-center"><UserCircle className="mr-2 h-5 w-5"/>Admin Details</h3>
+                <h3 className="text-lg font-semibold text-primary flex items-center"><UserCircle className="mr-2 h-5 w-5"/>Your Admin Details</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <FormField control={form.control} name="adminName" render={({ field }) => (
                       <FormItem><FormLabel>Your Full Name</FormLabel><FormControl><Input placeholder="e.g., Priya Sharma" {...field} /></FormControl><FormMessage /></FormItem>)} />
                   <FormField control={form.control} name="adminEmail" render={({ field }) => (
-                      <FormItem><FormLabel>Login Email</FormLabel><FormControl><Input type="email" placeholder="e.g., admin@mycompany.com" {...field} /></FormControl><FormMessage /></FormItem>)} />
+                      <FormItem><FormLabel>Your Login Email</FormLabel><FormControl><Input type="email" placeholder="e.g., admin@mycompany.com" {...field} /></FormControl><FormMessage /></FormItem>)} />
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <FormField control={form.control} name="adminPassword" render={({ field }) => (
-                      <FormItem><FormLabel>Password</FormLabel><FormControl><Input type="password" placeholder="Min. 6 characters" {...field} /></FormControl><FormMessage /></FormItem>)} />
+                      <FormItem><FormLabel>Set Password</FormLabel><FormControl><Input type="password" placeholder="Min. 6 characters" {...field} /></FormControl><FormMessage /></FormItem>)} />
                   <FormField control={form.control} name="adminConfirmPassword" render={({ field }) => (
                       <FormItem><FormLabel>Confirm Password</FormLabel><FormControl><Input type="password" placeholder="Re-enter password" {...field} /></FormControl><FormMessage /></FormItem>)} />
                 </div>
                  <FormField control={form.control} name="adminPhone" render={({ field }) => (
-                    <FormItem><FormLabel>Your Personal Phone</FormLabel><FormControl><Input placeholder="e.g., 9876543210" {...field} /></FormControl><FormMessage /></FormItem>)} />
+                    <FormItem><FormLabel>Your Personal Phone Number</FormLabel><FormControl><Input placeholder="e.g., 9876543210" {...field} /></FormControl><FormMessage /></FormItem>)} />
               </section>
 
               {/* Company Information Section */}
               <section className="space-y-4 p-3 sm:p-4 border rounded-lg shadow-sm">
-                <h3 className="text-lg font-semibold text-primary flex items-center"><Building className="mr-2 h-5 w-5"/>Company Information</h3>
+                <h3 className="text-lg font-semibold text-primary flex items-center"><Building className="mr-2 h-5 w-5"/>Your Company Information</h3>
                 <FormField control={form.control} name="companyName" render={({ field }) => (
-                    <FormItem><FormLabel>Company Name</FormLabel><FormControl><Input placeholder="e.g., My Awesome Company Pvt. Ltd." {...field} /></FormControl><FormMessage /></FormItem>)} />
+                    <FormItem><FormLabel>Company Name</FormLabel><FormControl><Input placeholder="e.g., Sharma & Sons Hardware" {...field} /></FormControl><FormMessage /></FormItem>)} />
                 <FormField control={form.control} name="companyAddress" render={({ field }) => (
-                    <FormItem><FormLabel>Company Full Address</FormLabel><FormControl><Textarea placeholder="123 Business Park, Industrial Area, City, State, PIN" {...field} rows={3}/></FormControl><FormMessage /></FormItem>)} />
+                    <FormItem><FormLabel>Company Full Address</FormLabel><FormControl><Textarea placeholder="Shop No. 1, Main Market, City, State - PIN Code" {...field} rows={3}/></FormControl><FormMessage /></FormItem>)} />
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <FormField control={form.control} name="companyContactPhone" render={({ field }) => (
-                      <FormItem><FormLabel>Company Contact Phone</FormLabel><FormControl><Input placeholder="e.g., 011-23456789" {...field} /></FormControl><FormMessage /></FormItem>)} />
+                      <FormItem><FormLabel>Company Contact Phone</FormLabel><FormControl><Input placeholder="e.g., 011-23456789 / 9988776655" {...field} /></FormControl><FormMessage /></FormItem>)} />
                   <FormField control={form.control} name="companyGstin" render={({ field }) => (
                       <FormItem><FormLabel>Company GSTIN (Optional)</FormLabel><FormControl><Input placeholder="e.g., 29ABCDE1234F1Z5" {...field} /></FormControl><FormMessage /></FormItem>)} />
                 </div>
                 <FormField control={form.control} name="companyLogoUrl" render={({ field }) => (
-                    <FormItem><FormLabel>Company Logo URL (Optional)</FormLabel><FormControl><Input placeholder="https://example.com/your_logo.png" {...field} /></FormControl><FormDescription>Paste a direct link to your company logo image.</FormDescription><FormMessage /></FormItem>)} />
+                    <FormItem><FormLabel>Company Logo URL (Optional)</FormLabel><FormControl><Input placeholder="https://example.com/your_logo.png" {...field} /></FormControl><FormDescription>Paste a direct link to your company logo image (e.g., from Google Drive, Imgur).</FormDescription><FormMessage /></FormItem>)} />
               </section>
             </CardContent>
             <CardFooter className="flex flex-col gap-4 pt-6 px-3 sm:px-6">
               <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? 'Creating Account...' : 'Create Admin Account &amp; Company Profile'}
+                {loading ? 'Creating Account...' : 'Create Admin Account & Company Profile'}
               </Button>
               <p className="text-sm text-muted-foreground text-center">
-                Already have an account?{' '}
+                Already registered an admin account?{' '}
                 <Link href="/login" className="font-medium text-primary hover:underline">
                   Login Here
                 </Link>
@@ -204,4 +204,3 @@ export default function RegisterAdminPage() {
     </div>
   );
 }
-    

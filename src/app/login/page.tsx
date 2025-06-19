@@ -2,18 +2,19 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation'; // Added useSearchParams
-import Link from 'next/link'; // Added Link
+import { useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Building, UserPlus } from 'lucide-react'; // Added UserPlus
+import { Building, Cog, UserPlus, Bug } from 'lucide-react';
 import { auth, db } from '@/lib/firebase/firebaseConfig';
 import { signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import type { UserProfile } from '@/app/(main)/my-profile/page';
-import { useToast } from "@/hooks/use-toast"; // Added useToast
+import { useToast } from "@/hooks/use-toast";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 const setCookie = (name: string, value: string, days: number) => {
   let expires = "";
@@ -25,7 +26,7 @@ const setCookie = (name: string, value: string, days: number) => {
   if (typeof document !== 'undefined') {
     document.cookie = name + "=" + (value || "") + expires + "; path=/";
     console.log(`LoginPage: Cookie set: ${name}=${value}`);
-    window.dispatchEvent(new CustomEvent('userSessionChanged')); // More generic event
+    window.dispatchEvent(new CustomEvent('userSessionChanged'));
   } else {
     console.warn("LoginPage: setCookie called when document is undefined.");
   }
@@ -69,8 +70,8 @@ export default function LoginPage() {
             title: "Registration Successful!",
             description: "You can now log in with your new admin account.",
             variant: "default", 
+            duration: 5000,
         });
-        // Clean the query param from URL
         router.replace('/login', { scroll: false });
     }
   }, [searchParams, toast, router]);
@@ -226,7 +227,29 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-background p-4">
+    <div className="flex min-h-screen flex-col items-center justify-center bg-background p-4 relative">
+      <div className="absolute top-4 right-4">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" aria-label="Settings">
+              <Cog className="h-6 w-6 text-muted-foreground hover:text-primary transition-colors" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-56">
+            <DropdownMenuItem asChild>
+              <Link href="/register-admin" className="flex items-center w-full">
+                <UserPlus className="mr-2 h-4 w-4" />
+                <span>Create Admin Account</span>
+              </Link>
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => toast({ title: "Report Issue", description: "Report Issue functionality is planned for a future update.", duration: 3000 })}>
+              <Bug className="mr-2 h-4 w-4" />
+              <span>Report Issue</span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
       <Card className="w-full max-w-md shadow-2xl rounded-xl">
         <CardHeader className="space-y-1 text-center">
           <div className="flex justify-center items-center mb-4">
@@ -252,15 +275,6 @@ export default function LoginPage() {
           </Button>
         </CardFooter>
       </Card>
-      <div className="mt-6 text-center">
-          <p className="text-sm text-muted-foreground">
-            Need to set up your company?{' '}
-            <Link href="/register-admin" className="font-medium text-primary hover:underline">
-              Create Admin Account
-            </Link>
-          </p>
-      </div>
     </div>
   );
 }
-    
