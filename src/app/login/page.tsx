@@ -3,7 +3,8 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import Link from 'next/link';
+// Link import is removed as we are testing router.push directly for this item
+// import Link from 'next/link'; 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -72,6 +73,7 @@ export default function LoginPage() {
             variant: "default", 
             duration: 5000,
         });
+        // Use router.replace to remove the query parameter from the URL without adding to history
         router.replace('/login', { scroll: false });
     }
   }, [searchParams, toast, router]);
@@ -123,7 +125,7 @@ export default function LoginPage() {
       console.log("LoginPage Unmount: Unsubscribing from onAuthStateChanged.");
       unsubscribe();
     };
-  }, [router]);
+  }, [router]); // Removed searchParams from dependency array as it's only used in the other useEffect
 
   const handleLogin = async () => {
     console.log("LoginPage handleLogin: Attempting login for email:", email);
@@ -236,11 +238,12 @@ export default function LoginPage() {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuItem asChild>
-              <Link href="/register-admin" className="flex items-center w-full">
-                <UserPlus className="mr-2 h-4 w-4" />
-                <span>Create Admin Account</span>
-              </Link>
+            <DropdownMenuItem 
+              onClick={() => router.push('/register-admin')} 
+              className="flex items-center w-full cursor-pointer"
+            >
+              <UserPlus className="mr-2 h-4 w-4" />
+              <span>Create Admin Account</span>
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => toast({ title: "Report Issue", description: "Report Issue functionality is planned for a future update.", duration: 3000 })}>
               <Bug className="mr-2 h-4 w-4" />
@@ -278,3 +281,6 @@ export default function LoginPage() {
     </div>
   );
 }
+
+
+    
