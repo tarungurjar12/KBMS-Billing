@@ -267,7 +267,7 @@ export default function DailyLedgerPage() {
             id: d.id, 
             ...data,
             entryPurpose: data.entryPurpose || ENTRY_PURPOSES[0],
-            paymentAmount: data.paymentAmount, // Will be undefined if not set
+            paymentAmount: data.paymentAmount, 
             createdByUid: data.createdByUid || data.createdBy, 
             createdByName: data.createdByName || "Unknown User",
             updatedByUid: data.updatedByUid || null,
@@ -300,19 +300,19 @@ export default function DailyLedgerPage() {
   }, [toast, formatCurrency]);
   
   const currentEntityTypeOptions = useMemo(() => {
-    const type = form.getValues("type");
+    const type = form.watch("type"); // Use watch to react to changes
     if (type === 'sale') { 
         return [
             { value: 'customer', label: 'Existing Customer' },
             { value: 'unknown_customer', label: 'Unknown Customer' }
         ];
-    } else { 
+    } else { // For Purchases or Payment Sent to Seller
         return [
             { value: 'seller', label: 'Existing Seller' },
             { value: 'unknown_seller', label: 'Unknown Seller' }
         ];
     }
-  }, [form]); 
+  }, [form.watch("type")]); 
 
   useEffect(() => { 
     const currentType = form.getValues("type");
@@ -468,7 +468,10 @@ export default function DailyLedgerPage() {
             form.setValue("applyGst", false); 
             form.setValue("items", []); 
         } else { // Ledger Record
-            if (currentEntityType === "unknown_customer" || currentEntityType === "unknown_seller") {
+            if (currentEntityType === "unknown_customer") {
+                form.setValue("paymentStatus", 'paid');
+                form.setValue("paymentMethod", form.getValues("paymentMethod") || 'Cash');
+            } else if (currentEntityType === "unknown_seller") {
                 form.setValue("paymentStatus", 'paid');
                 form.setValue("paymentMethod", form.getValues("paymentMethod") || 'Cash');
             } else if (transactionTypeWatcher === 'sale') {
@@ -521,7 +524,7 @@ export default function DailyLedgerPage() {
                 if(currentTransactionType === 'sale') {
                     form.setValue("paymentStatus", "paid", { shouldDirty: true });
                     form.setValue("paymentMethod", "Cash", { shouldDirty: true });
-                } else { 
+                } else { // 'purchase'
                     form.setValue("paymentStatus", "pending", { shouldDirty: true });
                     form.setValue("paymentMethod", null, { shouldDirty: true });
                 }
