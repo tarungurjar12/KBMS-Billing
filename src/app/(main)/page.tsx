@@ -43,9 +43,9 @@ export default function AdminDashboardPage() {
     { title: "Total Revenue (from Payments)", value: "₹0.00", icon: DollarSign, dataAiHint: "finance money", isLoading: true, link: "/payments?type=customer&status=Completed" },
     { title: "Active Customers", value: "0", icon: Users, dataAiHint: "people team", isLoading: true, link: "/customers" },
     { title: "Pending Invoices", value: "0", icon: FileText, dataAiHint: "document paper", isLoading: true, link: "/billing?status=Pending" },
-    { title: "Low Stock Items", value: "0", icon: PackageMinus, dataAiHint: "box inventory alert", isLoading: true, link: "/stock?filter=low" },
+    { title: "Low Stock Items (<50)", value: "0", icon: PackageMinus, dataAiHint: "box inventory alert", isLoading: true, link: "/stock?filter=low" },
   ]);
-  const [recentSalesActivity, setRecentSalesActivity] = useState<any[]>([]);
+  const [recentSalesActivity, setRecentSalesActivity] = useState<LedgerEntry[]>([]); // Changed to LedgerEntry[]
   const [isLoadingSalesChart, setIsLoadingSalesChart] = useState(true);
   const [isLoadingMetrics, setIsLoadingMetrics] = useState(true); 
 
@@ -80,7 +80,7 @@ export default function AdminDashboardPage() {
 
       const lowStockQuery = query(collection(db, "products"), where("stock", "<", LOW_STOCK_THRESHOLD), where("stock", ">", 0));
       const lowStockSnapshot = await getCountFromServer(lowStockQuery);
-      updateMetricState("Low Stock Items", { value: lowStockSnapshot.data().count.toString() });
+      updateMetricState("Low Stock Items (<50)", { value: lowStockSnapshot.data().count.toString() });
 
       const paymentsQuery = query(collection(db, "payments"),
         where("type", "==", "customer"),
@@ -94,32 +94,15 @@ export default function AdminDashboardPage() {
       });
       updateMetricState("Total Revenue (from Payments)", { value: formatCurrency(totalRevenueFromPayments) });
 
-      // Update Recent Sales Activity to use ledger entries
       const recentSalesQuery = query(
         collection(db, "ledgerEntries"), 
-        where("type", "==", "sale"), 
-        orderBy("createdAt", "desc"), // Assuming createdAt exists and is a Timestamp
+        where("type", "==", "sale"), // Focus on sales ledger entries
+        orderBy("createdAt", "desc"), 
         limit(5)
       );
       const recentSalesSnapshot = await getDocs(recentSalesQuery);
-      const salesData = recentSalesSnapshot.docs.map(doc => {
-        const data = doc.data() as LedgerEntry;
-        let formattedDate = "Invalid Date";
-        try {
-          if (data.isoDate) { // Use isoDate for consistency if available
-            formattedDate = format(parseISO(data.isoDate), "MMM dd");
-          } else if (data.createdAt instanceof Timestamp) {
-            formattedDate = format(data.createdAt.toDate(), "MMM dd");
-          }
-        } catch (e) { console.warn("Error formatting date for recent sales chart item:", data.isoDate || data.createdAt, e); }
-        return { 
-            name: formattedDate, 
-            uv: data.grandTotal || 0, // Use grandTotal from ledger
-            entryType: data.type, 
-            entity: data.entityName || "N/A" 
-        };
-      });
-      setRecentSalesActivity(salesData.reverse()); // Reverse to show oldest first for chart
+      const salesData = recentSalesSnapshot.docs.map(doc => doc.data() as LedgerEntry);
+      setRecentSalesActivity(salesData);
 
     } catch (error: any) {
       console.error("Error fetching dashboard data: ", error);
@@ -164,29 +147,39 @@ export default function AdminDashboardPage() {
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2 shadow-lg rounded-xl">
           <CardHeader>
-            <CardTitle className="font-headline text-foreground flex items-center"><TrendingUp className="mr-2 h-6 w-6 text-primary"/>Recent Sales Activity</CardTitle>
-            <CardDescription>A visual summary of recent sales recorded in the ledger.</CardDescription>
+            <CardTitle className="font-headline text-foreground flex items-center"><TrendingUp className="mr-2 h-6 w-6 text-primary"/>Recent Sales Ledger Entries</CardTitle>
+            <CardDescription>A summary of the latest sales recorded in the ledger.</CardDescription>
           </CardHeader>
           <CardContent>
             {isLoadingSalesChart ? (
                  <div className="h-[250px] flex items-center justify-center bg-muted/30 rounded-md border border-dashed">
                     <Activity className="h-10 w-10 text-muted-foreground animate-spin mr-3" />
-                    <p className="text-muted-foreground">Loading sales data for chart...</p>
+                    <p className="text-muted-foreground">Loading recent sales entries...</p>
                  </div>
             ) : recentSalesActivity.length > 0 ? (
-              <div className="h-[250px] flex items-center justify-center bg-muted/20 dark:bg-muted/10 rounded-md border border-dashed">
-                <p className="text-muted-foreground p-4 text-center">Sales chart data (from ledger) loaded ({recentSalesActivity.length} entries). Actual chart component to be implemented here.</p>
-                {/* 
-                  Example of how data could be structured for a chart component:
-                  <ChartComponent data={recentSalesActivity} xAxisKey="name" yAxisKey="uv" />
-                  Where `uv` would be the grandTotal of the ledger entry.
-                */}
+              <div className="space-y-3">
+                {recentSalesActivity.map(entry => (
+                  <div key={entry.id} className="p-3 border rounded-md hover:bg-muted/50 transition-colors">
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="font-medium text-foreground">{entry.entityName}</span>
+                      <span className="font-semibold text-primary">{formatCurrency(entry.grandTotal)}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Date: {entry.date ? format(parseISO(entry.date), "MMM dd, yyyy") : "N/A"} | Type: {entry.entryPurpose}
+                    </p>
+                    {entry.items && entry.items.length > 0 && (
+                        <p className="text-xs text-muted-foreground truncate">
+                            Items: {entry.items.map(item => item.productName).join(', ')}
+                        </p>
+                    )}
+                  </div>
+                ))}
               </div>
             ) : (
               <div className="h-[250px] flex flex-col items-center justify-center bg-muted/30 rounded-md border border-dashed">
                 <AlertCircle className="h-8 w-8 text-muted-foreground mb-2"/>
-                <p className="text-muted-foreground font-semibold">No Recent Sales Data</p>
-                <p className="text-sm text-muted-foreground">No sales ledger entries found to display recent sales trends.</p>
+                <p className="text-muted-foreground font-semibold">No Recent Sales Entries</p>
+                <p className="text-sm text-muted-foreground">No sales ledger entries found recently.</p>
               </div>
             )}
           </CardContent>
@@ -223,3 +216,5 @@ export default function AdminDashboardPage() {
     </>
   );
 }
+
+    

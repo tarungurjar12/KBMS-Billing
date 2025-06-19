@@ -1,11 +1,11 @@
 
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { PageHeader } from "@/components/page-header";
-import { Truck, PlusCircle, MoreHorizontal, Edit, Trash2, Eye, Banknote, FileWarning } from "lucide-react";
+import { Truck, PlusCircle, MoreHorizontal, Edit, Trash2, Eye, Banknote, FileWarning, BookOpen, ReceiptText, Activity } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -17,16 +17,16 @@ import { z } from "zod";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { collection, addDoc, getDocs, doc, updateDoc, deleteDoc, serverTimestamp, query, orderBy, Timestamp } from 'firebase/firestore';
+import { collection, addDoc, getDocs, doc, updateDoc, deleteDoc, serverTimestamp, query, orderBy, Timestamp, where, limit } from 'firebase/firestore';
 import { db } from '@/lib/firebase/firebaseConfig';
 import { useRouter } from 'next/navigation'; 
+import type { PaymentRecord } from './../payments/page';
+import type { LedgerEntry, LedgerItem } from './../ledger/page';
+import { format, parseISO } from 'date-fns';
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import { Badge } from "@/components/ui/badge";
 
-/**
- * @fileOverview Page for Admin to manage Seller/Supplier accounts in Firestore.
- * This module is strictly Admin-only.
- * Allows Admin to perform full CRUD operations on sellers.
- * Data is fetched from and saved to Firebase Firestore.
- */
 
 export interface Seller {
   id: string; 
@@ -40,6 +40,14 @@ export interface Seller {
   purchaseTerms?: string | null; 
   createdAt?: Timestamp; 
   updatedAt?: Timestamp; 
+}
+
+interface SellerDetailsView extends Seller {
+  payments: PaymentRecord[];
+  ledgerEntries: LedgerEntry[];
+  totalPaidToSeller: number;
+  totalOwedToSeller: number;
+  pendingLedgerEntriesCount: number;
 }
 
 const sellerSchema = z.object({
@@ -57,6 +65,9 @@ const sellerSchema = z.object({
 
 type SellerFormValues = z.infer<typeof sellerSchema>;
 
+const formatCurrency = (num: number): string => `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const ITEMS_PER_PAGE_DETAILS_DIALOG = 50;
+
 export default function ManageSellersPage() {
   const router = useRouter(); 
   const [sellers, setSellers] = useState<Seller[]>([]);
@@ -65,6 +76,11 @@ export default function ManageSellersPage() {
   const [editingSeller, setEditingSeller] = useState<Seller | null>(null);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [sellerToDelete, setSellerToDelete] = useState<Seller | null>(null);
+
+  const [isDetailsViewOpen, setIsDetailsViewOpen] = useState(false);
+  const [selectedSellerForDetails, setSelectedSellerForDetails] = useState<SellerDetailsView | null>(null);
+  const [isLoadingDetails, setIsLoadingDetails] = useState(false);
+  const [ledgerEntriesCurrentPage, setLedgerEntriesCurrentPage] = useState(1);
 
   const { toast } = useToast();
 
@@ -78,128 +94,117 @@ export default function ManageSellersPage() {
     try {
       const q = query(collection(db, "sellers"), orderBy("name", "asc"));
       const querySnapshot = await getDocs(q);
-      const fetchedSellers = querySnapshot.docs.map(docSnapshot => {
-          const data = docSnapshot.data();
-          return {
-             id: docSnapshot.id,
-             name: data.name,
-             contactPerson: data.contactPerson || null,
-             email: data.email || null,
-             phone: data.phone,
-             address: data.address || null,
-             gstin: data.gstin || null,
-             bankDetails: data.bankDetails || null,
-             purchaseTerms: data.purchaseTerms || null,
-             createdAt: data.createdAt,
-             updatedAt: data.updatedAt,
-          } as Seller;
-      });
+      const fetchedSellers = querySnapshot.docs.map(docSnapshot => ({ id: docSnapshot.id, ...docSnapshot.data() } as Seller));
       setSellers(fetchedSellers);
     } catch (error: any) {
-      console.error("Error fetching sellers: ", error);
-      if (error.code === 'failed-precondition') {
-         toast({
-            title: "Database Index Required",
-            description: `A query for sellers failed. Please create the required Firestore index for 'sellers' collection (orderBy 'name' ascending). Check your browser's developer console for a Firebase link to create it, or visit the Firestore indexes page in your Firebase console.`,
-            variant: "destructive",
-            duration: 15000,
-        });
-      } else {
-        toast({ title: "Database Error", description: "Could not load sellers from the database. Please try again.", variant: "destructive" });
-      }
+      toast({ title: "Database Error", description: "Could not load sellers. Ensure Firestore indexes are set.", variant: "destructive" });
     } finally {
       setIsLoading(false);
     }
   }, [toast]);
 
-  useEffect(() => {
-    fetchSellers();
-  }, [fetchSellers]);
+  useEffect(() => { fetchSellers(); }, [fetchSellers]);
 
   useEffect(() => {
     if (isFormDialogOpen) {
-      if (editingSeller) {
-        form.reset({
-            name: editingSeller.name,
-            contactPerson: editingSeller.contactPerson || "",
-            email: editingSeller.email || "",
-            phone: editingSeller.phone,
-            address: editingSeller.address || "",
-            gstin: editingSeller.gstin || "",
-            bankDetails: editingSeller.bankDetails || "",
-            purchaseTerms: editingSeller.purchaseTerms || "",
-        });
-      } else { 
-        form.reset({ name: "", contactPerson: "", email: "", phone: "", address: "", gstin: "", bankDetails: "", purchaseTerms: "" });
-      }
+      if (editingSeller) form.reset(editingSeller);
+      else form.reset({ name: "", contactPerson: "", email: "", phone: "", address: "", gstin: "", bankDetails: "", purchaseTerms: "" });
     }
   }, [editingSeller, isFormDialogOpen, form]);
 
   const handleFormSubmit = async (values: SellerFormValues) => {
+    const dataToSave = { ...values, updatedAt: serverTimestamp() };
+     Object.keys(dataToSave).forEach(key => { // Convert empty strings to null for optional fields
+        if (dataToSave[key as keyof typeof dataToSave] === "") {
+            dataToSave[key as keyof typeof dataToSave] = null;
+        }
+    });
     try {
-      const dataToSave = {
-        name: values.name,
-        contactPerson: (values.contactPerson === undefined || values.contactPerson.trim() === "") ? null : values.contactPerson.trim(),
-        email: (values.email === undefined || values.email.trim() === "") ? null : values.email.trim(),
-        phone: values.phone,
-        address: (values.address === undefined || values.address.trim() === "") ? null : values.address.trim(),
-        gstin: (values.gstin === undefined || values.gstin.trim() === "") ? null : values.gstin.trim(),
-        bankDetails: (values.bankDetails === undefined || values.bankDetails.trim() === "") ? null : values.bankDetails.trim(),
-        purchaseTerms: (values.purchaseTerms === undefined || values.purchaseTerms.trim() === "") ? null : values.purchaseTerms.trim(),
-      };
-
-      if (editingSeller) { 
-        const sellerRef = doc(db, "sellers", editingSeller.id);
-        await updateDoc(sellerRef, {...dataToSave, updatedAt: serverTimestamp()});
-        toast({ title: "Seller Updated", description: `Seller "${values.name}" has been updated successfully.` });
-      } else { 
-        await addDoc(collection(db, "sellers"), {...dataToSave, createdAt: serverTimestamp(), updatedAt: serverTimestamp()});
-        toast({ title: "Seller Added", description: `New seller "${values.name}" has been added successfully.` });
+      if (editingSeller) {
+        await updateDoc(doc(db, "sellers", editingSeller.id), dataToSave);
+        toast({ title: "Seller Updated", description: `Seller "${values.name}" updated.` });
+      } else {
+        await addDoc(collection(db, "sellers"), { ...dataToSave, createdAt: serverTimestamp() });
+        toast({ title: "Seller Added", description: `Seller "${values.name}" added.` });
       }
-      fetchSellers(); 
-      setIsFormDialogOpen(false); 
-      setEditingSeller(null); 
-      form.reset(); 
+      fetchSellers(); setIsFormDialogOpen(false); setEditingSeller(null); form.reset();
     } catch (error: any) {
-      console.error("Error saving seller: ", error);
-      toast({ title: "Save Error", description: "Failed to save seller to the database. Please try again.", variant: "destructive" });
+      toast({ title: "Save Error", description: `Failed to save seller: ${error.message}`, variant: "destructive" });
     }
   };
 
-  const openAddDialog = () => {
-    setEditingSeller(null);
-    setIsFormDialogOpen(true);
-  };
-  
-  const openEditDialog = (seller: Seller) => {
-    setEditingSeller(seller);
-    setIsFormDialogOpen(true);
-  };
-
-  const openDeleteDialog = (seller: Seller) => {
-    setSellerToDelete(seller);
-    setIsDeleteConfirmOpen(true);
-  };
+  const openAddDialog = () => { setEditingSeller(null); setIsFormDialogOpen(true); };
+  const openEditDialog = (seller: Seller) => { setEditingSeller(seller); setIsFormDialogOpen(true); };
+  const openDeleteDialog = (seller: Seller) => { setSellerToDelete(seller); setIsDeleteConfirmOpen(true); };
 
   const confirmDelete = async () => {
     if (!sellerToDelete) return;
     try {
       await deleteDoc(doc(db, "sellers", sellerToDelete.id));
-      toast({ title: "Seller Deleted", description: `Seller "${sellerToDelete.name}" has been deleted successfully.`, variant: "default" });
-      fetchSellers(); 
+      toast({ title: "Seller Deleted", description: `Seller "${sellerToDelete.name}" deleted.` });
+      fetchSellers();
     } catch (error: any) {
-      console.error("Error deleting seller: ", error);
-      toast({ title: "Deletion Error", description: "Failed to delete seller from the database. Please try again.", variant: "destructive" });
+      toast({ title: "Deletion Error", description: `Failed to delete seller: ${error.message}`, variant: "destructive" });
     } finally {
-      setSellerToDelete(null);
-      setIsDeleteConfirmOpen(false); 
+      setSellerToDelete(null); setIsDeleteConfirmOpen(false);
+    }
+  };
+
+  const handleViewDetails = async (seller: Seller) => {
+    setIsLoadingDetails(true);
+    setIsDetailsViewOpen(true);
+    setLedgerEntriesCurrentPage(1);
+    try {
+      const paymentsQuery = query(collection(db, "payments"), where("relatedEntityId", "==", seller.id), where("type", "==", "supplier"), orderBy("isoDate", "desc"));
+      const paymentsSnapshot = await getDocs(paymentsQuery);
+      const fetchedPayments = paymentsSnapshot.docs.map(d => ({ ...d.data(), id: d.id, displayAmountPaid: formatCurrency(d.data().amountPaid || 0) } as PaymentRecord));
+
+      const ledgerEntriesQuery = query(collection(db, "ledgerEntries"), where("entityId", "==", seller.id), where("type", "==", "purchase"), orderBy("date", "desc"), orderBy("createdAt", "desc"));
+      const ledgerSnapshot = await getDocs(ledgerEntriesQuery);
+      const fetchedLedgerEntries = ledgerSnapshot.docs.map(d => ({ ...d.data(), id: d.id } as LedgerEntry));
+
+      let totalPaidToSeller = 0;
+      fetchedPayments.forEach(p => {
+        if (p.status === 'Completed' || p.status === 'Sent' || p.status === 'Partial') {
+            totalPaidToSeller += p.amountPaid;
+        }
+      });
+
+      let totalOwedToSeller = 0;
+      let pendingLedgerEntriesCount = 0;
+      fetchedLedgerEntries.forEach(le => {
+        if (le.entryPurpose === "Transactional" && (le.paymentStatus === 'pending' || le.paymentStatus === 'partial')) {
+          totalOwedToSeller += le.remainingAmount || 0;
+          pendingLedgerEntriesCount++;
+        }
+      });
+
+      setSelectedSellerForDetails({
+        ...seller, payments: fetchedPayments, ledgerEntries: fetchedLedgerEntries,
+        totalPaidToSeller, totalOwedToSeller, pendingLedgerEntriesCount,
+      });
+    } catch (error: any) {
+      toast({ title: "Details Error", description: "Could not load seller details.", variant: "destructive" });
+      setSelectedSellerForDetails(null); setIsDetailsViewOpen(false);
+    } finally {
+      setIsLoadingDetails(false);
     }
   };
   
-  const handleViewPurchaseHistory = (seller: Seller) => {
-    toast({ title: "View Purchase History (Placeholder)", description: `Functionality to view purchase history for ${seller.name} is planned for a future update.` });
+  const handleGoToLedgerForPending = (sellerName: string) => {
+    router.push(`/ledger?entityName=${encodeURIComponent(sellerName)}&paymentStatus=pending_partial&type=purchase`);
+    setIsDetailsViewOpen(false);
   };
-  
+
+  const paginatedLedgerEntries = useMemo(() => {
+    if (!selectedSellerForDetails) return [];
+    const startIndex = (ledgerEntriesCurrentPage - 1) * ITEMS_PER_PAGE_DETAILS_DIALOG;
+    const endIndex = startIndex + ITEMS_PER_PAGE_DETAILS_DIALOG;
+    return selectedSellerForDetails.ledgerEntries.slice(startIndex, endIndex);
+  }, [selectedSellerForDetails, ledgerEntriesCurrentPage]);
+
+  const totalLedgerPages = selectedSellerForDetails ? Math.ceil(selectedSellerForDetails.ledgerEntries.length / ITEMS_PER_PAGE_DETAILS_DIALOG) : 0;
+
   const handleRecordOutgoingPayment = (seller: Seller) => {
     router.push(`/payments?type=supplier&entityId=${seller.id}&entityName=${encodeURIComponent(seller.name)}`);
   };
@@ -219,115 +224,78 @@ export default function ManageSellersPage() {
     </>
   );
 
-  if (isLoading && sellers.length === 0) {
-    return <PageHeader title="Manage Sellers/Suppliers" description="Loading seller data from database..." icon={Truck} />;
-  }
+  if (isLoading && sellers.length === 0) return <PageHeader title="Manage Sellers/Suppliers" description="Loading seller data..." icon={Truck} />;
 
   return (
     <>
-      <PageHeader 
-        title="Manage Sellers/Suppliers" 
-        description="Administer seller and supplier accounts and their information. (Admin Only)" 
-        icon={Truck} 
-        actions={<Button onClick={openAddDialog} className="mt-4 sm:mt-0"><PlusCircle className="mr-2 h-4 w-4" />Add New Seller/Supplier</Button>} 
-      />
+      <PageHeader title="Manage Sellers/Suppliers" description="Administer seller accounts. (Admin Only)" icon={Truck} actions={<Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add New Seller</Button>} />
+      <Dialog open={isFormDialogOpen} onOpenChange={(isOpen) => { if(!isOpen) { setIsFormDialogOpen(false); setEditingSeller(null); form.reset(); } else { setIsFormDialogOpen(isOpen); }}}>
+        <DialogContent className="sm:max-w-lg"><DialogHeader><DialogTitle>{editingSeller ? `Edit Seller: ${editingSeller.name}` : "Add New Seller"}</DialogTitle><DialogDescription>{editingSeller ? "Update details." : "Enter details."}</DialogDescription></DialogHeader>
+          <Form {...form}><form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-4 py-2 max-h-[75vh] overflow-y-auto pr-4">{renderSellerFormFields()}
+            <DialogFooter className="pt-4 sticky bottom-0 bg-background pb-2 border-t -mx-6 px-6 flex flex-col sm:flex-row gap-2"><DialogClose asChild><Button type="button" variant="outline">Cancel</Button></DialogClose><Button type="submit" disabled={form.formState.isSubmitting}>{form.formState.isSubmitting ? "Saving..." : "Save"}</Button></DialogFooter>
+          </form></Form></DialogContent>
+      </Dialog>
+      <AlertDialog open={isDeleteConfirmOpen} onOpenChange={(isOpen) => { if(!isOpen) setSellerToDelete(null); setIsDeleteConfirmOpen(isOpen);}}>
+        <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Confirm Deletion</AlertDialogTitle><AlertDialogDescription>Delete seller &quot;{sellerToDelete?.name}&quot;?</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={confirmDelete} className="bg-destructive hover:bg-destructive/90">Delete</AlertDialogAction></AlertDialogFooter></AlertDialogContent>
+      </AlertDialog>
 
-      <Dialog open={isFormDialogOpen} onOpenChange={(isOpen) => { 
-          if(!isOpen) { 
-            setIsFormDialogOpen(false); 
-            setEditingSeller(null); 
-            form.reset(); 
-          } else { 
-            setIsFormDialogOpen(isOpen); 
-          }
-      }}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{editingSeller ? `Edit Seller: ${editingSeller.name}` : "Add New Seller/Supplier"}</DialogTitle>
-            <DialogDescription>
-              {editingSeller ? "Update the details for this seller." : "Enter the details for the new seller or supplier."}
-            </DialogDescription>
-          </DialogHeader>
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-4 py-2 max-h-[75vh] overflow-y-auto pr-4">
-              {renderSellerFormFields()}
-              <DialogFooter className="pt-4 sticky bottom-0 bg-background pb-2 border-t -mx-6 px-6 flex flex-col sm:flex-row gap-2"> 
-                <DialogClose asChild><Button type="button" variant="outline" className="w-full sm:w-auto">Cancel</Button></DialogClose>
-                <Button type="submit" disabled={form.formState.isSubmitting} className="w-full sm:w-auto">
-                  {form.formState.isSubmitting ? (editingSeller ? "Saving..." : "Adding...") : (editingSeller ? "Save Changes" : "Add Seller")}
-                </Button>
-              </DialogFooter>
-            </form>
-          </Form>
+      <Dialog open={isDetailsViewOpen} onOpenChange={(isOpen) => { if(!isOpen) setSelectedSellerForDetails(null); setIsDetailsViewOpen(isOpen); }}>
+        <DialogContent className="max-w-3xl w-[95vw] h-[90vh] flex flex-col">
+            <DialogHeader><DialogTitle>Seller Details: {selectedSellerForDetails?.name}</DialogTitle><DialogDescription>Comprehensive overview of seller activity and financials.</DialogDescription></DialogHeader>
+            {isLoadingDetails ? (<div className="flex-grow flex items-center justify-center"><Activity className="h-8 w-8 animate-spin text-primary" /> <span className="ml-2">Loading details...</span></div>)
+            : selectedSellerForDetails ? (
+            <ScrollArea className="flex-grow pr-2 -mr-2"><div className="space-y-6 py-2">
+                <Card><CardHeader><CardTitle className="text-lg">Financial Summary</CardTitle></CardHeader>
+                    <CardContent className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
+                        <div><p className="text-muted-foreground">Total Paid (to Seller):</p><p className="font-semibold text-green-600">{formatCurrency(selectedSellerForDetails.totalPaidToSeller)}</p></div>
+                        <div><p className="text-muted-foreground">Total Owed (to Seller from Ledger):</p><p className="font-semibold text-red-600">{formatCurrency(selectedSellerForDetails.totalOwedToSeller)}</p></div>
+                        <Button variant="link" size="sm" className="p-0 h-auto justify-start text-left" onClick={() => handleGoToLedgerForPending(selectedSellerForDetails.name)}>
+                            <div><p className="text-muted-foreground">Pending Ledger Entries:</p><p className="font-semibold text-blue-600">{selectedSellerForDetails.pendingLedgerEntriesCount} (View in Ledger)</p></div>
+                        </Button>
+                    </CardContent>
+                </Card>
+                <Card><CardHeader><CardTitle className="text-lg">Payment History ({selectedSellerForDetails.payments.length})</CardTitle></CardHeader>
+                    <CardContent>
+                        {selectedSellerForDetails.payments.length > 0 ? (<Table className="text-xs"><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Amount</TableHead><TableHead>Method</TableHead><TableHead>Status</TableHead><TableHead>Ref ID</TableHead></TableRow></TableHeader>
+                        <TableBody>{selectedSellerForDetails.payments.slice(0,5).map(p => (<TableRow key={p.id}><TableCell>{p.date}</TableCell><TableCell>{p.displayAmountPaid}</TableCell><TableCell>{p.method || 'N/A'}</TableCell><TableCell><Badge variant={p.status === "Completed" || p.status === "Sent" ? "default" : "secondary"}>{p.status}</Badge></TableCell><TableCell>{p.relatedInvoiceId || p.ledgerEntryId || 'N/A'}</TableCell></TableRow>))}
+                        </TableBody></Table>) : (<p className="text-sm text-muted-foreground">No payment records found.</p>)}
+                        {selectedSellerForDetails.payments.length > 5 && <p className="text-xs text-muted-foreground mt-2 text-center">Showing last 5 payments. Full history in Payments section.</p>}
+                    </CardContent>
+                </Card>
+                <Card><CardHeader><CardTitle className="text-lg">Ledger Entries (Purchases) ({selectedSellerForDetails.ledgerEntries.length})</CardTitle></CardHeader>
+                    <CardContent>
+                        {selectedSellerForDetails.ledgerEntries.length > 0 ? (<>
+                        <Table className="text-xs"><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Items</TableHead><TableHead className="text-right">Total</TableHead><TableHead>Pymt Status</TableHead></TableRow></TableHeader>
+                        <TableBody>{paginatedLedgerEntries.map(le => (<TableRow key={le.id}><TableCell>{le.date}</TableCell><TableCell>{le.items.map(i => i.productName).join(', ').substring(0,30)}...</TableCell><TableCell className="text-right">{formatCurrency(le.grandTotal)}</TableCell><TableCell><Badge variant={le.paymentStatus === 'paid' ? 'default' : (le.paymentStatus === 'partial' ? 'outline' : 'secondary')}>{le.paymentStatus}</Badge></TableCell></TableRow>))}
+                        </TableBody></Table>
+                        {totalLedgerPages > 1 && (<div className="flex justify-center items-center gap-2 mt-4"><Button variant="outline" size="sm" onClick={() => setLedgerEntriesCurrentPage(p => Math.max(1, p-1))} disabled={ledgerEntriesCurrentPage === 1}>Prev</Button><span className="text-xs text-muted-foreground">Page {ledgerEntriesCurrentPage} of {totalLedgerPages}</span><Button variant="outline" size="sm" onClick={() => setLedgerEntriesCurrentPage(p => Math.min(totalLedgerPages, p+1))} disabled={ledgerEntriesCurrentPage === totalLedgerPages}>Next</Button></div>)}
+                        </>) : (<p className="text-sm text-muted-foreground">No purchase ledger entries found.</p>)}
+                    </CardContent>
+                </Card>
+            </div></ScrollArea>
+            ) : (<div className="flex-grow flex items-center justify-center"><p className="text-muted-foreground">No seller selected or details not found.</p></div>)}
+            <DialogFooter className="pt-4 mt-auto border-t"><DialogClose asChild><Button variant="outline">Close</Button></DialogClose></DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={isDeleteConfirmOpen} onOpenChange={(isOpen) => { if(!isOpen) setSellerToDelete(null); setIsDeleteConfirmOpen(isOpen);}}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
-            <AlertDialogDescription>This action cannot be undone. This will permanently delete the seller &quot;{sellerToDelete?.name}&quot; from the database.</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => {setIsDeleteConfirmOpen(false); setSellerToDelete(null);}}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmDelete} className="bg-destructive hover:bg-destructive/90">Delete Seller</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <Card className="shadow-lg rounded-xl">
-        <CardHeader>
-          <CardTitle className="font-headline text-foreground">Seller/Supplier List</CardTitle>
-          <CardDescription>A list of all registered sellers and suppliers from Firestore, ordered by name.</CardDescription>
-        </CardHeader>
+      <Card className="shadow-lg rounded-xl"><CardHeader><CardTitle className="font-headline text-foreground">Seller/Supplier List</CardTitle><CardDescription>All registered sellers from Firestore.</CardDescription></CardHeader>
         <CardContent>
-          {isLoading && sellers.length === 0 ? (
-            <div className="text-center py-10 text-muted-foreground">Loading sellers...</div>
-          ) : !isLoading && sellers.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-10 text-center">
-                <FileWarning className="h-12 w-12 sm:h-16 sm:w-16 text-muted-foreground mb-4" />
-                <p className="text-lg sm:text-xl font-semibold text-muted-foreground">No Sellers Found</p>
-                <p className="text-xs sm:text-sm text-muted-foreground mb-6">Add your first seller or supplier to the database.</p>
-                <Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add New Seller/Supplier</Button>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-            <Table>
-                <TableHeader><TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead className="hidden sm:table-cell">Contact Person</TableHead>
-                    <TableHead>Phone</TableHead>
-                    <TableHead className="hidden md:table-cell">GSTIN</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                </TableRow></TableHeader>
-                <TableBody>
-                    {sellers.map((seller) => (
-                        <TableRow key={seller.id}>
-                            <TableCell className="font-medium">{seller.name}</TableCell>
-                            <TableCell className="hidden sm:table-cell">{seller.contactPerson || "N/A"}</TableCell>
-                            <TableCell>{seller.phone}</TableCell>
-                            <TableCell className="hidden md:table-cell">{seller.gstin || "N/A"}</TableCell>
-                            <TableCell className="text-right">
-                                <DropdownMenu>
-                                    <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /><span className="sr-only">Actions for {seller.name}</span></Button></DropdownMenuTrigger>
-                                    <DropdownMenuContent align="end">
-                                        <DropdownMenuItem onClick={() => openEditDialog(seller)}><Edit className="mr-2 h-4 w-4" />Edit Details</DropdownMenuItem>
-                                        <DropdownMenuItem onClick={() => handleViewPurchaseHistory(seller)}><Eye className="mr-2 h-4 w-4" />View Purchase History</DropdownMenuItem>
-                                        <DropdownMenuItem onClick={() => handleRecordOutgoingPayment(seller)}><Banknote className="mr-2 h-4 w-4" />Record Outgoing Payment</DropdownMenuItem>
-                                        <DropdownMenuItem onClick={() => openDeleteDialog(seller)} className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground">
-                                            <Trash2 className="mr-2 h-4 w-4" />Delete Seller
-                                        </DropdownMenuItem>
-                                    </DropdownMenuContent>
-                                </DropdownMenu>
-                            </TableCell>
-                        </TableRow>
-                    ))}
-                </TableBody>
-            </Table>
-            </div>
-          )}
+          {isLoading && sellers.length === 0 ? (<div className="text-center py-10 text-muted-foreground">Loading sellers...</div>)
+           : !isLoading && sellers.length === 0 ? (<div className="flex flex-col items-center justify-center py-10 text-center"><FileWarning className="h-16 w-16 text-muted-foreground mb-4" /><p className="text-xl font-semibold text-muted-foreground">No Sellers Found</p><p className="text-sm text-muted-foreground mb-6">Add your first seller.</p><Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add New Seller</Button></div>)
+           : (<div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Name</TableHead><TableHead className="hidden sm:table-cell">Contact</TableHead><TableHead>Phone</TableHead><TableHead className="hidden md:table-cell">GSTIN</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
+              <TableBody>{sellers.map((seller) => (<TableRow key={seller.id}><TableCell className="font-medium">{seller.name}</TableCell><TableCell className="hidden sm:table-cell">{seller.contactPerson || "N/A"}</TableCell><TableCell>{seller.phone}</TableCell><TableCell className="hidden md:table-cell">{seller.gstin || "N/A"}</TableCell>
+                    <TableCell className="text-right"><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => handleViewDetails(seller)}><Eye className="mr-2 h-4 w-4" />View Full Details</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => openEditDialog(seller)}><Edit className="mr-2 h-4 w-4" />Edit Details</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleRecordOutgoingPayment(seller)}><Banknote className="mr-2 h-4 w-4" />Record Payment</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => openDeleteDialog(seller)} className="text-destructive focus:text-destructive focus:bg-destructive/10"><Trash2 className="mr-2 h-4 w-4" />Delete Seller</DropdownMenuItem>
+                        </DropdownMenuContent></DropdownMenu></TableCell></TableRow>))}
+              </TableBody></Table></div>)}
         </CardContent>
       </Card>
     </>
   );
 }
+
+    
