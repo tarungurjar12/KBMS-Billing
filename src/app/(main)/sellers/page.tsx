@@ -45,9 +45,9 @@ export interface Seller {
 interface SellerDetailsView extends Seller {
   payments: PaymentRecord[];
   ledgerEntries: LedgerEntry[];
-  totalPaidToSeller: number;
-  totalOwedToSeller: number;
-  pendingLedgerEntriesCount: number;
+  totalAmountPaidToSeller: number;
+  totalAmountOwedToSellerFromPayments: number;
+  pendingPaymentRecordsToSellerCount: number;
 }
 
 const sellerSchema = z.object({
@@ -170,18 +170,20 @@ export default function ManageSellersPage() {
         }
       });
 
-      let totalOwedToSeller = 0;
-      let pendingLedgerEntriesCount = 0;
-      fetchedLedgerEntries.forEach(le => {
-        if (le.entryPurpose === "Transactional" && (le.paymentStatus === 'pending' || le.paymentStatus === 'partial')) {
-          totalOwedToSeller += le.remainingAmount || 0;
-          pendingLedgerEntriesCount++;
+      let totalOwedToSellerFromPayments = 0;
+      let pendingPaymentRecordsToSellerCount = 0;
+      fetchedPayments.forEach(p => {
+        if ((p.status === 'Pending' || p.status === 'Partial') && p.remainingBalanceOnInvoice && p.remainingBalanceOnInvoice > 0) {
+          totalOwedToSellerFromPayments += p.remainingBalanceOnInvoice;
+          pendingPaymentRecordsToSellerCount++;
         }
       });
 
       setSelectedSellerForDetails({
         ...seller, payments: fetchedPayments, ledgerEntries: fetchedLedgerEntries,
-        totalPaidToSeller, totalOwedToSeller, pendingLedgerEntriesCount,
+        totalAmountPaidToSeller: totalPaidToSeller, 
+        totalAmountOwedToSellerFromPayments: totalOwedToSellerFromPayments, 
+        pendingPaymentRecordsToSellerCount: pendingPaymentRecordsToSellerCount,
       });
     } catch (error: any) {
       toast({ title: "Details Error", description: "Could not load seller details.", variant: "destructive" });
@@ -247,10 +249,10 @@ export default function ManageSellersPage() {
             <ScrollArea className="flex-grow pr-2 -mr-2"><div className="space-y-6 py-2">
                 <Card><CardHeader><CardTitle className="text-lg">Financial Summary</CardTitle></CardHeader>
                     <CardContent className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
-                        <div><p className="text-muted-foreground">Total Paid (to Seller):</p><p className="font-semibold text-green-600">{formatCurrency(selectedSellerForDetails.totalPaidToSeller)}</p></div>
-                        <div><p className="text-muted-foreground">Total Owed (to Seller from Ledger):</p><p className="font-semibold text-red-600">{formatCurrency(selectedSellerForDetails.totalOwedToSeller)}</p></div>
+                        <div><p className="text-muted-foreground">Total Paid (to Seller):</p><p className="font-semibold text-green-600">{formatCurrency(selectedSellerForDetails.totalAmountPaidToSeller)}</p></div>
+                        <div><p className="text-muted-foreground">Total Owed (to Seller from Payments):</p><p className="font-semibold text-red-600">{formatCurrency(selectedSellerForDetails.totalAmountOwedToSellerFromPayments)}</p></div>
                         <Button variant="link" size="sm" className="p-0 h-auto justify-start text-left" onClick={() => handleGoToLedgerForPending(selectedSellerForDetails.name)}>
-                            <div><p className="text-muted-foreground">Pending Ledger Entries:</p><p className="font-semibold text-blue-600">{selectedSellerForDetails.pendingLedgerEntriesCount} (View in Ledger)</p></div>
+                            <div><p className="text-muted-foreground">Pending/Partial Payment Records:</p><p className="font-semibold text-blue-600">{selectedSellerForDetails.pendingPaymentRecordsToSellerCount} (View Related Ledger)</p></div>
                         </Button>
                     </CardContent>
                 </Card>

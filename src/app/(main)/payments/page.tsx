@@ -98,6 +98,13 @@ const paymentRecordSchema = paymentRecordBaseSchema.superRefine((data, ctx) => {
       path: ["amountPaid"],
     });
   }
+  if (data.status === "Partial" && !data.originalInvoiceAmount) {
+     ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Original Invoice Amount is required for Partial payment status.",
+      path: ["originalInvoiceAmount"],
+    });
+  }
 });
 
 
@@ -142,9 +149,19 @@ export default function PaymentsPage() {
 
   const shouldShowPaymentMethod = paymentStatusWatcher === "Completed" || paymentStatusWatcher === "Partial" || paymentStatusWatcher === "Received" || paymentStatusWatcher === "Sent";
   const isPartialPayment = paymentStatusWatcher === "Partial";
-  const calculatedRemainingBalance = (originalInvoiceAmountWatcher && amountPaidWatcher && isPartialPayment)
-    ? originalInvoiceAmountWatcher - amountPaidWatcher
-    : null;
+  
+  const calculatedRemainingBalance = useMemo(() => {
+    if (originalInvoiceAmountWatcher && amountPaidWatcher && paymentStatusWatcher === 'Partial') {
+      return originalInvoiceAmountWatcher - amountPaidWatcher;
+    }
+    if (paymentStatusWatcher === 'Pending' || paymentStatusWatcher === 'Failed') {
+        return originalInvoiceAmountWatcher || null;
+    }
+    if (paymentStatusWatcher === 'Completed' || paymentStatusWatcher === 'Received' || paymentStatusWatcher === 'Sent') {
+        return 0;
+    }
+    return null;
+  }, [originalInvoiceAmountWatcher, amountPaidWatcher, paymentStatusWatcher]);
 
 
   useEffect(() => {
@@ -172,22 +189,15 @@ export default function PaymentsPage() {
             } else if (data.isoDate instanceof Timestamp) { paymentDate = format(data.isoDate.toDate(), "MMM dd, yyyy"); }
         } else if (data.createdAt instanceof Timestamp) { paymentDate = format(data.createdAt.toDate(), "MMM dd, yyyy"); }
         
-        const originalAmount = data.originalInvoiceAmount || null;
-        const paidAmount = data.amountPaid || 0;
-        let remainingBalance = null;
-        if (originalAmount && (data.status === 'Partial' || data.status === 'Pending')) {
-            remainingBalance = originalAmount - paidAmount;
-        }
-
         return {
           id: docSnapshot.id, type: data.type || 'customer',
           relatedEntityName: data.relatedEntityName || 'N/A', relatedEntityId: data.relatedEntityId || '',
           relatedInvoiceId: data.relatedInvoiceId || null, date: paymentDate,
           isoDate: typeof data.isoDate === 'string' ? data.isoDate : (data.isoDate instanceof Timestamp ? data.isoDate.toDate().toISOString().split('T')[0] : new Date().toISOString().split('T')[0]),
-          amountPaid: paidAmount,
-          displayAmountPaid: formatCurrency(paidAmount),
-          originalInvoiceAmount: originalAmount,
-          remainingBalanceOnInvoice: remainingBalance,
+          amountPaid: data.amountPaid || 0,
+          displayAmountPaid: formatCurrency(data.amountPaid || 0),
+          originalInvoiceAmount: data.originalInvoiceAmount || null,
+          remainingBalanceOnInvoice: data.remainingBalanceOnInvoice !== undefined ? data.remainingBalanceOnInvoice : null,
           method: data.method || null,
           transactionId: data.transactionId || null,
           status: data.status || 'Pending',
@@ -207,19 +217,28 @@ export default function PaymentsPage() {
         const isToday = paymentIsoDateOnly === todayISOStart; 
 
         if (p.type === 'customer') {
-          if (p.status === 'Completed' || p.status === 'Received' || p.status === 'Partial') {
+          if (p.status === 'Completed' || p.status === 'Received') {
             totalReceived += p.amountPaid;
             if (isToday) todayReceived += p.amountPaid;
+          } else if (p.status === 'Partial') {
+            totalReceived += p.amountPaid; // Count amount paid for partial as received
+            if (isToday) todayReceived += p.amountPaid;
+            if (p.remainingBalanceOnInvoice && p.remainingBalanceOnInvoice > 0) {
+              totalPending += p.remainingBalanceOnInvoice;
+              if (isToday) todayPending += p.remainingBalanceOnInvoice;
+            }
+          } else if (p.status === 'Pending' && p.originalInvoiceAmount) {
+            totalPending += p.originalInvoiceAmount;
+            if (isToday) todayPending += p.originalInvoiceAmount;
           }
-          if (p.status === 'Pending' || (p.status === 'Partial' && p.remainingBalanceOnInvoice && p.remainingBalanceOnInvoice > 0)) {
-            const pendingAmount = p.remainingBalanceOnInvoice ?? p.originalInvoiceAmount ?? p.amountPaid; 
-            totalPending += pendingAmount;
-            if (isToday) todayPending += pendingAmount;
-          }
-        } else { 
-          if (p.status === 'Completed' || p.status === 'Sent' || p.status === 'Partial') {
+        } else { // supplier
+          if (p.status === 'Completed' || p.status === 'Sent') {
             totalSent += p.amountPaid;
             if (isToday) todaySent += p.amountPaid;
+          } else if (p.status === 'Partial') {
+             totalSent += p.amountPaid; // Count amount paid for partial as sent
+            if (isToday) todaySent += p.amountPaid;
+            // Supplier pending (owed by us) isn't typically shown as a primary "pending" metric on this page this way
           }
         }
       });
@@ -278,9 +297,20 @@ export default function PaymentsPage() {
 
   const handleFormSubmit = async (values: PaymentFormValues) => {
     try {
-      
+      let remainingBalance: number | null = null;
+      if (values.originalInvoiceAmount) {
+        if (values.status === 'Partial') {
+          remainingBalance = values.originalInvoiceAmount - values.amountPaid;
+        } else if (values.status === 'Pending' || values.status === 'Failed') {
+          remainingBalance = values.originalInvoiceAmount;
+        } else if (values.status === 'Completed' || values.status === 'Received' || values.status === 'Sent') {
+          remainingBalance = 0;
+        }
+      }
+
       const dataToSave = {
         ...values, 
+        remainingBalanceOnInvoice: remainingBalance,
         updatedAt: serverTimestamp(),
       };
       
@@ -449,7 +479,7 @@ export default function PaymentsPage() {
           <DialogHeader>
             <DialogTitle>{editingPayment ? "Edit Payment Record" : "Record New Payment"}</DialogTitle>
             <DialogDescription>
-              {editingPayment ? `Update details for payment ID: ${editingPayment.id}` : "Fill in the details for the new payment record."}
+              {editingPayment ? `Update details for payment ID: ${editingPayment.id.substring(0,8)}...` : "Fill in the details for the new payment record."}
             </DialogDescription>
           </DialogHeader>
           <Form {...form}>
@@ -485,7 +515,7 @@ export default function PaymentsPage() {
                   </FormItem>)}
                 />
               )}
-              {isPartialPayment && (
+              {(paymentStatusWatcher === 'Partial' || paymentStatusWatcher === 'Pending' || paymentStatusWatcher === 'Failed') && (
                 <FormField control={form.control} name="originalInvoiceAmount" render={({ field }) => (
                     <FormItem><FormLabel>Original Invoice Amount (₹)</FormLabel>
                         <FormControl><Input type="number" step="0.01" placeholder="e.g., 2000.00" {...field} onChange={e => field.onChange(e.target.value ? parseFloat(e.target.value) : null)} value={field.value ?? ""} readOnly={!!editingPayment && !!editingPayment.ledgerEntryId} /></FormControl>
@@ -493,14 +523,14 @@ export default function PaymentsPage() {
                     </FormItem>)} />
               )}
               <FormField control={form.control} name="amountPaid" render={({ field }) => (
-                <FormItem><FormLabel>{isPartialPayment ? "Amount Paid Now (₹)" : "Amount Paid (₹)"}</FormLabel>
+                <FormItem><FormLabel>{paymentStatusWatcher === 'Partial' ? "Amount Paid Now (₹)" : "Amount Paid (₹)"}</FormLabel>
                     <FormControl><Input type="number" step="0.01" placeholder="e.g., 1000.00" {...field} onChange={e => field.onChange(parseFloat(e.target.value) || 0)} readOnly={!!editingPayment && !!editingPayment.ledgerEntryId} /></FormControl>
                     <FormMessage />
                 </FormItem>)}
               />
-              {isPartialPayment && calculatedRemainingBalance !== null && (
+              {calculatedRemainingBalance !== null && (
                 <FormItem>
-                    <FormLabel>Remaining Balance on Invoice</FormLabel>
+                    <FormLabel>Remaining Balance</FormLabel>
                     <Input value={formatCurrency(calculatedRemainingBalance < 0 ? 0 : calculatedRemainingBalance)} readOnly className="bg-muted/50" />
                 </FormItem>
               )}
@@ -539,7 +569,7 @@ export default function PaymentsPage() {
                         <TabsTrigger value="all">All</TabsTrigger>
                         <TabsTrigger value="paid">Paid</TabsTrigger>
                         <TabsTrigger value="partial">Partial</TabsTrigger>
-                        <TabsTrigger value="pending">Pending</TabsTrigger>
+                        <TabsTrigger value="pending">Pending/Failed</TabsTrigger>
                     </TabsList>
                 </Tabs>
                 {isLoading && displayedPayments.length === 0 ? (
