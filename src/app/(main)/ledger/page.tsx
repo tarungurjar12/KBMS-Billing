@@ -228,13 +228,6 @@ export default function DailyLedgerPage() {
 
   const [currentUserRole, setCurrentUserRole] = useState<'admin' | 'store_manager' | undefined>();
 
-  useEffect(() => {
-    const role = getCookie('userRole');
-    if (role === 'admin' || role === 'store_manager') {
-      setCurrentUserRole(role as 'admin' | 'store_manager');
-    }
-  }, []);
-
   const form = useForm<LedgerFormValues>({
     resolver: zodResolver(ledgerEntrySchema),
     defaultValues: {
@@ -251,7 +244,7 @@ export default function DailyLedgerPage() {
   const newEntityForm = useForm<NewCustomerSellerFormValues>({ resolver: zodResolver(newCustomerSellerSchema), defaultValues: {name: "", phone: ""} });
 
   const formatCurrency = useCallback((num: number): string => `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, []);
-
+  
   const fetchData = useCallback(async (date: string) => {
     setIsLoading(true);
     try {
@@ -305,6 +298,88 @@ export default function DailyLedgerPage() {
       setIsLoading(false);
     }
   }, [toast, formatCurrency]);
+
+  const handleAddProductToLedger = useCallback((product: Product) => {
+    const existingItemIndex = fields.findIndex(item => item.productId === product.id);
+    if (existingItemIndex > -1) {
+        const currentItem = fields[existingItemIndex];
+        if (form.getValues("type") === 'sale' && product.stock > 0 && currentItem.quantity + 1 > product.stock) {
+            toast({ title: "Stock Alert", description: `Cannot add more ${product.name}. Max available: ${product.stock}`, variant: "destructive"});
+            return;
+        }
+        update(existingItemIndex, { ...currentItem, quantity: currentItem.quantity + 1, totalPrice: (currentItem.quantity + 1) * currentItem.unitPrice });
+    } else {
+        if (form.getValues("type") === 'sale' && product.stock <= 0) {
+             toast({ title: "Out of Stock", description: `${product.name} is out of stock.`, variant: "destructive"}); return;
+        }
+        append({ productId: product.id, productName: product.name, quantity: 1, unitPrice: product.numericPrice, totalPrice: product.numericPrice, unitOfMeasure: product.unitOfMeasure });
+    }
+    setProductSearchTerm('');
+  }, [fields, form, products, toast, append, update]);
+
+  const handleItemQuantityChange = useCallback((index: number, quantityStr: string) => {
+    const quantity = parseFloat(quantityStr);
+    const item = fields[index];
+    const productDetails = products.find(p => p.id === item.productId);
+
+    if (isNaN(quantity) || quantity <= 0) { remove(index); return; }
+
+    let newQuantity = quantity;
+    if (form.getValues("type") === 'sale' && productDetails && newQuantity > productDetails.stock) {
+        toast({ title: "Stock Alert", description: `Quantity for ${item.productName} exceeds stock (${productDetails.stock}). Setting to max.`, variant: "destructive"});
+        newQuantity = productDetails.stock;
+    }
+    form.setValue(`items.${index}.quantity`, newQuantity, { shouldDirty: true });
+  }, [fields, form, products, toast, remove]);
+
+  const handleItemPriceChange = useCallback((index: number, unitPriceStr: string) => {
+    if (currentUserRole !== 'admin') {
+        toast({ title: "Permission Denied", description: "Only Admins can change item prices directly in the ledger.", variant: "destructive" });
+        const item = fields[index]; form.setValue(`items.${index}.unitPrice`, item.unitPrice); return;
+    }
+    let unitPrice = parseFloat(unitPriceStr);
+    if (isNaN(unitPrice) || unitPrice < 0) unitPrice = 0;
+    form.setValue(`items.${index}.unitPrice`, unitPrice, { shouldDirty: true });
+  }, [currentUserRole, fields, form, toast]);
+
+  const handleEditLedgerEntry = useCallback((entry: LedgerEntry) => {
+    if (currentUserRole !== 'admin') {
+        toast({title: "Permission Denied", description: "Store managers cannot edit ledger entries directly.", variant: "destructive"});
+        return;
+    }
+    setEditingLedgerEntry(entry);
+    setIsLedgerFormOpen(true);
+  }, [currentUserRole, toast]);
+
+  const openDeleteConfirmation = useCallback((entry: LedgerEntry) => {
+    if (currentUserRole !== 'admin') {
+        toast({title: "Permission Denied", description: "Only admins can delete ledger entries.", variant: "destructive"});
+        return;
+    }
+    setLedgerEntryToDelete(entry);
+    setIsDeleteConfirmOpen(true);
+  }, [currentUserRole, toast]);
+
+  const handleUserFilterClick = useCallback((userName: string) => {
+    if (selectedUserFilterName === userName) {
+      setSelectedUserFilterName(null); 
+    } else {
+      setSelectedUserFilterName(userName);
+    }
+  }, [selectedUserFilterName]);
+
+  const openEntryDetailsDialog = useCallback((entry: LedgerEntry) => {
+    setSelectedEntryForDetails(entry);
+    setIsEntryDetailsDialogOpen(true);
+  }, []);
+
+
+  useEffect(() => {
+    const role = getCookie('userRole');
+    if (role === 'admin' || role === 'store_manager') {
+      setCurrentUserRole(role as 'admin' | 'store_manager');
+    }
+  }, []);
 
   useEffect(() => { fetchData(selectedDate); }, [selectedDate, fetchData]);
   
@@ -466,49 +541,6 @@ export default function DailyLedgerPage() {
     }
   }, [shouldShowPaymentMethodForTransactional, paymentStatusWatcher, entryPurposeWatcher, form, editingLedgerEntry]);
 
-
-  const handleAddProductToLedger = (product: Product) => {
-    const existingItemIndex = fields.findIndex(item => item.productId === product.id);
-    if (existingItemIndex > -1) {
-        const currentItem = fields[existingItemIndex];
-        if (form.getValues("type") === 'sale' && product.stock > 0 && currentItem.quantity + 1 > product.stock) {
-            toast({ title: "Stock Alert", description: `Cannot add more ${product.name}. Max available: ${product.stock}`, variant: "destructive"});
-            return;
-        }
-        update(existingItemIndex, { ...currentItem, quantity: currentItem.quantity + 1, totalPrice: (currentItem.quantity + 1) * currentItem.unitPrice });
-    } else {
-        if (form.getValues("type") === 'sale' && product.stock <= 0) {
-             toast({ title: "Out of Stock", description: `${product.name} is out of stock.`, variant: "destructive"}); return;
-        }
-        append({ productId: product.id, productName: product.name, quantity: 1, unitPrice: product.numericPrice, totalPrice: product.numericPrice, unitOfMeasure: product.unitOfMeasure });
-    }
-    setProductSearchTerm('');
-  };
-
-  const handleItemQuantityChange = (index: number, quantityStr: string) => {
-    const quantity = parseFloat(quantityStr);
-    const item = fields[index];
-    const productDetails = products.find(p => p.id === item.productId);
-
-    if (isNaN(quantity) || quantity <= 0) { remove(index); return; }
-
-    let newQuantity = quantity;
-    if (form.getValues("type") === 'sale' && productDetails && newQuantity > productDetails.stock) {
-        toast({ title: "Stock Alert", description: `Quantity for ${item.productName} exceeds stock (${productDetails.stock}). Setting to max.`, variant: "destructive"});
-        newQuantity = productDetails.stock;
-    }
-    form.setValue(`items.${index}.quantity`, newQuantity, { shouldDirty: true });
-  };
-
-  const handleItemPriceChange = (index: number, unitPriceStr: string) => {
-    if (currentUserRole !== 'admin') {
-        toast({ title: "Permission Denied", description: "Only Admins can change item prices directly in the ledger.", variant: "destructive" });
-        const item = fields[index]; form.setValue(`items.${index}.unitPrice`, item.unitPrice); return;
-    }
-    let unitPrice = parseFloat(unitPriceStr);
-    if (isNaN(unitPrice) || unitPrice < 0) unitPrice = 0;
-    form.setValue(`items.${index}.unitPrice`, unitPrice, { shouldDirty: true });
-  };
 
   useEffect(() => {
     const subscription = form.watch((value, { name, type }) => {
@@ -800,23 +832,6 @@ export default function DailyLedgerPage() {
     }
   };
 
-  const handleEditLedgerEntry = (entry: LedgerEntry) => {
-    if (currentUserRole !== 'admin') {
-        toast({title: "Permission Denied", description: "Store managers cannot edit ledger entries directly.", variant: "destructive"});
-        return;
-    }
-    setEditingLedgerEntry(entry);
-    setIsLedgerFormOpen(true);
-  };
-
-  const openDeleteConfirmation = (entry: LedgerEntry) => {
-    if (currentUserRole !== 'admin') {
-        toast({title: "Permission Denied", description: "Only admins can delete ledger entries.", variant: "destructive"});
-        return;
-    }
-    setLedgerEntryToDelete(entry);
-    setIsDeleteConfirmOpen(true);
-  };
 
   const confirmDeleteLedgerEntry = async () => {
     if (!ledgerEntryToDelete || currentUserRole !== 'admin') return;
@@ -918,27 +933,9 @@ export default function DailyLedgerPage() {
         return matchesEntity || matchesItems || matchesNotes || matchesPaymentMethod || matchesId || matchesCreator || matchesUpdater || matchesPurpose || matchesPaymentAmount;
     });
   }, [ledgerEntries, activeLedgerTab, ledgerSearchTerm, selectedUserFilterName, formatCurrency]);
-
-  const handleUserFilterClick = (userName: string) => {
-    if (selectedUserFilterName === userName) {
-      setSelectedUserFilterName(null); 
-    } else {
-      setSelectedUserFilterName(userName);
-    }
-  };
-
-  const openEntryDetailsDialog = (entry: LedgerEntry) => {
-    setSelectedEntryForDetails(entry);
-    setIsEntryDetailsDialogOpen(true);
-  };
-
-
-  if (isLoading && !customers.length && !products.length && !sellers.length && !ledgerEntries.length) {
-    return <PageHeader title="Daily Ledger" description="Loading essential data..." icon={BookOpen} />;
-  }
   
   const currentEntityTypeOptions = useMemo(() => {
-    const type = form.getValues("type");
+    const type = form.watch("type");
     if (type === 'sale') { // For Sales or Payment Received from Customer
         return [
             { value: 'customer', label: 'Existing Customer' },
@@ -950,7 +947,7 @@ export default function DailyLedgerPage() {
             { value: 'unknown_seller', label: 'Unknown Seller' }
         ];
     }
-  }, [form.watch("type")]);
+  }, [form.watch("type")]); // form.watch("type") is the correct dependency
 
   useEffect(() => { // Auto-select entityType if options change and current is invalid
     const currentType = form.getValues("type");
@@ -962,6 +959,10 @@ export default function DailyLedgerPage() {
     }
   }, [form.watch("type"), form]);
 
+
+  if (isLoading && !customers.length && !products.length && !sellers.length && !ledgerEntries.length) {
+    return <PageHeader title="Daily Ledger" description="Loading essential data..." icon={BookOpen} />;
+  }
 
   return (
     <>
@@ -1306,7 +1307,7 @@ export default function DailyLedgerPage() {
           </div>
           {selectedUserFilterName && (
             <div className="mt-3">
-                <Button variant="outline" size="sm" onClick={() => setSelectedUserFilterName(null)}>
+                <Button variant="outline" size="sm" onClick={() => handleUserFilterClick(selectedUserFilterName)}>
                     <UserX className="mr-2 h-4 w-4" />
                     Clear filter for: {selectedUserFilterName}
                 </Button>
