@@ -15,7 +15,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDes
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { BookOpen, PlusCircle, Trash2, Search, Users, Truck, XCircle, Filter, FileWarning, Calculator, Edit, MoreHorizontal } from 'lucide-react';
+import { BookOpen, PlusCircle, Trash2, Search, Users, Truck, XCircle, Filter, FileWarning, Calculator, Edit, MoreHorizontal, UserCircle2 } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { collection, getDocs, addDoc, serverTimestamp, query, orderBy, where, doc, runTransaction, Timestamp, deleteDoc, getDoc } from 'firebase/firestore';
@@ -41,6 +41,7 @@ import type { PaymentRecord, PAYMENT_METHODS as PAYMENT_METHODS_PAYMENT_PAGE, PA
  * Automatically creates a PaymentRecord if ledger entry is Paid or Partial.
  * Admins can edit and delete ledger entries, with stock and payment records adjusted accordingly.
  * Data is fetched from and saved to Firebase Firestore.
+ * Tracks creator and last modifier of ledger entries.
  */
 
 export interface LedgerItem {
@@ -70,9 +71,12 @@ export interface LedgerEntry {
   paymentMethod: typeof PAYMENT_METHODS_LEDGER[number] | null;
   paymentStatus: typeof PAYMENT_STATUSES_LEDGER[number];
   notes: string | null; // Can be "N/A"
-  createdBy: string;
+  createdByUid: string;
+  createdByName: string;
   createdAt: Timestamp;
   updatedAt?: Timestamp;
+  updatedByUid?: string | null;
+  updatedByName?: string | null;
   originalTransactionAmount: number; 
   amountPaidNow: number; 
   remainingAmount: number; 
@@ -218,6 +222,10 @@ export default function DailyLedgerPage() {
         return {
             id: d.id, 
             ...data,
+            createdByUid: data.createdByUid || data.createdBy, // Backward compatibility
+            createdByName: data.createdByName || "Unknown User",
+            updatedByUid: data.updatedByUid || null,
+            updatedByName: data.updatedByName || null,
             paymentMethod: data.paymentMethod || null,
             paymentStatus: data.paymentStatus || 'pending',
             notes: data.notes || "N/A",
@@ -460,6 +468,8 @@ export default function DailyLedgerPage() {
     const currentUser = auth.currentUser;
     if (!currentUser) { toast({ title: "Authentication Error", description: "You must be logged in.", variant: "destructive" }); return; }
 
+    const currentUserName = currentUser.displayName || currentUser.email || "System User";
+
     const subTotal = data.items.reduce((sum, item) => sum + ((item.quantity || 0) * (item.unitPrice || 0)), 0);
     const taxAmount = data.applyGst ? subTotal * GST_RATE : 0;
     const grandTotal = subTotal + taxAmount;
@@ -479,7 +489,7 @@ export default function DailyLedgerPage() {
         remainingAmountForSave = grandTotal;
     }
 
-    const ledgerDataForSave: Omit<LedgerEntry, 'id' | 'createdAt' | 'updatedAt' | 'associatedPaymentRecordId'> & {createdAt?: any, updatedAt: any, associatedPaymentRecordId?: string | null } = {
+    let ledgerDataForSave: Partial<LedgerEntry> = {
       date: data.date, type: data.type, entityType: data.entityType,
       entityId: data.entityId, 
       entityName: data.entityName, 
@@ -497,10 +507,24 @@ export default function DailyLedgerPage() {
       originalTransactionAmount: grandTotal,
       amountPaidNow: amountPaidForSave,
       remainingAmount: remainingAmountForSave,
-      notes: data.notes, // Zod transform already ensures this is "N/A" or a string
-      createdBy: editingLedgerEntry ? editingLedgerEntry.createdBy : currentUser.uid, 
+      notes: data.notes,
       updatedAt: serverTimestamp(),
     };
+    
+    if (editingLedgerEntry) {
+        ledgerDataForSave.createdByUid = editingLedgerEntry.createdByUid;
+        ledgerDataForSave.createdByName = editingLedgerEntry.createdByName;
+        ledgerDataForSave.createdAt = editingLedgerEntry.createdAt; // Keep original creation timestamp
+        ledgerDataForSave.updatedByUid = currentUser.uid;
+        ledgerDataForSave.updatedByName = currentUserName;
+    } else {
+        ledgerDataForSave.createdByUid = currentUser.uid;
+        ledgerDataForSave.createdByName = currentUserName;
+        ledgerDataForSave.createdAt = serverTimestamp() as Timestamp; // Cast for new entries
+        ledgerDataForSave.updatedByUid = null;
+        ledgerDataForSave.updatedByName = null;
+    }
+
 
     try {
       await runTransaction(db, async (transaction) => {
@@ -523,7 +547,7 @@ export default function DailyLedgerPage() {
         if (originalLedgerEntryData) {
           originalLedgerEntryData.items.forEach(item => productIdsInvolved.add(item.productId));
         }
-        ledgerDataForSave.items.forEach(item => productIdsInvolved.add(item.productId));
+        (ledgerDataForSave.items || []).forEach(item => productIdsInvolved.add(item.productId));
 
         const productSnapshots = new Map<string, DocumentSnapshot<DocumentData>>();
         for (const productId of productIdsInvolved) {
@@ -531,7 +555,7 @@ export default function DailyLedgerPage() {
           const productSnap = await transaction.get(productRefFromDb);
           if (!productSnap.exists()) {
             const productName = originalLedgerEntryData?.items.find(i => i.productId === productId)?.productName || 
-                                ledgerDataForSave.items.find(i => i.productId === productId)?.productName || 
+                                (ledgerDataForSave.items || []).find(i => i.productId === productId)?.productName || 
                                 `ID: ${productId}`;
             throw new Error(`Product "${productName}" (ID: ${productId}) not found in database.`);
           }
@@ -541,7 +565,7 @@ export default function DailyLedgerPage() {
 
         // --- CALCULATION & LOGIC PHASE ---
         const productStockUpdates: Array<{
-            ref: DocumentReference; // Ensure this is the DocumentReference from the snapshot
+            ref: DocumentReference; 
             newStock: number;
             previousStock: number; 
             productName: string;
@@ -551,14 +575,14 @@ export default function DailyLedgerPage() {
         }> = [];
 
         for (const productId of productIdsInvolved) {
-            const productSnap = productSnapshots.get(productId)!; // This is a DocumentSnapshot
+            const productSnap = productSnapshots.get(productId)!; 
             const currentDbStock = productSnap.data()!.stock as number;
             const productName = productSnap.data()!.name as string;
             const sku = productSnap.data()!.sku as string;
             let calculatedNewStock = currentDbStock; 
 
             const originalItem = originalLedgerEntryData?.items.find(i => i.productId === productId);
-            const newItem = ledgerDataForSave.items.find(i => i.productId === productId);
+            const newItem = (ledgerDataForSave.items || []).find(i => i.productId === productId);
             
             let originalItemEffectLog = null;
             let newItemEffectLog = null;
@@ -576,7 +600,7 @@ export default function DailyLedgerPage() {
                     ? -newItem.quantity 
                     : newItem.quantity;  
                 calculatedNewStock += quantityToApply;
-                newItemEffectLog = { quantity: newItem.quantity, type: ledgerDataForSave.type };
+                newItemEffectLog = { quantity: newItem.quantity, type: ledgerDataForSave.type as 'sale' | 'purchase' };
             }
 
             if (calculatedNewStock < 0) {
@@ -585,7 +609,7 @@ export default function DailyLedgerPage() {
             
             if (calculatedNewStock !== currentDbStock || (!editingLedgerEntry && newItem)) {
                 productStockUpdates.push({
-                    ref: productSnap.ref, // Use the ref from the DocumentSnapshot
+                    ref: productSnap.ref, 
                     newStock: calculatedNewStock,
                     previousStock: currentDbStock,
                     productName,
@@ -620,14 +644,14 @@ export default function DailyLedgerPage() {
 
           const paymentData: Omit<PaymentRecord, 'id' | 'createdAt' | 'updatedAt' | 'displayAmountPaid'> & {createdAt: any, updatedAt?: any, ledgerEntryId: string} = {
             type: ledgerDataForSave.type === 'sale' ? 'customer' : 'supplier',
-            relatedEntityName: ledgerDataForSave.entityName,
+            relatedEntityName: ledgerDataForSave.entityName!,
             relatedEntityId: ledgerDataForSave.entityId || `unknown-${ledgerDataForSave.entityType}-${Date.now()}`,
             relatedInvoiceId: null, 
-            date: format(parseISO(ledgerDataForSave.date), "MMM dd, yyyy"), 
-            isoDate: ledgerDataForSave.date, 
-            amountPaid: amountPaidForSave, 
-            originalInvoiceAmount: grandTotal, 
-            remainingBalanceOnInvoice: remainingAmountForSave, 
+            date: format(parseISO(ledgerDataForSave.date!), "MMM dd, yyyy"), 
+            isoDate: ledgerDataForSave.date!, 
+            amountPaid: ledgerDataForSave.amountPaidNow!, 
+            originalInvoiceAmount: ledgerDataForSave.grandTotal!, 
+            remainingBalanceOnInvoice: ledgerDataForSave.remainingAmount!, 
             method: ledgerDataForSave.paymentStatus === 'pending' ? null : ledgerDataForSave.paymentMethod as typeof PAYMENT_METHODS_PAYMENT_PAGE[number] | null,
             transactionId: null, 
             status: paymentStatusForRecord,
@@ -672,13 +696,12 @@ export default function DailyLedgerPage() {
         const finalLedgerDataToCommit = {
             ...ledgerDataForSave,
             associatedPaymentRecordId: newAssociatedPaymentRecordId,
-            ...(editingLedgerEntry ? {} : { createdAt: serverTimestamp() }) 
         };
         
         if (editingLedgerEntry) {
-            transaction.update(ledgerDocRef, finalLedgerDataToCommit);
+            transaction.update(ledgerDocRef, finalLedgerDataToCommit as DocumentData);
         } else {
-            transaction.set(ledgerDocRef, finalLedgerDataToCommit);
+            transaction.set(ledgerDocRef, finalLedgerDataToCommit as DocumentData);
         }
         // --- END OF WRITE PHASE ---
       });
@@ -702,7 +725,7 @@ export default function DailyLedgerPage() {
     try {
       const docRef = await addDoc(collection(db, collectionName), {
           ...data, createdAt: serverTimestamp(), email: "",
-          ...(newEntityType === 'customer' && { totalSpent: "₹0.00", createdBy: currentUser.uid })
+          ...(newEntityType === 'customer' && { totalSpent: "₹0.00", createdByUid: currentUser.uid })
       });
       toast({ title: `${newEntityType.charAt(0).toUpperCase() + newEntityType.slice(1)} Added`, description: `${data.name} has been added.` });
       setIsNewEntityDialogOpen(false); newEntityForm.reset();
@@ -766,7 +789,7 @@ export default function DailyLedgerPage() {
             // --- WRITE PHASE ---
             for (const item of entryData.items) {
                 const productSnap = productSnapshots.get(item.productId)!;
-                if (!productSnap.ref || !productSnap.ref.firestore) {
+                if (!productSnap.ref || !productSnap.ref.firestore) { 
                      console.error("CRITICAL: Invalid product reference during delete for product", item.productName, productSnap.ref);
                      throw new Error(`Invalid product reference for ${item.productName} during ledger delete.`);
                 }
@@ -829,7 +852,9 @@ export default function DailyLedgerPage() {
         const matchesNotes = entry.notes ? entry.notes.toLowerCase().includes(searchTermLower) : false;
         const matchesPaymentMethod = entry.paymentMethod ? entry.paymentMethod.toLowerCase().includes(searchTermLower) : false;
         const matchesId = entry.id.toLowerCase().includes(searchTermLower);
-        return matchesEntity || matchesItems || matchesNotes || matchesPaymentMethod || matchesId;
+        const matchesCreator = entry.createdByName?.toLowerCase().includes(searchTermLower);
+        const matchesUpdater = entry.updatedByName?.toLowerCase().includes(searchTermLower);
+        return matchesEntity || matchesItems || matchesNotes || matchesPaymentMethod || matchesId || matchesCreator || matchesUpdater;
     });
 
   if (isLoading && !customers.length && !products.length && !sellers.length && !ledgerEntries.length) {
@@ -910,7 +935,7 @@ export default function DailyLedgerPage() {
                                   </SelectContent>
                               </Select><FormMessage />
                           </FormItem>)} />
-                       <Button type="button" variant="outline" onClick={() => { setNewEntityType(form.getValues("type") === 'sale' ? 'customer' : 'seller'); setIsNewEntityDialogOpen(true); }} disabled={!!editingLedgerEntry}>
+                       <Button type="button" variant="outline" onClick={() => { setNewEntityType(form.getValues("type") === 'sale' ? 'customer' : 'seller'); setIsNewEntityDialogOpen(true); }} disabled={!!editingLedgerEntry} className="w-full sm:w-auto">
                           <PlusCircle className="mr-2 h-4 w-4" /> Add New {form.getValues("type") === 'sale' ? 'Customer' : 'Seller'}
                       </Button>
                   </div>
@@ -1117,11 +1142,14 @@ export default function DailyLedgerPage() {
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader><TableRow>
-                  <TableHead>Type</TableHead><TableHead>Entity</TableHead><TableHead className="min-w-[200px]">Items</TableHead>
-                  <TableHead className="text-right">Total (₹)</TableHead>
-                  <TableHead className="text-right">Paid (₹)</TableHead>
-                  <TableHead className="text-right">Due (₹)</TableHead>
-                  <TableHead>Payment</TableHead><TableHead>Notes</TableHead>
+                  <TableHead>Type</TableHead><TableHead>Entity</TableHead><TableHead className="min-w-[150px] sm:min-w-[200px]">Items</TableHead>
+                  <TableHead className="text-right hidden md:table-cell">Total (₹)</TableHead>
+                  <TableHead className="text-right hidden lg:table-cell">Paid (₹)</TableHead>
+                  <TableHead className="text-right hidden lg:table-cell">Due (₹)</TableHead>
+                  <TableHead className="hidden sm:table-cell">Payment</TableHead>
+                  <TableHead className="hidden xl:table-cell">Notes</TableHead>
+                  <TableHead className="hidden md:table-cell">Created By</TableHead>
+                  <TableHead className="hidden lg:table-cell">Modified By</TableHead>
                   {currentUserRole === 'admin' && <TableHead className="text-right">Actions</TableHead>}
                 </TableRow></TableHeader>
                 <TableBody>
@@ -1133,15 +1161,29 @@ export default function DailyLedgerPage() {
                         </Badge>
                       </TableCell>
                       <TableCell>{entry.entityName}</TableCell>
-                      <TableCell>{entry.items.map(i => `${i.productName} (x${i.quantity})`).join(', ')}</TableCell>
-                      <TableCell className="text-right font-semibold">{formatCurrency(entry.grandTotal)}</TableCell>
-                      <TableCell className="text-right">{formatCurrency(entry.amountPaidNow)}</TableCell>
-                      <TableCell className="text-right">{formatCurrency(entry.remainingAmount)}</TableCell>
-                      <TableCell className="capitalize">
+                      <TableCell className="text-xs">{entry.items.map(i => `${i.productName} (x${i.quantity})`).join(', ')}</TableCell>
+                      <TableCell className="text-right font-semibold hidden md:table-cell">{formatCurrency(entry.grandTotal)}</TableCell>
+                      <TableCell className="text-right hidden lg:table-cell">{formatCurrency(entry.amountPaidNow)}</TableCell>
+                      <TableCell className="text-right hidden lg:table-cell">{formatCurrency(entry.remainingAmount)}</TableCell>
+                      <TableCell className="capitalize hidden sm:table-cell">
                         {entry.paymentStatus ? entry.paymentStatus.charAt(0).toUpperCase() + entry.paymentStatus.slice(1) : "N/A"}
                         {entry.paymentMethod ? ` (${entry.paymentMethod})` : ''}
                       </TableCell>
-                      <TableCell className="text-xs max-w-[150px] truncate" title={entry.notes || undefined}>{entry.notes || "N/A"}</TableCell>
+                      <TableCell className="text-xs max-w-[100px] truncate hidden xl:table-cell" title={entry.notes || undefined}>{entry.notes || "N/A"}</TableCell>
+                      <TableCell className="text-xs hidden md:table-cell">
+                        <div className="flex items-center gap-1.5" title={entry.createdByUid}>
+                            <UserCircle2 className="h-3.5 w-3.5 text-muted-foreground shrink-0"/>
+                            {entry.createdByName}
+                        </div>
+                      </TableCell>
+                       <TableCell className="text-xs hidden lg:table-cell">
+                        {entry.updatedByName ? (
+                            <div className="flex items-center gap-1.5" title={entry.updatedByUid || undefined}>
+                                <UserCircle2 className="h-3.5 w-3.5 text-muted-foreground shrink-0"/>
+                                {entry.updatedByName}
+                            </div>
+                        ) : "N/A"}
+                      </TableCell>
                        {currentUserRole === 'admin' && (
                         <TableCell className="text-right">
                            <DropdownMenu>
@@ -1175,3 +1217,5 @@ export default function DailyLedgerPage() {
   );
 }
 
+
+    
