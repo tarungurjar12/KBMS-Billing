@@ -81,7 +81,7 @@ export default function CreateBillPage() {
       setProducts(fetchedProducts);
 
       if (editInvoiceId) {
-        setBillCreationMode("standard"); // Editing always implies standard mode
+        setBillCreationMode("standard"); 
         const invoiceRef = doc(db, "invoices", editInvoiceId);
         const invoiceSnap = await getDoc(invoiceRef);
         if (invoiceSnap.exists()) {
@@ -123,9 +123,9 @@ export default function CreateBillPage() {
           ...data, 
           id: docSnap.id, 
           isSelected: false,
-          date: data.date, // Ensure date is passed through
-          items: data.items || [], // Ensure items are passed through
-          remainingAmount: data.remainingAmount || 0, // Ensure remainingAmount is passed
+          date: data.date, 
+          items: data.items || [], 
+          remainingAmount: data.remainingAmount || 0, 
         } as PendingLedgerItemToInvoice;
       });
       setPendingLedgerItems(items);
@@ -145,7 +145,7 @@ export default function CreateBillPage() {
     } else {
       setPendingLedgerItems([]);
     }
-     setBillItems([]); // Clear standard bill items when mode changes
+     setBillItems([]); 
   }, [billCreationMode, selectedCustomerId, fetchPendingLedgerItems]);
 
 
@@ -197,10 +197,10 @@ export default function CreateBillPage() {
     setPendingLedgerItems(prev => prev.map(item => item.id === itemId ? { ...item, isSelected: !item.isSelected } : item));
   };
 
-  const subTotal = useMemo(() => {
+  const subTotalHook = useMemo(() => {
     if (billCreationMode === 'standard') {
       return billItems.reduce((acc, item) => acc + item.total, 0);
-    } else { // from_pending_ledger
+    } else { 
       return pendingLedgerItems.filter(item => item.isSelected).reduce((acc, item) => acc + (item.remainingAmount || 0), 0);
     }
   }, [billItems, pendingLedgerItems, billCreationMode]);
@@ -210,10 +210,10 @@ export default function CreateBillPage() {
   
   let cgst = 0, sgst = 0, igst = 0;
   if (selectedCustomerDetails?.gstin) { 
-    if (isInterState) igst = subTotal * GST_RATE;
-    else { cgst = subTotal * (GST_RATE / 2); sgst = subTotal * (GST_RATE / 2); }
+    if (isInterState) igst = subTotalHook * GST_RATE;
+    else { cgst = subTotalHook * (GST_RATE / 2); sgst = subTotalHook * (GST_RATE / 2); }
   }
-  const grandTotal = subTotal + cgst + sgst + igst;
+  const grandTotal = subTotalHook + cgst + sgst + igst;
 
   const handleGenerateOrUpdateBill = async () => {
     if (!selectedCustomerId) { toast({ title: "Customer Not Selected", variant: "destructive" }); return; }
@@ -260,19 +260,32 @@ export default function CreateBillPage() {
             for (const pu of productUpdates) transaction.update(pu.ref, { stock: pu.newStock, updatedAt: serverTimestamp() });
             invoiceItemsForSave = billItems.map(i => ({ productId: i.id, name: i.name, quantity: i.quantity, unitPrice: i.numericPrice, total: i.total, unitOfMeasure: i.unitOfMeasure }));
         } else { // from_pending_ledger
-             invoiceItemsForSave = pendingLedgerItems.filter(i => i.isSelected).map(li => ({
-                productId: `PENDING_LEDGER_REF:${li.id}`, 
-                name: `Pending items from ${format(new Date(li.date), "dd/MM/yy")}: ${li.items.map(item => item.productName).join(', ').substring(0, 40)}...`,
-                quantity: 1, 
-                unitPrice: li.remainingAmount || 0, 
-                total: li.remainingAmount || 0, 
-                unitOfMeasure: "summary"
-            }));
+            invoiceItemsForSave = pendingLedgerItems.filter(i => i.isSelected).map(li => {
+                const formattedDate = format(new Date(li.date), "dd/MM/yy");
+                const itemNamesArray = li.items.map(item => item.productName);
+                let itemNamesSummaryForDisplay;
+                if (itemNamesArray.length > 2) {
+                    itemNamesSummaryForDisplay = itemNamesArray.slice(0, 2).join(', ') + ", ...";
+                } else {
+                    itemNamesSummaryForDisplay = itemNamesArray.join(', ');
+                }
+                const fullItemDetails = li.items.map(item => `${item.productName} (x${item.quantity})`).join(', ');
+                const descriptionForInvoice = `Date: ${formattedDate}\nItems: ${itemNamesSummaryForDisplay}\nFull Details: ${fullItemDetails}`;
+                
+                return {
+                    productId: `PENDING_LEDGER_REF:${li.id}`, 
+                    name: descriptionForInvoice,
+                    quantity: 1, 
+                    unitPrice: li.remainingAmount || 0, 
+                    total: li.remainingAmount || 0, 
+                    unitOfMeasure: "details" 
+                };
+            });
         }
         
         const billData: Omit<Invoice, 'id' | 'createdAt' | 'updatedAt'> & {createdAt?: any, updatedAt?: any, createdBy: string} = { 
           customerId: selectedCustomerId, customerName: customers.find(c=>c.id === selectedCustomerId)?.name || "N/A",
-          items: invoiceItemsForSave, subTotal, cgst, sgst, igst, totalAmount: grandTotal, displayTotal: formatCurrency(grandTotal),
+          items: invoiceItemsForSave, subTotal: subTotalHook, cgst, sgst, igst, totalAmount: grandTotal, displayTotal: formatCurrency(grandTotal),
           status: "Pending", invoiceNumber: (editInvoiceId && billCreationMode === 'standard') ? existingInvoiceNumber! : `INV-${Date.now().toString().slice(-6)}`,
           date: format(new Date(), "MMM dd, yyyy"), isoDate: new Date().toISOString(), createdBy: currentFirebaseUser.uid, 
         };
@@ -323,7 +336,7 @@ export default function CreateBillPage() {
                     <Button variant="outline" onClick={() => router.push("/customers?addNew=true")} disabled={isSubmitting} className="w-full sm:w-auto"><PlusCircle className="mr-2 h-4 w-4" /> Add New</Button>
                 </div>
               </div>
-              {!editInvoiceId && ( // Mode selection only for new bills
+              {!editInvoiceId && ( 
                 <div>
                     <Label>Bill Creation Mode</Label>
                     <div className="flex gap-2 mt-1">
@@ -374,16 +387,16 @@ export default function CreateBillPage() {
                     : pendingLedgerItems.length === 0 ? (<p className="text-muted-foreground">No pending sale ledger items found for the selected customer, or customer not selected.</p>)
                     : (<ScrollArea className="h-96"><div className="space-y-3">
                         {pendingLedgerItems.map(item => (
-                            <Card key={item.id} className={`p-3 flex items-center gap-3 ${item.isSelected ? 'bg-primary/10 border-primary' : ''}`}>
-                                <Checkbox id={`item-${item.id}`} checked={item.isSelected} onCheckedChange={() => handleTogglePendingItemSelection(item.id)} disabled={isSubmitting} />
+                            <Card key={item.id} className={`p-3 flex items-start gap-3 ${item.isSelected ? 'bg-primary/10 border-primary' : ''}`}>
+                                <Checkbox id={`item-${item.id}`} checked={item.isSelected} onCheckedChange={() => handleTogglePendingItemSelection(item.id)} disabled={isSubmitting} className="mt-1"/>
                                 <div className="flex-grow text-sm">
-                                    <Label htmlFor={`item-${item.id}`} className="font-medium cursor-pointer">
-                                        Date: {format(new Date(item.date), "dd/MM/yy")} - Items: {item.items.map(i => i.productName).join(', ').substring(0, 30)}{item.items.map(i => i.productName).join(', ').length > 30 ? '...' : ''}
+                                    <Label htmlFor={`item-${item.id}`} className="font-medium cursor-pointer leading-tight">
+                                        Date: {format(new Date(item.date), "dd/MM/yy")} - Items: {item.items.map(i => i.productName).join(', ').substring(0, 50)}{item.items.map(i => i.productName).join(', ').length > 50 ? '...' : ''}
                                     </Label>
-                                    <p className="text-xs text-muted-foreground">
-                                      Full Details: {item.items.map(i => `${i.productName} (x${i.quantity})`).join(', ').substring(0,50)}...
+                                    <p className="text-xs text-muted-foreground mt-0.5">
+                                      Full Details: {item.items.map(i => `${i.productName} (x${i.quantity})`).join(', ').substring(0,70)}{item.items.map(i => `${i.productName} (x${i.quantity})`).join(', ').length > 70 ? '...' : ''}
                                     </p>
-                                    <p className="text-xs font-semibold">Pending Amt: {formatCurrency(item.remainingAmount || 0)}</p>
+                                    <p className="text-xs font-semibold mt-1">Pending Amt: {formatCurrency(item.remainingAmount || 0)}</p>
                                 </div>
                             </Card>
                         ))}
@@ -397,10 +410,10 @@ export default function CreateBillPage() {
           <Card className="shadow-lg rounded-xl sticky top-6"> 
             <CardHeader><CardTitle className="font-headline text-foreground flex items-center gap-2"><Calculator className="h-5 w-5"/>3. Bill Summary</CardTitle></CardHeader>
             <CardContent className="space-y-3">
-              <div className="flex justify-between"><span className="text-muted-foreground">Subtotal:</span><span className="font-medium">{formatCurrency(subTotal)}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Subtotal:</span><span className="font-medium">{formatCurrency(subTotalHook)}</span></div>
               {selectedCustomerDetails?.gstin && !isInterState && (<><div className="flex justify-between"><span className="text-muted-foreground">CGST ({(GST_RATE/2)*100}%):</span><span className="font-medium">{formatCurrency(cgst)}</span></div><div className="flex justify-between"><span className="text-muted-foreground">SGST ({(GST_RATE/2)*100}%):</span><span className="font-medium">{formatCurrency(sgst)}</span></div></>)}
               {selectedCustomerDetails?.gstin && isInterState && (<div className="flex justify-between"><span className="text-muted-foreground">IGST ({GST_RATE*100}%):</span><span className="font-medium">{formatCurrency(igst)}</span></div>)}
-              {!selectedCustomerDetails?.gstin && subTotal > 0 && (<p className="text-xs text-muted-foreground text-center">(GST not applied as customer GSTIN not provided)</p>)}
+              {!selectedCustomerDetails?.gstin && subTotalHook > 0 && (<p className="text-xs text-muted-foreground text-center">(GST not applied as customer GSTIN not provided)</p>)}
               <Separator />
               <div className="flex justify-between text-lg font-bold"><span>Grand Total:</span><span>{formatCurrency(grandTotal)}</span></div>
             </CardContent>
@@ -415,5 +428,3 @@ export default function CreateBillPage() {
     </>
   );
 }
-
-    

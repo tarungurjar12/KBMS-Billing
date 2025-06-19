@@ -82,9 +82,11 @@ export function InvoiceTemplate({ invoice, companyDetails }: InvoiceTemplateProp
             {invoice.items.map((item, index) => (
               <TableRow key={item.productId + index} className="border-b border-gray-200">
                 <TableCell className="px-2 py-2 whitespace-nowrap align-top">{index + 1}</TableCell>
-                <TableCell className="px-2 py-2 whitespace-normal break-words align-top">
+                <TableCell className="px-2 py-2 whitespace-normal break-words align-top" style={{ whiteSpace: 'pre-line' }}>
                     {item.name}
-                    <span className="block text-gray-500 text-[10px]">({item.unitOfMeasure})</span>
+                    {item.unitOfMeasure !== 'details' && (
+                         <span className="block text-gray-500 text-[10px]">({item.unitOfMeasure})</span>
+                    )}
                 </TableCell>
                 <TableCell className="px-2 py-2 text-right whitespace-nowrap align-top">{item.quantity}</TableCell>
                 <TableCell className="px-2 py-2 text-right whitespace-nowrap align-top">{formatCurrency(item.unitPrice)}</TableCell>
