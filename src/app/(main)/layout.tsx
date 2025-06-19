@@ -72,7 +72,7 @@ export default function MainAppLayout({
 
   const verifyAndSetSession = useCallback(async (firebaseUser: FirebaseUser | null) => {
     if (firebaseUser) {
-      setCurrentFirebaseUser(firebaseUser);
+      setCurrentFirebaseUser(firebaseUser); // Set Firebase user early
       let roleFromCookie = getCookie('userRole') as UserProfile['role'];
       let companyIdFromCookie = getCookie('companyId');
 
@@ -82,7 +82,8 @@ export default function MainAppLayout({
         setAuthStatus('authenticated');
         console.log("MainAppLayout verifyAndSetSession (from cookie): Role:", roleFromCookie, "CompanyID:", companyIdFromCookie);
       } else {
-        console.log("MainAppLayout verifyAndSetSession: Cookies missing or incomplete, fetching from Firestore for UID:", firebaseUser.uid);
+        console.log("MainAppLayout verifyAndSetSession: Cookies missing/incomplete, fetching from Firestore for UID:", firebaseUser.uid);
+        setAuthStatus('loading'); // Explicitly set to loading while fetching from Firestore
         try {
           const userDocRef = doc(db, "users", firebaseUser.uid);
           const userDocSnap = await getDoc(userDocRef);
@@ -102,25 +103,27 @@ export default function MainAppLayout({
             } else {
               console.warn("MainAppLayout verifyAndSetSession: User doc found but role/companyId missing/invalid in Firestore. UID:", firebaseUser.uid, "Data:", userData);
               setAuthStatus('unauthenticated'); 
-              setCurrentRole(undefined); setCurrentCompanyId(undefined); // No setCurrentFirebaseUser(null) here, as auth is still valid
+              setCurrentRole(undefined); setCurrentCompanyId(undefined);
               deleteCookie('userRole'); deleteCookie('companyId');
               if (pathname !== '/login' && pathname !== '/register-admin') router.push('/login');
             }
           } else {
             console.warn("MainAppLayout verifyAndSetSession: No user document in Firestore for UID:", firebaseUser.uid);
+            // This case implies user is auth'd with Firebase, but has no app profile.
+            // If on /register-admin, allow to proceed. Otherwise, redirect to login.
             if (pathname !== '/register-admin' && pathname !== '/login') {
                 setAuthStatus('unauthenticated');
-                setCurrentRole(undefined); setCurrentCompanyId(undefined); // No setCurrentFirebaseUser(null)
+                setCurrentRole(undefined); setCurrentCompanyId(undefined);
                 deleteCookie('userRole'); deleteCookie('companyId');
-                router.push('/login');
+                router.push('/login'); // Redirect to login if no profile and not on registration page
             } else {
-                setAuthStatus('unauthenticated'); // Allow login/register page to proceed
+                 setAuthStatus('unauthenticated'); // Allow login/register page to proceed
             }
           }
         } catch (error) {
           console.error("MainAppLayout verifyAndSetSession: Error fetching user data from Firestore:", error);
           setAuthStatus('unauthenticated');
-          setCurrentRole(undefined); setCurrentCompanyId(undefined); // No setCurrentFirebaseUser(null)
+          setCurrentRole(undefined); setCurrentCompanyId(undefined);
           deleteCookie('userRole'); deleteCookie('companyId');
           if (pathname !== '/login' && pathname !== '/register-admin') router.push('/login');
         }
@@ -129,7 +132,7 @@ export default function MainAppLayout({
       setAuthStatus('unauthenticated');
       setCurrentRole(undefined);
       setCurrentCompanyId(undefined);
-      setCurrentFirebaseUser(null); // Explicitly nullify Firebase user on logout
+      setCurrentFirebaseUser(null); 
       deleteCookie('userRole');
       deleteCookie('companyId');
       console.log("MainAppLayout verifyAndSetSession: No Firebase user. Session ended or user logged out.");
@@ -149,8 +152,7 @@ export default function MainAppLayout({
     
     const handleSessionChanged = () => {
         console.log("MainAppLayout: 'userSessionChanged' event received. Re-verifying session.");
-        // Use a slight delay to allow cookies to be fully processed by the browser if set by another component
-        setTimeout(() => verifyAndSetSession(auth.currentUser), 50);
+        setTimeout(() => verifyAndSetSession(auth.currentUser), 100); // Added slight delay
     };
     window.addEventListener('userSessionChanged', handleSessionChanged);
 
@@ -161,8 +163,10 @@ export default function MainAppLayout({
     };
   }, [verifyAndSetSession, pathname]); 
 
-  if (authStatus === 'loading') {
-    console.log("MainAppLayout: Auth status 'loading', showing skeleton.");
+  // Consistent loading state if authStatus is 'loading' OR 
+  // if user is authenticated by Firebase but role/companyId are still being resolved.
+  if (authStatus === 'loading' || (currentFirebaseUser && (!currentRole || !currentCompanyId) && (pathname !== '/login' && pathname !== '/register-admin'))) {
+    console.log("MainAppLayout: Auth status 'loading' or resolving role, showing skeleton. AuthStatus:", authStatus, "FirebaseUser:", !!currentFirebaseUser, "Role:", currentRole, "CompanyId:", currentCompanyId);
     return (
       <div className="flex min-h-screen w-full">
         <div className="hidden md:block border-r bg-muted/40 w-64 p-4 space-y-4">
@@ -180,6 +184,7 @@ export default function MainAppLayout({
     );
   }
   
+  // If unauthenticated and not on a public page, redirect.
   if (authStatus === 'unauthenticated' && pathname !== '/login' && pathname !== '/register-admin') {
       console.log("MainAppLayout: Auth status 'unauthenticated', not on public page. Showing redirecting message. Path:", pathname);
       return (
@@ -189,7 +194,7 @@ export default function MainAppLayout({
       );
   }
 
-  // For authenticated users on protected routes
+  // For authenticated users on protected routes (role and companyId are resolved)
   if (authStatus === 'authenticated' && currentRole && currentCompanyId && pathname !== '/login' && pathname !== '/register-admin') {
     console.log("MainAppLayout: User authenticated, rendering main app structure for role:", currentRole, "CompanyID:", currentCompanyId);
     return (
@@ -213,6 +218,7 @@ export default function MainAppLayout({
   }
 
   // For login or register-admin page (can be accessed when unauthenticated or during auth resolution)
+  // Or if user is authenticated but still on login/register (middleware should handle redirection, but this is a safeguard)
   if (pathname === '/login' || pathname === '/register-admin') {
     console.log("MainAppLayout: Path is /login or /register-admin, rendering children. AuthStatus:", authStatus);
      return (
@@ -222,25 +228,22 @@ export default function MainAppLayout({
     );
   }
   
-  // Fallback if none of the above conditions are met (should ideally not be common)
-  // This could happen if authStatus is 'authenticated' but role/companyId are missing for a protected route.
+  // Fallback: Should be rare if logic above is correct.
+  // This primarily catches authenticated users without role/companyId who somehow land on a protected route
+  // AFTER the initial loading phase and before redirection kicks in from middleware or other effects.
+  console.warn("MainAppLayout: Fallback rendering condition. This might indicate an edge case in auth flow. AuthStatus:", authStatus, "pathname:", pathname, "role:", currentRole, "companyId:", currentCompanyId);
+  // If authenticated but critical info missing, and not on a public route, better to redirect than show broken UI.
   if (authStatus === 'authenticated' && (!currentRole || !currentCompanyId) && pathname !== '/login' && pathname !== '/register-admin') {
-    console.warn("MainAppLayout: Authenticated but role/companyId missing for protected route. Redirecting to login. Role:", currentRole, "CompanyId:", currentCompanyId, "Path:", pathname);
-    // Perform redirect if not already on login/register.
-    // This state might indicate a problem with user data setup.
-    // A direct router.push here might cause infinite loops if login page also fails to resolve session.
-    // Deleting cookies and then pushing can be safer.
-    deleteCookie('userRole');
-    deleteCookie('companyId');
-     return (
-         <div className="flex min-h-screen w-full items-center justify-center bg-background p-4">
-            <p className="text-lg text-muted-foreground">Session error. Redirecting to login...</p>
-         </div>
+      deleteCookie('userRole');
+      deleteCookie('companyId');
+      return (
+          <div className="flex min-h-screen w-full items-center justify-center bg-background p-4">
+              <p className="text-lg text-muted-foreground">Session error. Redirecting to login...</p>
+          </div>
       );
   }
-
-
-  console.log("MainAppLayout: Fallback rendering (final catch-all). AuthStatus:", authStatus, "pathname:", pathname, "role:", currentRole, "companyId:", currentCompanyId);
+  
+  // Default catch-all if other conditions aren't met (e.g. unauthenticated on a non-public route that wasn't caught by redirect)
   return ( 
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
         <p className="text-muted-foreground">Loading application interface...</p>

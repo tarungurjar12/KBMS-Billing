@@ -6,12 +6,12 @@ import { PageHeader } from "@/components/page-header";
 import { LayoutDashboard, ClipboardPlus, Users, PackageSearch, ReceiptText, TrendingUp, AlertTriangle, AlertCircle, Activity } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useContext } from "react"; // Added useContext
 import { collection, getDocs, query, where, limit, orderBy, Timestamp, getCountFromServer } from 'firebase/firestore';
-import { db, auth } from '@/lib/firebase/firebaseConfig';
-import type { User as FirebaseUser } from "firebase/auth";
+import { db } from '@/lib/firebase/firebaseConfig'; // Removed auth, not needed here directly
 import { format, startOfWeek, endOfWeek, startOfDay, endOfDay, parseISO } from 'date-fns';
 import { useToast } from "@/hooks/use-toast";
+import { AppContext, useAppContext } from '../layout'; // Import AppContext and useAppContext
 
 /**
  * @fileOverview Store Manager Dashboard page.
@@ -42,8 +42,10 @@ const quickActions: QuickAction[] = [
 
 export default function StoreManagerDashboardPage() {
   const { toast } = useToast();
+  const appContext = useAppContext(); // Use context
   const [recentActivity, setRecentActivity] = useState<string[]>([]);
-  const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
+  // Removed local currentUser state, will use appContext.firebaseUser
+
   const [metrics, setMetrics] = useState<Metric[]>([
     { title: "Today's Bills Generated", value: "0", icon: ReceiptText, description: "Bills created by you today.", dataAiHint: "invoice document", isLoading: true, link: "/billing?filter=today&manager=me" },
     { title: "Customers Added This Week", value: "0", icon: Users, description: "New customers registered by you this week.", dataAiHint: "people team", isLoading: true, link: "/customers"},
@@ -53,21 +55,18 @@ export default function StoreManagerDashboardPage() {
   const [isLoadingMetrics, setIsLoadingMetrics] = useState(true);
   const [isLoadingActivity, setIsLoadingActivity] = useState(true);
 
-
-  useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged((user) => { setCurrentUser(user); });
-    return () => unsubscribe();
-  }, []);
-
-
   const fetchManagerDashboardData = useCallback(async () => {
-    if (!currentUser) {
+    if (!appContext || !appContext.firebaseUser || appContext.userRole !== 'store_manager') {
       setMetrics(prevMetrics => prevMetrics.map(m => ({ ...m, isLoading: false, value: "N/A" })));
       setRecentActivity([]);
       setIsLoadingMetrics(false);
       setIsLoadingActivity(false);
+      if (appContext && !appContext.firebaseUser) console.log("StoreDashboard: No firebaseUser in context yet.");
+      if (appContext && appContext.userRole !== 'store_manager') console.log("StoreDashboard: User role is not store_manager.");
       return;
     }
+    
+    const currentManagerUid = appContext.firebaseUser.uid;
 
     const updateMetricState = (title: string, newValue: Partial<Metric>) => {
       setMetrics(prevMetrics =>
@@ -88,7 +87,7 @@ export default function StoreManagerDashboardPage() {
 
     try {
       const todaysBillsQuery = query(collection(db, "invoices"),
-        where("createdBy", "==", currentUser.uid),
+        where("createdBy", "==", currentManagerUid),
         where("isoDate", ">=", todayStartISO),
         where("isoDate", "<=", todayEndISO)
       );
@@ -96,7 +95,7 @@ export default function StoreManagerDashboardPage() {
       updateMetricState("Today's Bills Generated", { value: todaysBillsSnapshot.data().count.toString() });
 
       const customersAddedQuery = query(collection(db, "customers"),
-        where("createdBy", "==", currentUser.uid),
+        where("createdBy", "==", currentManagerUid),
         where("createdAt", ">=", weekStartTimestamp),
         where("createdAt", "<=", weekEndTimestamp)
       );
@@ -104,21 +103,21 @@ export default function StoreManagerDashboardPage() {
       updateMetricState("Customers Added This Week", { value: customersAddedSnapshot.data().count.toString() });
 
       const pendingBillsQuery = query(collection(db, "invoices"),
-        where("createdBy", "==", currentUser.uid),
+        where("createdBy", "==", currentManagerUid),
         where("status", "==", "Pending")
       );
       const pendingBillsSnapshot = await getCountFromServer(pendingBillsQuery);
       updateMetricState("Pending Bills (Yours)", {value: pendingBillsSnapshot.data().count.toString()});
 
       const reportedIssuesQuery = query(collection(db, "issueReports"),
-        where("reportedByUid", "==", currentUser.uid),
+        where("reportedByUid", "==", currentManagerUid),
         where("status", "==", "New") 
       );
       const reportedIssuesSnapshot = await getCountFromServer(reportedIssuesQuery);
       updateMetricState("Reported Product Issues", {value: reportedIssuesSnapshot.data().count.toString()});
 
       const recentActivityQuery = query(collection(db, "invoices"),
-        where("createdBy", "==", currentUser.uid),
+        where("createdBy", "==", currentManagerUid),
         orderBy("createdAt", "desc"),
         limit(3)
       );
@@ -155,9 +154,35 @@ export default function StoreManagerDashboardPage() {
         setIsLoadingMetrics(false);
         setIsLoadingActivity(false);
     }
-  }, [currentUser, toast, isLoadingActivity]);
+  }, [appContext, toast]); // Removed isLoadingActivity from dependencies as it's set within the callback
 
-  useEffect(() => { if (currentUser) { fetchManagerDashboardData(); } }, [currentUser, fetchManagerDashboardData]);
+  useEffect(() => { 
+    // Fetch data only if context is available and user is a store manager
+    if (appContext && appContext.firebaseUser && appContext.userRole === 'store_manager') {
+      fetchManagerDashboardData(); 
+    } else if (appContext && appContext.firebaseUser && appContext.userRole !== 'store_manager') {
+      // This case should ideally be handled by middleware redirecting non-managers
+      console.warn("StoreDashboard: User is not a store manager. Data fetch skipped.");
+      setIsLoadingMetrics(false);
+      setIsLoadingActivity(false);
+    } else {
+      // Context might not be ready yet, or user is null
+      console.log("StoreDashboard: AppContext or firebaseUser not yet available. Waiting...");
+    }
+  }, [appContext, fetchManagerDashboardData]);
+
+
+  if (!appContext || !appContext.firebaseUser || appContext.userRole !== 'store_manager') {
+    // Show a minimal loading/placeholder if context isn't ready or user isn't a manager
+    // This helps prevent rendering the full dashboard structure prematurely
+    return (
+        <div className="flex min-h-[calc(100vh-10rem)] items-center justify-center">
+            <Activity className="h-10 w-10 text-muted-foreground animate-spin" />
+            <p className="ml-3 text-muted-foreground">Loading dashboard...</p>
+        </div>
+    );
+  }
+
 
   return (
     <>
@@ -234,3 +259,4 @@ export default function StoreManagerDashboardPage() {
     </>
   );
 }
+
