@@ -81,14 +81,14 @@ export function InvoiceTemplate({ invoice, companyDetails }: InvoiceTemplateProp
           <TableBody>
             {invoice.items.map((item, index) => (
               <TableRow key={item.productId + index} className="border-b border-gray-200">
-                <TableCell className="px-2 py-2 whitespace-nowrap">{index + 1}</TableCell>
-                <TableCell className="px-2 py-2">
+                <TableCell className="px-2 py-2 whitespace-nowrap align-top">{index + 1}</TableCell>
+                <TableCell className="px-2 py-2 whitespace-normal break-words align-top">
                     {item.name}
                     <span className="block text-gray-500 text-[10px]">({item.unitOfMeasure})</span>
                 </TableCell>
-                <TableCell className="px-2 py-2 text-right whitespace-nowrap">{item.quantity}</TableCell>
-                <TableCell className="px-2 py-2 text-right whitespace-nowrap">{formatCurrency(item.unitPrice)}</TableCell>
-                <TableCell className="px-2 py-2 text-right whitespace-nowrap">{formatCurrency(item.total)}</TableCell>
+                <TableCell className="px-2 py-2 text-right whitespace-nowrap align-top">{item.quantity}</TableCell>
+                <TableCell className="px-2 py-2 text-right whitespace-nowrap align-top">{formatCurrency(item.unitPrice)}</TableCell>
+                <TableCell className="px-2 py-2 text-right whitespace-nowrap align-top">{formatCurrency(item.total)}</TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -140,4 +140,3 @@ export function InvoiceTemplate({ invoice, companyDetails }: InvoiceTemplateProp
     </div>
   );
 }
-
