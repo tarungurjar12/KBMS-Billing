@@ -30,6 +30,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from '@/components/ui/badge';
 import type { PaymentRecord, PAYMENT_METHODS as PAYMENT_METHODS_PAYMENT_PAGE, PAYMENT_STATUSES as PAYMENT_STATUSES_PAYMENT_PAGE } from './../payments/page';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Separator } from '@/components/ui/separator';
 
 
 /**
@@ -1273,6 +1274,14 @@ export default function DailyLedgerPage() {
                                 {entry.createdByName || "N/A"}
                             </div>
                         </Button>
+                         {entry.updatedByName && (
+                            <Button variant="link" size="sm" className="p-0 h-auto text-xs font-normal text-muted-foreground hover:text-primary block mt-0.5" onClick={() => handleUserFilterClick(entry.updatedByName || 'Unknown Modifier')}>
+                                <div className="flex items-center gap-1.5">
+                                    <Edit className="h-3 w-3 text-muted-foreground/70 shrink-0"/>
+                                    {entry.updatedByName}
+                                </div>
+                            </Button>
+                        )}
                       </TableCell>
                        <TableCell className="text-right">
                            <div className="flex items-center justify-end gap-1">
