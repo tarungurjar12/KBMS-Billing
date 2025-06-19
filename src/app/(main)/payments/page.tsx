@@ -40,7 +40,7 @@ export interface PaymentRecord {
   relatedEntityId: string;
   relatedInvoiceId: string | null;
   date: string; // Formatted for display
-  isoDate: string; // ISO string for storing and sorting
+  isoDate: string; // ISO string for storing and sorting ("YYYY-MM-DD")
   amountPaid: number; 
   displayAmountPaid: string;
   originalInvoiceAmount: number | null; 
@@ -148,7 +148,6 @@ export default function PaymentsPage() {
   const amountPaidWatcher = form.watch("amountPaid");
 
   const shouldShowPaymentMethod = paymentStatusWatcher === "Completed" || paymentStatusWatcher === "Partial" || paymentStatusWatcher === "Received" || paymentStatusWatcher === "Sent";
-  const isPartialPayment = paymentStatusWatcher === "Partial";
   
   const calculatedRemainingBalance = useMemo(() => {
     if (originalInvoiceAmountWatcher && amountPaidWatcher && paymentStatusWatcher === 'Partial') {
@@ -182,32 +181,48 @@ export default function PaymentsPage() {
       const querySnapshot = await getDocs(q);
       const fetchedPayments = querySnapshot.docs.map(docSnapshot => {
         const data = docSnapshot.data();
-        let paymentDate = "N/A";
-        let isoDateValue = new Date().toISOString().split('T')[0];
+        
+        let paymentDate = "N/A"; // For display
+        let isoDateValue: string | null = null; // For comparison ("YYYY-MM-DD"), default to null
 
-        if (data.isoDate) {
+        if (data.isoDate) { // This is the critical field from Firestore
              if (typeof data.isoDate === 'string') {
-                try { 
-                    paymentDate = format(parseISO(data.isoDate), "MMM dd, yyyy"); 
-                    isoDateValue = data.isoDate.split('T')[0]; // Ensure YYYY-MM-DD
-                } catch (e) { 
-                    console.warn("Invalid isoDate string format:", data.isoDate, e); 
-                    paymentDate = "Invalid Date"; 
+                try {
+                    const datePart = data.isoDate.split('T')[0]; // Ensure YYYY-MM-DD format
+                    parseISO(datePart); // Validate if it's a parsable date string
+                    paymentDate = format(parseISO(datePart), "MMM dd, yyyy");
+                    isoDateValue = datePart;
+                } catch (e) {
+                    console.warn("Invalid isoDate string format in DB:", data.isoDate, e);
+                    paymentDate = "Invalid Date";
+                    // isoDateValue remains null
                 }
-            } else if (data.isoDate instanceof Timestamp) { 
-                paymentDate = format(data.isoDate.toDate(), "MMM dd, yyyy");
-                isoDateValue = data.isoDate.toDate().toISOString().split('T')[0];
+            } else if (data.isoDate instanceof Timestamp) {
+                const tsDate = data.isoDate.toDate();
+                paymentDate = format(tsDate, "MMM dd, yyyy");
+                isoDateValue = tsDate.toISOString().split('T')[0];
             }
-        } else if (data.createdAt instanceof Timestamp) { 
-            paymentDate = format(data.createdAt.toDate(), "MMM dd, yyyy");
-            isoDateValue = data.createdAt.toDate().toISOString().split('T')[0];
+        }
+
+        // Fallback to createdAt ONLY if isoDateValue is still null (meaning isoDate was missing or invalid)
+        if (!isoDateValue && data.createdAt instanceof Timestamp) {
+            // console.log(`Payment ${docSnapshot.id}: Falling back to createdAt for date.`);
+            const createdDate = data.createdAt.toDate();
+            paymentDate = format(createdDate, "MMM dd, yyyy");
+            isoDateValue = createdDate.toISOString().split('T')[0];
+        }
+        
+        // If still no valid date after all checks, set to a non-matching placeholder
+        if (!isoDateValue) {
+            isoDateValue = "0000-00-00"; 
+            paymentDate = "Date Unavailable";
         }
         
         return {
           id: docSnapshot.id, type: data.type || 'customer',
           relatedEntityName: data.relatedEntityName || 'N/A', relatedEntityId: data.relatedEntityId || '',
           relatedInvoiceId: data.relatedInvoiceId || null, date: paymentDate,
-          isoDate: isoDateValue,
+          isoDate: isoDateValue, // This is "YYYY-MM-DD" or "0000-00-00"
           amountPaid: data.amountPaid || 0,
           displayAmountPaid: formatCurrency(data.amountPaid || 0),
           originalInvoiceAmount: data.originalInvoiceAmount || null,
@@ -227,7 +242,7 @@ export default function PaymentsPage() {
       let todayReceived = 0, todayPending = 0, todaySent = 0;
 
       fetchedPayments.forEach(p => {
-        const paymentIsoDateOnly = p.isoDate; // Already YYYY-MM-DD
+        const paymentIsoDateOnly = p.isoDate; 
         const isToday = paymentIsoDateOnly === todayISOStart; 
 
         if (p.type === 'customer') {
@@ -324,7 +339,10 @@ export default function PaymentsPage() {
         } else if (values.status === 'Completed' || values.status === 'Received' || values.status === 'Sent') {
           remainingBalance = 0;
         }
+      } else if (values.status === 'Completed' || values.status === 'Received' || values.status === 'Sent') {
+        remainingBalance = 0; // if no original amount but status is complete, balance is 0
       }
+
 
       const dataToSave = {
         ...values, 
