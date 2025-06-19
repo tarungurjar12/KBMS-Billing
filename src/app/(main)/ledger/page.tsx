@@ -225,7 +225,6 @@ export default function DailyLedgerPage() {
   const [isEntryDetailsDialogOpen, setIsEntryDetailsDialogOpen] = useState(false);
   const [selectedEntryForDetails, setSelectedEntryForDetails] = useState<LedgerEntry | null>(null);
 
-
   const [currentUserRole, setCurrentUserRole] = useState<'admin' | 'store_manager' | undefined>();
 
   const form = useForm<LedgerFormValues>({
@@ -299,20 +298,6 @@ export default function DailyLedgerPage() {
     }
   }, [toast, formatCurrency]);
   
-  const currentEntityTypeOptions = useMemo(() => {
-    const type = form.watch("type"); // Use watch to react to changes
-    if (type === 'sale') { 
-        return [
-            { value: 'customer', label: 'Existing Customer' },
-            { value: 'unknown_customer', label: 'Unknown Customer' }
-        ];
-    } else { // For Purchases or Payment Sent to Seller
-        return [
-            { value: 'seller', label: 'Existing Seller' },
-            { value: 'unknown_seller', label: 'Unknown Seller' }
-        ];
-    }
-  }, [form.watch("type")]); 
 
   useEffect(() => { 
     const currentType = form.getValues("type");
@@ -322,7 +307,7 @@ export default function DailyLedgerPage() {
     } else if (currentType === 'purchase' && (currentEntityType === 'customer' || currentEntityType === 'unknown_customer')) {
         form.setValue("entityType", "seller");
     }
-  }, [form]);
+  }, [form.watch("type"), form]);
 
 
   const handleAddProductToLedger = useCallback((product: Product) => {
@@ -454,6 +439,21 @@ export default function DailyLedgerPage() {
       }
     }
   }, [editingLedgerEntry, isLedgerFormOpen, form, selectedDate]);
+
+  const currentEntityTypeOptions = useMemo(() => {
+    const type = form.watch("type");
+    if (type === 'sale') { 
+        return [
+            { value: 'customer', label: 'Existing Customer' },
+            { value: 'unknown_customer', label: 'Unknown Customer' }
+        ];
+    } else { 
+        return [
+            { value: 'seller', label: 'Existing Seller' },
+            { value: 'unknown_seller', label: 'Unknown Seller' }
+        ];
+    }
+  }, [form.watch("type")]); 
 
 
   const transactionTypeWatcher = form.watch("type");
@@ -658,7 +658,7 @@ export default function DailyLedgerPage() {
       items: itemsForSave,
       subTotal: subTotalForSave, gstApplied: data.entryPurpose === "Ledger Record" ? data.applyGst : false, 
       taxAmount: taxAmountForSave, grandTotal: grandTotalForSave,
-      paymentMethod: (data.entryPurpose === "Payment Record" || data.paymentStatus === 'paid' || data.paymentStatus === 'partial') ? data.paymentMethod : null,
+      paymentMethod: (data.entryPurpose === "Payment Record" || (data.entryPurpose === "Ledger Record" && (data.paymentStatus === 'paid' || data.paymentStatus === 'partial'))) ? data.paymentMethod : null,
       paymentStatus: data.paymentStatus, 
       originalTransactionAmount: grandTotalForSave,
       amountPaidNow: amountPaidForLedgerSave,
@@ -700,7 +700,7 @@ export default function DailyLedgerPage() {
 
         if (data.entryPurpose === "Ledger Record") {
             const productIdsInvolved = new Set<string>();
-            if (originalLedgerEntryData) {
+            if (originalLedgerEntryData && originalLedgerEntryData.entryPurpose === "Ledger Record") {
               originalLedgerEntryData.items.forEach(item => productIdsInvolved.add(item.productId));
             }
             (ledgerDataForSave.items || []).forEach(item => productIdsInvolved.add(item.productId));
@@ -767,24 +767,31 @@ export default function DailyLedgerPage() {
                 });
             }
         } 
-
+        
+        // Delete old associated payment record if editing and one existed
         if (editingLedgerEntry && originalAssociatedPaymentRecordId) {
             const oldPaymentRef = doc(db, "payments", originalAssociatedPaymentRecordId);
-            transaction.delete(oldPaymentRef); 
+            const oldPaymentSnap = await transaction.get(oldPaymentRef);
+            if (oldPaymentSnap.exists()) {
+                 transaction.delete(oldPaymentRef); 
+            } else {
+                console.warn(`Tried to delete non-existent payment record ID: ${originalAssociatedPaymentRecordId}`);
+            }
         }
         
         let newAssociatedPaymentRecordId: string | null = null;
-        if (data.entryPurpose === "Payment Record" || (data.entryPurpose === "Ledger Record" && data.paymentStatus !== 'pending')) {
+        // Create a new payment record if current ledger entry purpose/status warrants it
+        if (data.entryPurpose === "Payment Record" || (data.entryPurpose === "Ledger Record" && (data.paymentStatus === 'paid' || data.paymentStatus === 'partial'))) {
           const paymentRecordRef = doc(collection(db, "payments"));
           newAssociatedPaymentRecordId = paymentRecordRef.id;
           
           let paymentStatusForRecord: typeof PAYMENT_STATUSES_PAYMENT_PAGE[number];
           if (data.entryPurpose === "Payment Record") {
             paymentStatusForRecord = data.type === 'sale' ? 'Received' : 'Sent';
-          } else { 
+          } else { // Ledger Record (paid or partial)
             if (data.paymentStatus === 'paid') {
                 paymentStatusForRecord = data.type === 'sale' ? 'Received' : 'Sent';
-            } else { 
+            } else { // partial
                 paymentStatusForRecord = 'Partial';
             }
           }
@@ -793,7 +800,7 @@ export default function DailyLedgerPage() {
             type: data.type === 'sale' ? 'customer' : 'supplier', 
             relatedEntityName: ledgerDataForSave.entityName!,
             relatedEntityId: ledgerDataForSave.entityId || `unknown-${ledgerDataForSave.entityType}-${Date.now()}`,
-            relatedInvoiceId: null, 
+            relatedInvoiceId: null, // Ledger-based payments might not have a direct invoice link initially
             date: format(parseISO(ledgerDataForSave.date!), "MMM dd, yyyy"), 
             isoDate: ledgerDataForSave.date!, 
             amountPaid: data.entryPurpose === "Payment Record" ? (data.paymentAmount || 0) : amountPaidForLedgerSave, 
@@ -803,7 +810,7 @@ export default function DailyLedgerPage() {
             transactionId: null, 
             status: paymentStatusForRecord,
             notes: `Payment from Ledger Entry: ${ledgerDocRef.id}. ${ledgerDataForSave.notes || ''}`.trim(),
-            ledgerEntryId: ledgerDocRef.id,
+            ledgerEntryId: ledgerDocRef.id, // Link back to this ledger entry
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           };
@@ -900,7 +907,12 @@ export default function DailyLedgerPage() {
 
             if (entryData.associatedPaymentRecordId) {
                 const paymentRef = doc(db, "payments", entryData.associatedPaymentRecordId);
-                transaction.delete(paymentRef);
+                const paymentSnap = await transaction.get(paymentRef);
+                if (paymentSnap.exists()) {
+                    transaction.delete(paymentRef);
+                } else {
+                   console.warn(`Tried to delete non-existent associated payment record ID: ${entryData.associatedPaymentRecordId}`);
+                }
             }
             transaction.delete(ledgerDocRef);
         });
