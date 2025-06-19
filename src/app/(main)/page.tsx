@@ -114,7 +114,7 @@ export default function AdminDashboardPage() {
       if (error.code === 'failed-precondition') {
         toast({
             title: "Database Index Required",
-            description: `A query for dashboard data failed. Please create the required Firestore index. Check browser console for link. (Likely for 'payments' or 'invoices' collection).`,
+            description: `A query for dashboard data (e.g., for products, invoices, or payments) failed. This often means a Firestore index is missing. Please check your browser's developer console for a Firebase link to create it.`,
             variant: "destructive", duration: 20000,
         });
       } else {
@@ -206,3 +206,4 @@ export default function AdminDashboardPage() {
     </>
   );
 }
+
