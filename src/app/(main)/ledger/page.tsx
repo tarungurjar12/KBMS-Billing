@@ -219,7 +219,7 @@ export default function DailyLedgerPage() {
   const [newEntityType, setNewEntityType] = useState<'customer' | 'seller'>('customer');
   const [productSearchTerm, setProductSearchTerm] = useState('');
   const [ledgerSearchTerm, setLedgerSearchTerm] = useState('');
-  const [activeLedgerTab, setActiveLedgerTab] = useState<'all' | 'customer_sales' | 'seller_purchases'>('all');
+  const [activeLedgerTab, setActiveLedgerTab] = useState<'all' | 'customer' | 'seller'>('all');
   
   const [selectedUserFilterName, setSelectedUserFilterName] = useState<string | null>(null);
   const [isEntryDetailsDialogOpen, setIsEntryDetailsDialogOpen] = useState(false);
@@ -300,7 +300,7 @@ export default function DailyLedgerPage() {
   }, [toast, formatCurrency]);
   
   const currentEntityTypeOptions = useMemo(() => {
-    const type = form.watch("type");
+    const type = form.getValues("type");
     if (type === 'sale') { 
         return [
             { value: 'customer', label: 'Existing Customer' },
@@ -920,8 +920,8 @@ export default function DailyLedgerPage() {
   const displayedLedgerEntries = useMemo(() => {
     return ledgerEntries
     .filter(entry => {
-        if (activeLedgerTab === 'customer_sales') return entry.type === 'sale'; 
-        if (activeLedgerTab === 'seller_purchases') return entry.type === 'purchase'; 
+        if (activeLedgerTab === 'customer') return entry.type === 'sale'; 
+        if (activeLedgerTab === 'seller') return entry.type === 'purchase'; 
         return true; 
     })
     .filter(entry => {
@@ -1310,10 +1310,10 @@ export default function DailyLedgerPage() {
         </CardHeader>
         <CardContent>
           <Tabs value={activeLedgerTab} onValueChange={(value) => setActiveLedgerTab(value as any)} className="w-full mb-4">
-            <TabsList>
+            <TabsList className="flex flex-wrap items-center justify-start gap-1 sm:gap-2">
                 <TabsTrigger value="all"><Filter className="mr-2 h-4 w-4 opacity-70"/>All Entries</TabsTrigger>
-                <TabsTrigger value="customer_sales"><Users className="mr-2 h-4 w-4 opacity-70"/>Customer (Sales/Pymt Rcvd)</TabsTrigger>
-                <TabsTrigger value="seller_purchases"><Truck className="mr-2 h-4 w-4 opacity-70"/>Seller (Purchases/Pymt Sent)</TabsTrigger>
+                <TabsTrigger value="customer"><Users className="mr-2 h-4 w-4 opacity-70"/>Customer</TabsTrigger>
+                <TabsTrigger value="seller"><Truck className="mr-2 h-4 w-4 opacity-70"/>Seller</TabsTrigger>
             </TabsList>
           </Tabs>
 
@@ -1341,7 +1341,7 @@ export default function DailyLedgerPage() {
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader><TableRow>
-                  <TableHead className="w-32">Type / Purpose</TableHead>
+                  <TableHead className="w-32">Type</TableHead>
                   <TableHead className="min-w-[150px]">Entity</TableHead>
                   <TableHead className="min-w-[200px]">Details</TableHead>
                   <TableHead className="text-right min-w-[100px]">Total (₹)</TableHead>

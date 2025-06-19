@@ -183,17 +183,31 @@ export default function PaymentsPage() {
       const fetchedPayments = querySnapshot.docs.map(docSnapshot => {
         const data = docSnapshot.data();
         let paymentDate = "N/A";
+        let isoDateValue = new Date().toISOString().split('T')[0];
+
         if (data.isoDate) {
              if (typeof data.isoDate === 'string') {
-                try { paymentDate = format(parseISO(data.isoDate), "MMM dd, yyyy"); } catch (e) { console.warn("Invalid isoDate string format:", data.isoDate, e); paymentDate = "Invalid Date"; }
-            } else if (data.isoDate instanceof Timestamp) { paymentDate = format(data.isoDate.toDate(), "MMM dd, yyyy"); }
-        } else if (data.createdAt instanceof Timestamp) { paymentDate = format(data.createdAt.toDate(), "MMM dd, yyyy"); }
+                try { 
+                    paymentDate = format(parseISO(data.isoDate), "MMM dd, yyyy"); 
+                    isoDateValue = data.isoDate.split('T')[0]; // Ensure YYYY-MM-DD
+                } catch (e) { 
+                    console.warn("Invalid isoDate string format:", data.isoDate, e); 
+                    paymentDate = "Invalid Date"; 
+                }
+            } else if (data.isoDate instanceof Timestamp) { 
+                paymentDate = format(data.isoDate.toDate(), "MMM dd, yyyy");
+                isoDateValue = data.isoDate.toDate().toISOString().split('T')[0];
+            }
+        } else if (data.createdAt instanceof Timestamp) { 
+            paymentDate = format(data.createdAt.toDate(), "MMM dd, yyyy");
+            isoDateValue = data.createdAt.toDate().toISOString().split('T')[0];
+        }
         
         return {
           id: docSnapshot.id, type: data.type || 'customer',
           relatedEntityName: data.relatedEntityName || 'N/A', relatedEntityId: data.relatedEntityId || '',
           relatedInvoiceId: data.relatedInvoiceId || null, date: paymentDate,
-          isoDate: typeof data.isoDate === 'string' ? data.isoDate : (data.isoDate instanceof Timestamp ? data.isoDate.toDate().toISOString().split('T')[0] : new Date().toISOString().split('T')[0]),
+          isoDate: isoDateValue,
           amountPaid: data.amountPaid || 0,
           displayAmountPaid: formatCurrency(data.amountPaid || 0),
           originalInvoiceAmount: data.originalInvoiceAmount || null,
@@ -213,7 +227,7 @@ export default function PaymentsPage() {
       let todayReceived = 0, todayPending = 0, todaySent = 0;
 
       fetchedPayments.forEach(p => {
-        const paymentIsoDateOnly = p.isoDate.split('T')[0];
+        const paymentIsoDateOnly = p.isoDate; // Already YYYY-MM-DD
         const isToday = paymentIsoDateOnly === todayISOStart; 
 
         if (p.type === 'customer') {
@@ -221,24 +235,28 @@ export default function PaymentsPage() {
             totalReceived += p.amountPaid;
             if (isToday) todayReceived += p.amountPaid;
           } else if (p.status === 'Partial') {
-            totalReceived += p.amountPaid; // Count amount paid for partial as received
+            totalReceived += p.amountPaid; 
             if (isToday) todayReceived += p.amountPaid;
             if (p.remainingBalanceOnInvoice && p.remainingBalanceOnInvoice > 0) {
               totalPending += p.remainingBalanceOnInvoice;
               if (isToday) todayPending += p.remainingBalanceOnInvoice;
             }
-          } else if (p.status === 'Pending' && p.originalInvoiceAmount) {
-            totalPending += p.originalInvoiceAmount;
-            if (isToday) todayPending += p.originalInvoiceAmount;
+          } else if (p.status === 'Pending' || p.status === 'Failed') { 
+            const pendingAmountForThisRecord = p.remainingBalanceOnInvoice !== null && p.remainingBalanceOnInvoice > 0 
+                                              ? p.remainingBalanceOnInvoice 
+                                              : (p.originalInvoiceAmount || 0);
+            if (pendingAmountForThisRecord > 0) {
+                totalPending += pendingAmountForThisRecord;
+                if (isToday) todayPending += pendingAmountForThisRecord;
+            }
           }
         } else { // supplier
           if (p.status === 'Completed' || p.status === 'Sent') {
             totalSent += p.amountPaid;
             if (isToday) todaySent += p.amountPaid;
           } else if (p.status === 'Partial') {
-             totalSent += p.amountPaid; // Count amount paid for partial as sent
+             totalSent += p.amountPaid; 
             if (isToday) todaySent += p.amountPaid;
-            // Supplier pending (owed by us) isn't typically shown as a primary "pending" metric on this page this way
           }
         }
       });
@@ -401,7 +419,7 @@ export default function PaymentsPage() {
                 className={
                     (payment.status === "Completed" || payment.status === "Received" || payment.status === "Sent") ? "bg-accent text-accent-foreground" :
                     payment.status === "Partial" ? "border-yellow-500 text-yellow-600 dark:border-yellow-400 dark:text-yellow-300 bg-transparent" :
-                    (payment.status === "Pending" || payment.status === "Failed") ? "border-blue-500 text-blue-600 dark:border-blue-400 dark:text-blue-300 bg-transparent" : // Adjusted "Pending" & "Failed"
+                    (payment.status === "Pending" || payment.status === "Failed") ? "border-blue-500 text-blue-600 dark:border-blue-400 dark:text-blue-300 bg-transparent" : 
                     ""
                 }
               >{payment.status}</Badge>
