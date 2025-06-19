@@ -21,16 +21,6 @@ import { createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase
 import { auth, db } from '@/lib/firebase/firebaseConfig';
 import { doc, setDoc, getDocs, collection, updateDoc, serverTimestamp, query, orderBy, Timestamp, where } from 'firebase/firestore'; 
 
-/**
- * @fileOverview Page for Admin to manage Store Manager accounts.
- * Allows Admin to:
- * - View a list of all managers from the 'users' collection in Firestore (filtered by role 'store_manager').
- * - Add new managers (creating their login credentials in Firebase Auth and profile in Firestore).
- * - Freeze/Unfreeze manager accounts (updates 'status' field in Firestore).
- * - Reset passwords for managers (using Firebase Auth's password reset email functionality).
- * Manager accounts are 'Frozen' rather than deleted to preserve historical data.
- */
-
 export interface Manager {
   id: string; 
   name: string;
@@ -38,6 +28,7 @@ export interface Manager {
   status: "Active" | "Frozen"; 
   authUid: string; 
   role: "store_manager"; 
+  companyId: string; 
   createdAt?: Timestamp; 
   updatedAt?: Timestamp;
 }
@@ -50,6 +41,15 @@ const managerSchema = z.object({
 
 type ManagerFormValues = z.infer<typeof managerSchema>;
 
+const getCookie = (name: string): string | undefined => {
+  if (typeof document === 'undefined') return undefined;
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  if (parts.length === 2) return parts.pop()?.split(';').shift();
+  return undefined;
+};
+
+
 export default function ManageManagersPage() {
   const [managers, setManagers] = useState<Manager[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -58,6 +58,7 @@ export default function ManageManagersPage() {
   const [isToggleStatusConfirmOpen, setIsToggleStatusConfirmOpen] = useState(false);
   const [managerToResetPassword, setManagerToResetPassword] = useState<Manager | null>(null);
   const [isResetPasswordConfirmOpen, setIsResetPasswordConfirmOpen] = useState(false);
+  const [currentAdminCompanyId, setCurrentAdminCompanyId] = useState<string | undefined>(undefined);
 
   const { toast } = useToast();
 
@@ -66,10 +67,31 @@ export default function ManageManagersPage() {
     defaultValues: { name: "", email: "", password: "" },
   });
 
+  useEffect(() => {
+    const companyIdFromCookie = getCookie('companyId');
+    if (companyIdFromCookie) {
+        setCurrentAdminCompanyId(companyIdFromCookie);
+    } else {
+        toast({ title: "Error", description: "Admin's Company ID not found. Please re-login as an admin.", variant: "destructive"});
+        setIsLoading(false); 
+    }
+  }, [toast]);
+
+
   const fetchManagers = useCallback(async () => {
+    if (!currentAdminCompanyId) {
+        setIsLoading(false);
+        setManagers([]); 
+        return;
+    }
     setIsLoading(true);
     try {
-      const q = query(collection(db, "users"), where("role", "==", "store_manager"), orderBy("name", "asc"));
+      const q = query(
+        collection(db, "users"), 
+        where("role", "==", "store_manager"), 
+        where("companyId", "==", currentAdminCompanyId), 
+        orderBy("name", "asc")
+      );
       const querySnapshot = await getDocs(q);
       const fetchedManagers = querySnapshot.docs.map(docSnapshot => {
         const data = docSnapshot.data();
@@ -79,7 +101,8 @@ export default function ManageManagersPage() {
           email: data.email,
           status: data.status || "Active", 
           authUid: data.authUid, 
-          role: data.role, 
+          role: data.role,
+          companyId: data.companyId, 
           createdAt: data.createdAt,
           updatedAt: data.updatedAt,
         } as Manager;
@@ -90,7 +113,7 @@ export default function ManageManagersPage() {
        if (error.code === 'failed-precondition') {
         toast({
             title: "Database Index Required",
-            description: `A query for managers failed. Please create the required Firestore index for 'users' (role ASC, name ASC). Check your browser's developer console for a Firebase link to create it, or visit the Firestore indexes page in your Firebase console.`,
+            description: `A query for managers failed. Please create the required Firestore index for 'users' (companyId ASC, role ASC, name ASC). Check your browser's developer console for a Firebase link.`,
             variant: "destructive",
             duration: 15000,
         });
@@ -100,34 +123,54 @@ export default function ManageManagersPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [toast]);
+  }, [toast, currentAdminCompanyId]);
 
   useEffect(() => {
-    fetchManagers();
-  }, [fetchManagers]);
+    if (currentAdminCompanyId) {
+        fetchManagers();
+    }
+  }, [fetchManagers, currentAdminCompanyId]);
 
   const handleAddManagerSubmit = async (values: ManagerFormValues) => {
-    let newUserId = null; // To store UID for logging in catch block if Auth creation succeeds but Firestore fails
+    if (!currentAdminCompanyId) {
+        toast({ title: "Error", description: "Cannot add manager: Admin company ID is missing. Please re-login.", variant: "destructive"});
+        return;
+    }
+
+    let newUserId = null; 
     try {
+      const managerEmailQuery = query(collection(db, "users"), 
+        where("email", "==", values.email),
+        where("companyId", "==", currentAdminCompanyId), // Check only within the same company
+        where("role", "==", "store_manager")
+      );
+      const managerEmailSnapshot = await getDocs(managerEmailQuery);
+      if (!managerEmailSnapshot.empty) {
+          form.setError("email", {type: "manual", message: "This email is already in use by another manager in your company."});
+          return;
+      }
+
+
       console.log(`ManageManagersPage: Attempting to create Firebase Auth user for email: ${values.email}`);
       const userCredential = await createUserWithEmailAndPassword(auth, values.email, values.password);
       newUserId = userCredential.user.uid;
       console.log(`ManageManagersPage: Firebase Auth user created successfully. UID: ${newUserId}`);
 
       if (!newUserId) {
-        // This case should ideally be caught by createUserWithEmailAndPassword throwing an error
         console.error("ManageManagersPage: Firebase Auth user UID is unexpectedly null or empty after creation.");
         throw new Error("Firebase Auth user UID is unexpectedly null or empty after creation.");
       }
       
-      const newManagerData = { 
+      // Ensure Manager interface matches this structure, especially companyId
+      const newManagerData: Omit<Manager, 'id' | 'createdAt' | 'updatedAt'> &amp; { createdAt: Timestamp, updatedAt: Timestamp } = { 
         name: values.name, 
         email: values.email, 
         status: "Active", 
         authUid: newUserId, 
         role: "store_manager", 
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+        companyId: currentAdminCompanyId, 
+        createdAt: serverTimestamp() as Timestamp,
+        updatedAt: serverTimestamp() as Timestamp,
       };
       
       const userDocRef = doc(db, "users", newUserId);
@@ -146,7 +189,8 @@ export default function ManageManagersPage() {
       console.error(`ManageManagersPage: Error adding manager for email ${values.email}. Auth UID (if created): ${newUserId || 'N/A'}. Full Error:`, error);
       let errorMessage = `Failed to add manager. Code: ${error.code || 'UNKNOWN'}. Message: ${error.message || 'An unexpected error occurred.'}`;
       if (error.code === 'auth/email-already-in-use') {
-        errorMessage = "This email address is already registered. Please use a different email.";
+        errorMessage = "This email address is already registered globally. Please use a different email.";
+         form.setError("email", { type: "manual", message: errorMessage });
       } else if (error.code === 'auth/weak-password') {
         errorMessage = "The password is too weak. Please use a stronger password (at least 6 characters).";
       }
@@ -201,18 +245,31 @@ export default function ManageManagersPage() {
     }
   };
 
-  if (isLoading && managers.length === 0) {
-    return <PageHeader title="Manage Managers" description="Loading manager data from database..." icon={UserCog} />;
+  if (isLoading && currentAdminCompanyId) {
+    return <PageHeader title="Manage Managers" description="Loading manager data for your company..." icon={UserCog} />;
   }
+  
+  if (!currentAdminCompanyId && !isLoading) {
+    return (
+        <PageHeader title="Manage Managers" description="Company ID not found. Please ensure you are logged in correctly as an Admin." icon={UserCog}>
+            <Card className="mt-4">
+                <CardContent className="pt-6">
+                    <p className="text-destructive text-center">Could not retrieve your company information. Please try logging out and back in.</p>
+                </CardContent>
+            </Card>
+        </PageHeader>
+    );
+  }
+
 
   return (
     <>
       <PageHeader
         title="Manage Managers"
-        description="Administer Store Manager accounts, permissions, and status."
+        description="Administer Store Manager accounts for your company."
         icon={UserCog}
         actions={
-          <Button onClick={() => { form.reset(); setIsAddManagerDialogOpen(true); }} className="mt-4 sm:mt-0">
+          <Button onClick={() => { form.reset(); setIsAddManagerDialogOpen(true); }} className="mt-4 sm:mt-0" disabled={!currentAdminCompanyId}>
             <PlusCircle className="mr-2 h-4 w-4" />
             Add New Manager
           </Button>
@@ -227,7 +284,7 @@ export default function ManageManagersPage() {
           <DialogHeader>
             <DialogTitle>Add New Store Manager</DialogTitle>
             <DialogDescription>
-              Fill in the details to create a new Store Manager account. The email will be their login ID.
+              Fill in the details to create a new Store Manager account for your company. The email will be their login ID.
             </DialogDescription>
           </DialogHeader>
           <Form {...form}>
@@ -306,17 +363,17 @@ export default function ManageManagersPage() {
 
       <Card className="shadow-lg rounded-xl">
         <CardHeader>
-          <CardTitle className="font-headline text-foreground">Manager List</CardTitle>
-          <CardDescription>A list of all store managers and their account status from Firestore.</CardDescription>
+          <CardTitle className="font-headline text-foreground">Your Company's Manager List</CardTitle>
+          <CardDescription>A list of all store managers for your company and their account status from Firestore.</CardDescription>
         </CardHeader>
         <CardContent>
-          {isLoading && managers.length === 0 ? (
+          {isLoading && managers.length === 0 && currentAdminCompanyId ? (
             <div className="text-center py-10 text-muted-foreground">Loading managers...</div>
-          ) : !isLoading && managers.length === 0 ? ( 
+          ) : !isLoading && managers.length === 0 && currentAdminCompanyId ? ( 
             <div className="flex flex-col items-center justify-center py-10 text-center">
                 <UsersIcon className="h-12 w-12 sm:h-16 sm:w-16 text-muted-foreground mb-4" />
-                <p className="text-lg sm:text-xl font-semibold text-muted-foreground">No Managers Found</p>
-                <p className="text-xs sm:text-sm text-muted-foreground mb-6">Create manager accounts to grant access to store operations.</p>
+                <p className="text-lg sm:text-xl font-semibold text-muted-foreground">No Managers Found For Your Company</p>
+                <p className="text-xs sm:text-sm text-muted-foreground mb-6">Create manager accounts to grant access to store operations for your company.</p>
                 <Button onClick={() => { form.reset(); setIsAddManagerDialogOpen(true); }}>
                     <PlusCircle className="mr-2 h-4 w-4" /> Add New Manager
                 </Button>
@@ -375,4 +432,4 @@ export default function ManageManagersPage() {
     </>
   );
 }
-
+    

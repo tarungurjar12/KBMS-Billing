@@ -2,24 +2,18 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation'; // Added useSearchParams
+import Link from 'next/link'; // Added Link
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Building } from 'lucide-react';
+import { Building, UserPlus } from 'lucide-react'; // Added UserPlus
 import { auth, db } from '@/lib/firebase/firebaseConfig';
 import { signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
-import type { UserProfile } from '@/app/(main)/my-profile/page'; // Import UserProfile for role type
-
-/**
- * @fileOverview Login page for user authentication.
- * Handles user login using Firebase email/password authentication.
- * Fetches user role from Firestore after successful auth and sets a 'userRole' cookie.
- * Redirects users to appropriate dashboards upon successful login.
- * Also redirects already authenticated users away from the login page.
- */
+import type { UserProfile } from '@/app/(main)/my-profile/page';
+import { useToast } from "@/hooks/use-toast"; // Added useToast
 
 const setCookie = (name: string, value: string, days: number) => {
   let expires = "";
@@ -31,8 +25,7 @@ const setCookie = (name: string, value: string, days: number) => {
   if (typeof document !== 'undefined') {
     document.cookie = name + "=" + (value || "") + expires + "; path=/";
     console.log(`LoginPage: Cookie set: ${name}=${value}`);
-    // Dispatch a custom event to notify other components (like SidebarNav) about role change
-    window.dispatchEvent(new CustomEvent('userRoleChanged'));
+    window.dispatchEvent(new CustomEvent('userSessionChanged')); // More generic event
   } else {
     console.warn("LoginPage: setCookie called when document is undefined.");
   }
@@ -53,7 +46,7 @@ const deleteCookie = (name: string) => {
     if (typeof document !== 'undefined') {
         document.cookie = name + '=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;';
         console.log(`LoginPage: Cookie deleted: ${name}`);
-        window.dispatchEvent(new CustomEvent('userRoleChanged')); // Notify of role removal
+        window.dispatchEvent(new CustomEvent('userSessionChanged'));
     } else {
         console.warn("LoginPage: deleteCookie called when document is undefined.");
     }
@@ -61,6 +54,8 @@ const deleteCookie = (name: string) => {
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const { toast } = useToast();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -68,34 +63,55 @@ export default function LoginPage() {
   const [authChecked, setAuthChecked] = useState(false);
 
   useEffect(() => {
+    const registrationSuccess = searchParams.get('registrationSuccess');
+    if (registrationSuccess === 'true') {
+        toast({
+            title: "Registration Successful!",
+            description: "You can now log in with your new admin account.",
+            variant: "default", 
+        });
+        // Clean the query param from URL
+        router.replace('/login', { scroll: false });
+    }
+  }, [searchParams, toast, router]);
+
+  useEffect(() => {
     console.log("LoginPage Mount/Router Change: Subscribing to onAuthStateChanged for initial auth check.");
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       console.log("LoginPage Initial Auth Check: Firebase user state:", user ? user.email : "null");
       if (user) {
         let userRole = getCookie('userRole') as UserProfile['role'];
+        let companyId = getCookie('companyId');
         
-        if (!userRole) {
+        if (!userRole || !companyId) { 
             try {
                 const userDocRef = doc(db, "users", user.uid);
                 const userDocSnap = await getDoc(userDocRef);
                 if (userDocSnap.exists()) {
-                    userRole = userDocSnap.data()?.role as UserProfile['role'];
+                    const userData = userDocSnap.data();
+                    userRole = userData?.role as UserProfile['role'];
+                    companyId = userData?.companyId as string;
                     if (userRole) setCookie('userRole', userRole, 1); 
+                    if (companyId) setCookie('companyId', companyId, 1);
                 }
             } catch (e) {
-                console.error("LoginPage Initial Auth Check: Error fetching user role from Firestore", e);
+                console.error("LoginPage Initial Auth Check: Error fetching user data from Firestore", e);
             }
         }
         
-        console.log("LoginPage Initial Auth Check: User is authenticated. Role:", userRole);
-        if (userRole === 'admin') {
-          console.log("LoginPage Initial Auth Check: Admin identified. Redirecting to /");
-          router.push('/');
-        } else if (userRole === 'store_manager') {
-          console.log("LoginPage Initial Auth Check: Manager identified. Redirecting to /store-dashboard");
-          router.push('/store-dashboard');
+        console.log("LoginPage Initial Auth Check: User is authenticated. Role:", userRole, "CompanyID:", companyId);
+        if (userRole && companyId) { 
+            if (userRole === 'admin') {
+                console.log("LoginPage Initial Auth Check: Admin identified. Redirecting to /");
+                router.push('/');
+            } else if (userRole === 'store_manager') {
+                console.log("LoginPage Initial Auth Check: Manager identified. Redirecting to /store-dashboard");
+                router.push('/store-dashboard');
+            } else {
+                 console.log("LoginPage Initial Auth Check: Firebase user exists, but no valid role/companyId combination. Allowing login attempt or staying on page.");
+            }
         } else {
-          console.log("LoginPage Initial Auth Check: Firebase user exists, but no valid role. Allowing login attempt.");
+             console.log("LoginPage Initial Auth Check: User authenticated with Firebase but role/companyId missing from cookies/DB. Staying on login page to re-establish.");
         }
       } else {
         console.log("LoginPage Initial Auth Check: No active Firebase user session.");
@@ -139,16 +155,20 @@ export default function LoginPage() {
         }
 
         let userRole: UserProfile['role'] | undefined = undefined;
+        let companyId: string | undefined = undefined;
 
         if (userDocSnap?.exists()) { 
-          userRole = userDocSnap.data()?.role as UserProfile['role'];
-          console.log(`LoginPage handleLogin: Fetched role from Firestore: '${userRole}' for UID: ${user.uid}`);
+          const userData = userDocSnap.data();
+          userRole = userData?.role as UserProfile['role'];
+          companyId = userData?.companyId as string; 
+          console.log(`LoginPage handleLogin: Fetched role: '${userRole}', companyId: '${companyId}' from Firestore for UID: ${user.uid}`);
         } else if (!firestoreError) { 
           console.warn(`LoginPage handleLogin: No user document found in Firestore for UID: ${user.uid}.`);
         }
         
-        if (userRole) {
+        if (userRole && companyId) { 
           setCookie('userRole', userRole, 1); 
+          setCookie('companyId', companyId, 1); 
 
           if (userRole === 'admin') {
             console.log("LoginPage handleLogin: Redirecting admin to /");
@@ -161,21 +181,24 @@ export default function LoginPage() {
             setError('Your account has an unrecognized role. Please contact support.');
             await signOut(auth); 
             deleteCookie('userRole'); 
+            deleteCookie('companyId');
           }
         } else {
           const errorDetail = firestoreError 
             ? `(Firestore Error: ${firestoreError.code || 'UnknownCode'} - ${firestoreError.message || 'Unknown Firestore Error'})` 
-            : '(Document not found or role field missing in Firestore)';
-          console.error('LoginPage handleLogin: User role could not be determined from Firestore for UID:', user.uid, errorDetail);
+            : `(Document not found or role/companyId field missing in Firestore for UID: ${user.uid})`;
+          console.error('LoginPage handleLogin: User role or companyId could not be determined from Firestore.', errorDetail);
           setError(`Your account is not configured correctly. ${errorDetail}. Please contact support.`);
           await signOut(auth); 
           deleteCookie('userRole');
+          deleteCookie('companyId');
         }
       } else {
         console.error('LoginPage handleLogin: Firebase user object or UID is missing after successful sign-in.');
         setError('An unexpected error occurred after login. Please try again.');
         if (auth.currentUser) await signOut(auth);
         deleteCookie('userRole');
+        deleteCookie('companyId');
       }
     } catch (signInError: any) {
       console.error("LoginPage handleLogin: Firebase Sign-In Error. Code:", signInError.code, "Message:", signInError.message);
@@ -203,7 +226,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background p-4">
+    <div className="flex min-h-screen flex-col items-center justify-center bg-background p-4">
       <Card className="w-full max-w-md shadow-2xl rounded-xl">
         <CardHeader className="space-y-1 text-center">
           <div className="flex justify-center items-center mb-4">
@@ -223,12 +246,21 @@ export default function LoginPage() {
           </div>
           {error && <p className="text-sm text-destructive text-center pt-2">{error}</p>}
         </CardContent>
-        <CardFooter>
+        <CardFooter className="flex flex-col gap-4">
           <Button className="w-full" onClick={handleLogin} disabled={loading}>
             {loading ? 'Logging in...' : 'Login'}
           </Button>
         </CardFooter>
       </Card>
+      <div className="mt-6 text-center">
+          <p className="text-sm text-muted-foreground">
+            Need to set up your company?{' '}
+            <Link href="/register-admin" className="font-medium text-primary hover:underline">
+              Create Admin Account
+            </Link>
+          </p>
+      </div>
     </div>
   );
 }
+    

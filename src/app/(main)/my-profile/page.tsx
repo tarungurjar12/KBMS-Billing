@@ -14,30 +14,34 @@ import { auth, db } from '@/lib/firebase/firebaseConfig';
 import { onAuthStateChanged, updatePassword, EmailAuthProvider, reauthenticateWithCredential, User as FirebaseUser } from "firebase/auth";
 import { doc, getDoc, setDoc, serverTimestamp, updateDoc, Timestamp, collection, query, where, limit, getDocs } from "firebase/firestore"; 
 
-/**
- * @fileOverview My Profile page for authenticated users (Admin and Store Manager).
- * Admins can additionally manage company details.
- * Managers view company details as read-only, fetched from an admin's profile.
- */
-
 export interface UserProfile {
   uid: string; 
+  authUid?: string; 
   name: string; 
   email: string; 
   contactNumber: string; 
   role?: 'admin' | 'store_manager'; 
-  // Company details (for admin role)
-  companyName?: string;
-  companyAddress?: string;
-  companyContact?: string;
-  companyGstin?: string;
-  companyLogoUrl?: string;
-  // Timestamps from Firestore
+  companyId: string; 
+
+  companyName?: string | null; // Optional for general profile, but expected for admin
+  companyAddress?: string | null;
+  companyContact?: string | null; 
+  companyGstin?: string | null;
+  companyLogoUrl?: string | null;
+  
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
-  status?: string; // if used for managers
-  authUid?: string; // if used for managers
+  status?: string; 
 }
+
+const getCookie = (name: string): string | undefined => {
+  if (typeof document === 'undefined') return undefined;
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  if (parts.length === 2) return parts.pop()?.split(';').shift();
+  return undefined;
+};
+
 
 export default function MyProfilePage() {
   const { toast } = useToast();
@@ -45,23 +49,19 @@ export default function MyProfilePage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isUpdating, setIsUpdating] = useState(false);
 
-  // Personal details state
   const [name, setName] = useState(""); 
   const [contactNumber, setContactNumber] = useState("");
 
-  // Company details state (used by admin for editing, and as fallback)
   const [companyName, setCompanyName] = useState("");
   const [companyAddress, setCompanyAddress] = useState("");
   const [companyContact, setCompanyContact] = useState("");
   const [companyGstin, setCompanyGstin] = useState("");
   const [companyLogoUrl, setCompanyLogoUrl] = useState("");
 
-  // State to hold company details fetched from Admin, for Manager's display
   const [companyDetailsForDisplay, setCompanyDetailsForDisplay] = useState<Partial<UserProfile>>({
     companyName: "", companyAddress: "", companyContact: "", companyGstin: "", companyLogoUrl: ""
   });
 
-  // Password change state
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
@@ -74,15 +74,18 @@ export default function MyProfilePage() {
           const userDoc = await getDoc(userDocRef);
           
           let profileData: UserProfile | null = null;
+          let currentCompanyIdFromCookie = getCookie('companyId');
 
           if (userDoc.exists()) {
             const userData = userDoc.data();
             profileData = {
               uid: firebaseUser.uid,
+              authUid: firebaseUser.uid,
               email: firebaseUser.email || "N/A",
               name: userData.name || firebaseUser.displayName || "User", 
               contactNumber: userData.contactNumber || "",
               role: userData.role, 
+              companyId: userData.companyId || currentCompanyIdFromCookie || (userData.role === 'admin' ? firebaseUser.uid : ''), 
               companyName: userData.companyName || "",
               companyAddress: userData.companyAddress || "",
               companyContact: userData.companyContact || "",
@@ -91,45 +94,75 @@ export default function MyProfilePage() {
               createdAt: userData.createdAt,
               updatedAt: userData.updatedAt,
               status: userData.status,
-              authUid: userData.authUid,
             };
-          } else {
-            let determinedRole: 'admin' | 'store_manager' | undefined = undefined;
-            if (firebaseUser.email === 'admin@kbms.com') { // Special handling for primary admin email
+             if (profileData.companyId && profileData.companyId !== currentCompanyIdFromCookie && typeof document !== 'undefined') {
+                document.cookie = `companyId=${profileData.companyId}; path=/; max-age=${60*60*24*7}`;
+                window.dispatchEvent(new CustomEvent('userSessionChanged'));
+             }
+
+
+          } else { 
+            console.warn(`MyProfile: User document for ${firebaseUser.uid} not found. Attempting to create basic profile.`);
+            let determinedRole: 'admin' | 'store_manager' | undefined = getCookie('userRole') as UserProfile['role'] || undefined;
+            
+            // If role still unknown, try a default for safety (e.g. specific admin email)
+            if (!determinedRole && firebaseUser.email === 'admin@kbms.com') { 
               determinedRole = 'admin';
             }
-            // For other users, role might be set during manager creation, or needs to be assigned.
-            // If creating profile here and role is unknown, it remains undefined.
+
+            const effectiveCompanyId = currentCompanyIdFromCookie || (determinedRole === 'admin' ? firebaseUser.uid : ''); 
+            
+            if (!effectiveCompanyId && determinedRole === 'store_manager') {
+                console.error("MyProfile: Critical - Cannot create profile for manager without a companyId. User should re-login or admin should check manager setup.");
+                toast({title: "Profile Initialization Error", description: "Manager profile cannot be set up without a company. Please re-login or contact admin.", variant: "destructive"});
+                setIsLoading(false);
+                return;
+            }
+             if (!effectiveCompanyId && determinedRole === 'admin') {
+                console.warn("MyProfile: Admin's companyId not found in cookie, defaulting to UID for new admin setup.");
+            }
+
 
             profileData = {
-              uid: firebaseUser.uid,
+              uid: firebaseUser.uid, authUid: firebaseUser.uid,
               email: firebaseUser.email || "N/A",
               name: firebaseUser.displayName || firebaseUser.email || "User", 
               contactNumber: "", role: determinedRole, 
+              companyId: effectiveCompanyId,
+              // For a new admin, these company details will be blank initially and they'll fill them in.
               companyName: "", companyAddress: "", companyContact: "", companyGstin: "", companyLogoUrl: "",
             };
             const dataToSet: Partial<UserProfile> = {
-                name: profileData.name, email: profileData.email, uid: firebaseUser.uid,
+                name: profileData.name, email: profileData.email, uid: firebaseUser.uid, authUid: firebaseUser.uid,
+                companyId: profileData.companyId, // Must have companyId
                 createdAt: serverTimestamp() as Timestamp, updatedAt: serverTimestamp() as Timestamp,
-                ...(determinedRole && { role: determinedRole }) // Only set role if determined
+                ...(determinedRole && { role: determinedRole }) 
             };
-            await setDoc(userDocRef, dataToSet, { merge: true });
-            toast({ title: "Profile Initialized", description: `Your basic profile${determinedRole ? ` with role '${determinedRole}'` : ''} has been created.`, variant: "default"});
+            // Only if companyId is present, attempt to set the doc
+            if (profileData.companyId) {
+                await setDoc(userDocRef, dataToSet, { merge: true });
+                toast({ title: "Profile Initialized", description: `Your basic profile has been set up.`, variant: "default"});
+            } else if (determinedRole === 'admin') {
+                 // This case implies a new admin whose companyId is their UID, which should be fine
+                await setDoc(userDocRef, dataToSet, { merge: true });
+                toast({ title: "Admin Profile Initialized", description: `Your admin profile has been set up. Please fill in company details.`, variant: "default"});
+            }
           }
 
           setUserProfile(profileData);
-          setName(profileData.name); 
-          setContactNumber(profileData.contactNumber); 
+          setName(profileData?.name || ""); 
+          setContactNumber(profileData?.contactNumber || ""); 
 
-          if (profileData.role === 'admin') {
+          if (profileData?.role === 'admin') {
             setCompanyName(profileData.companyName || "");
             setCompanyAddress(profileData.companyAddress || "");
             setCompanyContact(profileData.companyContact || "");
             setCompanyGstin(profileData.companyGstin || "");
             setCompanyLogoUrl(profileData.companyLogoUrl || "");
-          } else if (profileData.role === 'store_manager') {
+          } else if (profileData?.role === 'store_manager' && profileData.companyId) {
             try {
-              const adminQuery = query(collection(db, "users"), where("role", "==", "admin"), limit(1));
+              // Fetch company details from the admin user associated with this manager's companyId
+              const adminQuery = query(collection(db, "users"), where("role", "==", "admin"), where("companyId", "==", profileData.companyId), limit(1));
               const adminSnapshot = await getDocs(adminQuery);
               if (!adminSnapshot.empty) {
                 const adminData = adminSnapshot.docs[0].data();
@@ -141,9 +174,9 @@ export default function MyProfilePage() {
                   companyLogoUrl: adminData.companyLogoUrl || "",
                 });
               } else {
-                console.warn("MyProfilePage: No admin user found to fetch company details for manager view.");
-                toast({ title: "Company Info Unavailable", description: "Could not load company details. Admin may need to set them up.", variant: "default" });
-                setCompanyDetailsForDisplay({ companyName: "N/A", companyAddress: "N/A", companyContact: "N/A", companyGstin: "N/A", companyLogoUrl: "" }); // Explicitly clear/set to N/A
+                console.warn(`MyProfilePage: No admin user found with companyId ${profileData.companyId} for manager view.`);
+                toast({ title: "Company Info Unavailable", description: "Could not load company details. Admin may need to set them up or check company ID.", variant: "default" });
+                setCompanyDetailsForDisplay({ companyName: "N/A", companyAddress: "N/A", companyContact: "N/A", companyGstin: "N/A", companyLogoUrl: "" });
               }
             } catch (adminFetchError) {
               console.error("Error fetching admin company details for manager view:", adminFetchError);
@@ -157,6 +190,7 @@ export default function MyProfilePage() {
             toast({ title: "Profile Load Error", description: "Could not load your full profile details.", variant: "destructive"});
             const fallbackProfile: UserProfile = {
               uid: firebaseUser.uid, email: firebaseUser.email || "N/A", name: firebaseUser.displayName || firebaseUser.email || "User", contactNumber: "", role: undefined,
+              companyId: currentCompanyIdFromCookie || firebaseUser.uid, 
               companyName: "", companyAddress: "", companyContact: "", companyGstin: "", companyLogoUrl: "",
             };
             setUserProfile(fallbackProfile); setName(fallbackProfile.name); setContactNumber(fallbackProfile.contactNumber);
@@ -181,6 +215,12 @@ export default function MyProfilePage() {
       setIsUpdating(false);
       return;
     }
+     if (!userProfile.companyId) {
+      toast({ title: "Profile Error", description: "Company ID is missing from your profile. Cannot update.", variant: "destructive" });
+      setIsUpdating(false);
+      return;
+    }
+
 
     const isEffectivelyAdmin = userProfile.role === 'admin';
 
@@ -204,18 +244,20 @@ export default function MyProfilePage() {
           updatedAt: serverTimestamp() as Timestamp, 
           email: userProfile.email, 
           role: userProfile.role,   
-          uid: userProfile.uid,     
+          uid: userProfile.uid,
+          authUid: userProfile.authUid || firebaseUser.uid,
+          companyId: userProfile.companyId, 
         };
         
         if (isEffectivelyAdmin) {
-            profileDataToSave.companyName = companyName;
-            profileDataToSave.companyAddress = companyAddress;
-            profileDataToSave.companyContact = companyContact;
-            profileDataToSave.companyGstin = companyGstin;
-            profileDataToSave.companyLogoUrl = companyLogoUrl;
+            profileDataToSave.companyName = companyName || null;
+            profileDataToSave.companyAddress = companyAddress || null;
+            profileDataToSave.companyContact = companyContact || null;
+            profileDataToSave.companyGstin = companyGstin || null;
+            profileDataToSave.companyLogoUrl = companyLogoUrl || null;
         }
         
-        await setDoc(userDocRef, profileDataToSave, { merge: true }); // Use setDoc with merge:true
+        await setDoc(userDocRef, profileDataToSave, { merge: true }); 
         
         setUserProfile(prev => prev ? {
             ...prev, 
@@ -261,7 +303,7 @@ export default function MyProfilePage() {
       }
     }
 
-    if (profileInfoUpdated && passwordChanged) toast({ title: "Profile & Password Updated", description: "Information and password updated." });
+    if (profileInfoUpdated && passwordChanged) toast({ title: "Profile &amp; Password Updated", description: "Information and password updated." });
     else if (profileInfoUpdated) toast({ title: "Profile Updated", description: "Your information has been updated." });
     else if (passwordChanged) toast({ title: "Password Changed", description: "Password successfully updated." });
     else if (!hasPersonalChanges && !hasCompanyChanges && !newPassword) toast({ title: "No Changes", description: "No information was changed." });
@@ -281,7 +323,7 @@ export default function MyProfilePage() {
 
   return (
     <>
-      <PageHeader title="My Profile" description="View and update your personal & company information." icon={UserCircle}/>
+      <PageHeader title="My Profile" description="View and update your personal &amp; company information." icon={UserCircle}/>
       <form onSubmit={handleUpdateProfile}>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <Card className="md:col-span-1 shadow-lg rounded-xl">
@@ -293,13 +335,14 @@ export default function MyProfilePage() {
                         <Label htmlFor="email" className="flex items-center text-sm"><Mail className="mr-2 h-4 w-4 text-muted-foreground"/>Email (Login ID)</Label>
                         <Input id="email" value={userProfile.email} disabled readOnly className="bg-muted/50 text-sm"/>
                         {userProfile.role && <p className="text-xs text-muted-foreground pt-1">Role: <span className="font-semibold capitalize">{userProfile.role.replace('_', ' ')}</span></p>}
+                        {userProfile.companyId && <p className="text-xs text-muted-foreground pt-1">Company ID: <span className="font-semibold">{userProfile.companyId}</span></p>}
                     </div>
                     <div className="space-y-1.5">
                         <Label htmlFor="name" className="flex items-center text-sm"><UserCircle className="mr-2 h-4 w-4 text-muted-foreground"/>Display Name</Label>
                         <Input id="name" placeholder="Your display name" value={name} onChange={(e) => setName(e.target.value)} disabled={isUpdating} autoComplete="name" className="text-sm"/>
                     </div>
                     <div className="space-y-1.5">
-                        <Label htmlFor="contactNumber" className="flex items-center text-sm"><Phone className="mr-2 h-4 w-4 text-muted-foreground"/>Contact Number</Label>
+                        <Label htmlFor="contactNumber" className="flex items-center text-sm"><Phone className="mr-2 h-4 w-4 text-muted-foreground"/>Personal Contact Number</Label>
                         <Input id="contactNumber" placeholder="Your contact number" value={contactNumber} onChange={(e) => setContactNumber(e.target.value)} disabled={isUpdating} autoComplete="tel" className="text-sm"/>
                     </div>
                 </CardContent>
@@ -326,10 +369,10 @@ export default function MyProfilePage() {
                             />
                         </div>
                         <div className="space-y-1.5">
-                            <Label htmlFor="companyContact" className="flex items-center text-sm"><Phone className="mr-2 h-4 w-4 text-muted-foreground"/>Company Contact</Label>
+                            <Label htmlFor="companyContact" className="flex items-center text-sm"><Phone className="mr-2 h-4 w-4 text-muted-foreground"/>Company Contact Phone</Label>
                             <Input 
                                 id="companyContact" 
-                                placeholder="Company Phone or Email" 
+                                placeholder="Company Phone" 
                                 value={isEffectivelyAdmin ? companyContact : (companyDetailsForDisplay.companyContact || "")} 
                                 onChange={(e) => isEffectivelyAdmin && setCompanyContact(e.target.value)} 
                                 disabled={isUpdating || !isEffectivelyAdmin} className="text-sm"
@@ -407,4 +450,4 @@ export default function MyProfilePage() {
     </>
   );
 }
-
+    
