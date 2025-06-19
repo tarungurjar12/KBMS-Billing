@@ -97,7 +97,7 @@ export default function LoginPage() {
                     if (userRole) setCookie('userRole', userRole, 1); 
                     if (companyId) setCookie('companyId', companyId, 1);
                 }
-            } catch (e) {
+            } catch (e: any) {
                 console.error("LoginPage Initial Auth Check: Error fetching user data from Firestore", e);
             }
         }
@@ -125,7 +125,7 @@ export default function LoginPage() {
       console.log("LoginPage Unmount: Unsubscribing from onAuthStateChanged.");
       unsubscribe();
     };
-  }, [router]); // Removed searchParams from dependency array as it's only used in the other useEffect
+  }, [router]); 
 
   const handleLogin = async () => {
     console.log("LoginPage handleLogin: Attempting login for email:", email);
@@ -239,7 +239,10 @@ export default function LoginPage() {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
             <DropdownMenuItem 
-              onClick={() => router.push('/register-admin')} 
+              onClick={() => {
+                console.log("LoginPage: 'Create Admin Account' clicked. Attempting to navigate to /register-admin");
+                router.push('/register-admin');
+              }} 
               className="flex items-center w-full cursor-pointer"
             >
               <UserPlus className="mr-2 h-4 w-4" />
@@ -281,6 +284,5 @@ export default function LoginPage() {
     </div>
   );
 }
-
 
     
