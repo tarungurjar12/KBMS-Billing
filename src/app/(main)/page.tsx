@@ -11,8 +11,8 @@ import { db } from '@/lib/firebase/firebaseConfig';
 import { useEffect, useState, useCallback } from 'react';
 import { format, parseISO } from 'date-fns';
 import { useToast } from "@/hooks/use-toast";
-import type { PaymentRecord } from './payments/page'; 
-import type { LedgerEntry } from './ledger/page'; 
+import type { PaymentRecord } from './payments/page';
+import type { LedgerEntry, LedgerItem } from './ledger/page'; // Import LedgerItem for strong typing
 
 /**
  * @fileOverview Admin Dashboard page for the KBMS Billing application.
@@ -45,9 +45,9 @@ export default function AdminDashboardPage() {
     { title: "Pending Invoices", value: "0", icon: FileText, dataAiHint: "document paper", isLoading: true, link: "/billing?status=Pending" },
     { title: "Low Stock Items (<50)", value: "0", icon: PackageMinus, dataAiHint: "box inventory alert", isLoading: true, link: "/stock?filter=low" },
   ]);
-  const [recentSalesActivity, setRecentSalesActivity] = useState<LedgerEntry[]>([]); // Changed to LedgerEntry[]
+  const [recentSalesActivity, setRecentSalesActivity] = useState<LedgerEntry[]>([]);
   const [isLoadingSalesChart, setIsLoadingSalesChart] = useState(true);
-  const [isLoadingMetrics, setIsLoadingMetrics] = useState(true); 
+  const [isLoadingMetrics, setIsLoadingMetrics] = useState(true);
 
   const LOW_STOCK_THRESHOLD = 50;
   const formatCurrency = (num: number): string => `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -60,7 +60,7 @@ export default function AdminDashboardPage() {
       );
     };
 
-    setIsLoadingMetrics(true); 
+    setIsLoadingMetrics(true);
     setMetrics(prevMetrics => prevMetrics.map(m => ({ ...m, isLoading: true })));
     setIsLoadingSalesChart(true);
 
@@ -84,7 +84,7 @@ export default function AdminDashboardPage() {
 
       const paymentsQuery = query(collection(db, "payments"),
         where("type", "==", "customer"),
-        where("status", "in", ["Completed", "Received", "Partial"]) 
+        where("status", "in", ["Completed", "Received", "Partial"])
       );
       const paymentsSnapshot = await getDocs(paymentsQuery);
       let totalRevenueFromPayments = 0;
@@ -95,13 +95,45 @@ export default function AdminDashboardPage() {
       updateMetricState("Total Revenue (from Payments)", { value: formatCurrency(totalRevenueFromPayments) });
 
       const recentSalesQuery = query(
-        collection(db, "ledgerEntries"), 
-        where("type", "==", "sale"), // Focus on sales ledger entries
-        orderBy("createdAt", "desc"), 
+        collection(db, "ledgerEntries"),
+        where("type", "==", "sale"),
+        where("entryPurpose", "==", "Transactional"),
+        orderBy("createdAt", "desc"),
         limit(5)
       );
       const recentSalesSnapshot = await getDocs(recentSalesQuery);
-      const salesData = recentSalesSnapshot.docs.map(doc => doc.data() as LedgerEntry);
+      const salesData = recentSalesSnapshot.docs.map(doc => {
+        const data = doc.data();
+        // Ensure all fields from LedgerEntry are mapped, especially 'id'
+        return {
+          id: doc.id, // Crucial fix: map document ID
+          date: data.date,
+          type: data.type,
+          entryPurpose: data.entryPurpose,
+          entityType: data.entityType,
+          entityId: data.entityId,
+          entityName: data.entityName,
+          items: (data.items || []) as LedgerItem[], // Ensure items is an array and typed
+          subTotal: data.subTotal,
+          gstApplied: data.gstApplied,
+          taxAmount: data.taxAmount,
+          grandTotal: data.grandTotal,
+          paymentAmount: data.paymentAmount,
+          paymentMethod: data.paymentMethod,
+          paymentStatus: data.paymentStatus,
+          notes: data.notes,
+          createdByUid: data.createdByUid,
+          createdByName: data.createdByName,
+          createdAt: data.createdAt,
+          updatedAt: data.updatedAt,
+          updatedByUid: data.updatedByUid,
+          updatedByName: data.updatedByName,
+          originalTransactionAmount: data.originalTransactionAmount,
+          amountPaidNow: data.amountPaidNow,
+          remainingAmount: data.remainingAmount,
+          associatedPaymentRecordId: data.associatedPaymentRecordId,
+        } as LedgerEntry;
+      });
       setRecentSalesActivity(salesData);
 
     } catch (error: any) {
@@ -117,8 +149,8 @@ export default function AdminDashboardPage() {
       }
       setMetrics(prevMetrics => prevMetrics.map(m => ({ ...m, value: m.isLoading ? "Error" : m.value, isLoading: false })));
     } finally {
-       setMetrics(prevMetrics => prevMetrics.map(m => ({...m, isLoading: false}))); 
-       setIsLoadingMetrics(false); 
+       setMetrics(prevMetrics => prevMetrics.map(m => ({...m, isLoading: false})));
+       setIsLoadingMetrics(false);
       setIsLoadingSalesChart(false);
     }
   }, [toast]);
@@ -169,7 +201,7 @@ export default function AdminDashboardPage() {
                     </p>
                     {entry.items && entry.items.length > 0 && (
                         <p className="text-xs text-muted-foreground truncate">
-                            Items: {entry.items.map(item => item.productName).join(', ')}
+                            Items: {entry.items.map(item => item.productName).join(', ').substring(0,100)}{entry.items.map(item => item.productName).join(', ').length > 100 ? '...' : ''}
                         </p>
                     )}
                   </div>
