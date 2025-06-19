@@ -232,10 +232,23 @@ export default function PricingRulesPage() {
                   </Select><FormMessage />
                 </FormItem>)}
               />
-               <FormField control={form.control} name="priority" render={({ field }) => (
+               <FormField
+                control={form.control}
+                name="priority"
+                render={({ field: { onChange, onBlur, value, name, ref } }) => (
                   <FormItem>
                     <FormLabel>Priority (Optional)</FormLabel>
-                    <FormControl><Input type="number" placeholder="e.g., 1 (lower numbers apply first)" {...field} onChange={e => field.onChange(e.target.value === '' ? undefined : parseInt(e.target.value, 10))} /></FormControl>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        placeholder="e.g., 1 (lower numbers apply first)"
+                        onBlur={onBlur}
+                        name={name}
+                        ref={ref}
+                        value={value ?? ""} 
+                        onChange={e => onChange(e.target.value === '' ? undefined : parseInt(e.target.value, 10))}
+                      />
+                    </FormControl>
                     <FormDescription>Lower numbers indicate higher priority. Leave blank for default.</FormDescription>
                     <FormMessage />
                   </FormItem>
