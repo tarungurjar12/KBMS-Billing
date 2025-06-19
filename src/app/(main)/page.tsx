@@ -12,6 +12,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { format, parseISO } from 'date-fns';
 import { useToast } from "@/hooks/use-toast";
 import type { PaymentRecord } from './payments/page'; 
+import type { LedgerEntry } from './ledger/page'; 
 
 /**
  * @fileOverview Admin Dashboard page for the KBMS Billing application.
@@ -44,7 +45,7 @@ export default function AdminDashboardPage() {
     { title: "Pending Invoices", value: "0", icon: FileText, dataAiHint: "document paper", isLoading: true, link: "/billing?status=Pending" },
     { title: "Low Stock Items", value: "0", icon: PackageMinus, dataAiHint: "box inventory alert", isLoading: true, link: "/stock?filter=low" },
   ]);
-  const [recentSales, setRecentSales] = useState<any[]>([]);
+  const [recentSalesActivity, setRecentSalesActivity] = useState<any[]>([]);
   const [isLoadingSalesChart, setIsLoadingSalesChart] = useState(true);
   const [isLoadingMetrics, setIsLoadingMetrics] = useState(true); 
 
@@ -93,28 +94,39 @@ export default function AdminDashboardPage() {
       });
       updateMetricState("Total Revenue (from Payments)", { value: formatCurrency(totalRevenueFromPayments) });
 
-
-      const recentSalesQuery = query(collection(db, "invoices"), where("status", "==", "Paid"), orderBy("isoDate", "desc"), limit(5));
+      // Update Recent Sales Activity to use ledger entries
+      const recentSalesQuery = query(
+        collection(db, "ledgerEntries"), 
+        where("type", "==", "sale"), 
+        orderBy("createdAt", "desc"), // Assuming createdAt exists and is a Timestamp
+        limit(5)
+      );
       const recentSalesSnapshot = await getDocs(recentSalesQuery);
       const salesData = recentSalesSnapshot.docs.map(doc => {
-        const data = doc.data();
+        const data = doc.data() as LedgerEntry;
         let formattedDate = "Invalid Date";
         try {
-          if (data.isoDate) {
-            const dateObj = (data.isoDate instanceof Timestamp) ? data.isoDate.toDate() : parseISO(data.isoDate);
-            formattedDate = format(dateObj, "MMM dd");
+          if (data.isoDate) { // Use isoDate for consistency if available
+            formattedDate = format(parseISO(data.isoDate), "MMM dd");
+          } else if (data.createdAt instanceof Timestamp) {
+            formattedDate = format(data.createdAt.toDate(), "MMM dd");
           }
-        } catch (e) { console.warn("Error formatting date for recent sales chart item:", data.isoDate, e); }
-        return { name: formattedDate, uv: data.totalAmount || 0, invoice: data.invoiceNumber || "N/A", customer: data.customerName || "N/A" };
+        } catch (e) { console.warn("Error formatting date for recent sales chart item:", data.isoDate || data.createdAt, e); }
+        return { 
+            name: formattedDate, 
+            uv: data.grandTotal || 0, // Use grandTotal from ledger
+            entryType: data.type, 
+            entity: data.entityName || "N/A" 
+        };
       });
-      setRecentSales(salesData.reverse());
+      setRecentSalesActivity(salesData.reverse()); // Reverse to show oldest first for chart
 
     } catch (error: any) {
       console.error("Error fetching dashboard data: ", error);
       if (error.code === 'failed-precondition') {
         toast({
             title: "Database Index Required",
-            description: `A query for dashboard data (e.g., for products, invoices, or payments) failed. This often means a Firestore index is missing. Please check your browser's developer console for a Firebase link to create it.`,
+            description: `A query for dashboard data (e.g., for products, invoices, payments, or ledger entries) failed. This often means a Firestore index is missing. Please check your browser's developer console for a Firebase link to create it. Affected indexes could include ('products' by 'name' or 'stock'), ('invoices' by 'status' or 'isoDate'), ('payments' by 'type' and 'status'), or ('ledgerEntries' by 'type' and 'createdAt'/'isoDate').`,
             variant: "destructive", duration: 20000,
         });
       } else {
@@ -153,7 +165,7 @@ export default function AdminDashboardPage() {
         <Card className="lg:col-span-2 shadow-lg rounded-xl">
           <CardHeader>
             <CardTitle className="font-headline text-foreground flex items-center"><TrendingUp className="mr-2 h-6 w-6 text-primary"/>Recent Sales Activity</CardTitle>
-            <CardDescription>A visual summary of recent sales trends from paid invoices.</CardDescription>
+            <CardDescription>A visual summary of recent sales recorded in the ledger.</CardDescription>
           </CardHeader>
           <CardContent>
             {isLoadingSalesChart ? (
@@ -161,15 +173,20 @@ export default function AdminDashboardPage() {
                     <Activity className="h-10 w-10 text-muted-foreground animate-spin mr-3" />
                     <p className="text-muted-foreground">Loading sales data for chart...</p>
                  </div>
-            ) : recentSales.length > 0 ? (
+            ) : recentSalesActivity.length > 0 ? (
               <div className="h-[250px] flex items-center justify-center bg-muted/20 dark:bg-muted/10 rounded-md border border-dashed">
-                <p className="text-muted-foreground p-4 text-center">Sales chart data loaded ({recentSales.length} entries). Actual chart component to be implemented here using Recharts or similar.</p>
+                <p className="text-muted-foreground p-4 text-center">Sales chart data (from ledger) loaded ({recentSalesActivity.length} entries). Actual chart component to be implemented here.</p>
+                {/* 
+                  Example of how data could be structured for a chart component:
+                  <ChartComponent data={recentSalesActivity} xAxisKey="name" yAxisKey="uv" />
+                  Where `uv` would be the grandTotal of the ledger entry.
+                */}
               </div>
             ) : (
               <div className="h-[250px] flex flex-col items-center justify-center bg-muted/30 rounded-md border border-dashed">
                 <AlertCircle className="h-8 w-8 text-muted-foreground mb-2"/>
                 <p className="text-muted-foreground font-semibold">No Recent Sales Data</p>
-                <p className="text-sm text-muted-foreground">No paid invoices found to display recent sales trends.</p>
+                <p className="text-sm text-muted-foreground">No sales ledger entries found to display recent sales trends.</p>
               </div>
             )}
           </CardContent>
@@ -206,4 +223,3 @@ export default function AdminDashboardPage() {
     </>
   );
 }
-

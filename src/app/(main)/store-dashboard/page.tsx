@@ -3,15 +3,16 @@
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { PageHeader } from "@/components/page-header";
-import { LayoutDashboard, ClipboardPlus, Users, PackageSearch, ReceiptText, TrendingUp, AlertTriangle, AlertCircle, Activity } from "lucide-react";
+import { LayoutDashboard, ClipboardPlus, Users, PackageSearch, ReceiptText, TrendingUp, AlertTriangle, AlertCircle, Activity, BookOpen } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { useEffect, useState, useCallback, useContext } from "react"; // Added useContext
+import { useEffect, useState, useCallback } from "react";
 import { collection, getDocs, query, where, limit, orderBy, Timestamp, getCountFromServer } from 'firebase/firestore';
-import { db } from '@/lib/firebase/firebaseConfig'; // Removed auth, not needed here directly
+import { db } from '@/lib/firebase/firebaseConfig';
 import { format, startOfWeek, endOfWeek, startOfDay, endOfDay, parseISO } from 'date-fns';
 import { useToast } from "@/hooks/use-toast";
-import { AppContext, useAppContext } from '../layout'; // Import AppContext and useAppContext
+import { AppContext, useAppContext } from '../layout'; 
+import type { LedgerEntry } from '../ledger/page';
 
 /**
  * @fileOverview Store Manager Dashboard page.
@@ -36,21 +37,22 @@ interface QuickAction {
 
 const quickActions: QuickAction[] = [
     { label: "Create New Bill", href: "/create-bill", icon: ClipboardPlus, description: "Generate a new bill or invoice for a customer." },
+    { label: "Daily Ledger Entry", href: "/ledger", icon: BookOpen, description: "Record daily sales, purchases or payments." },
     { label: "Manage Customers", href: "/customers?addNew=true", icon: Users, description: "View, add, or update customer information." },
     { label: "View Products & Stock", href: "/view-products-stock", icon: PackageSearch, description: "Check product prices, details, and current availability." },
 ];
+const formatCurrency = (num: number): string => `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export default function StoreManagerDashboardPage() {
   const { toast } = useToast();
-  const appContext = useAppContext(); // Use context
+  const appContext = useAppContext(); 
   const [recentActivity, setRecentActivity] = useState<string[]>([]);
-  // Removed local currentUser state, will use appContext.firebaseUser
-
+  
   const [metrics, setMetrics] = useState<Metric[]>([
-    { title: "Today's Bills Generated", value: "0", icon: ReceiptText, description: "Bills created by you today.", dataAiHint: "invoice document", isLoading: true, link: "/billing?filter=today&manager=me" },
+    { title: "Today's Ledger Entries", value: "0", icon: ReceiptText, description: "Entries made by you today.", dataAiHint: "invoice document", isLoading: true, link: "/ledger?filter=today&manager=me" },
     { title: "Customers Added This Week", value: "0", icon: Users, description: "New customers registered by you this week.", dataAiHint: "people team", isLoading: true, link: "/customers"},
-    { title: "Pending Bills (Yours)", value: "0", icon: ReceiptText, description: "Your bills awaiting payment.", dataAiHint: "payment money", isLoading: true, link: "/billing?status=Pending&manager=me"},
-    { title: "Reported Product Issues", value: "0", icon: AlertTriangle, description: "Issues you've reported (active).", dataAiHint: "alert inventory", isLoading: true, link: "/view-products-stock" },
+    { title: "Pending Customer Payments", value: "0", icon: ReceiptText, description: "Customer payments marked 'Pending'.", dataAiHint: "payment money", isLoading: true, link: "/payments?type=customer&status=Pending"},
+    { title: "Reported Product Issues", value: "0", icon: AlertTriangle, description: "Active issues you've reported.", dataAiHint: "alert inventory", isLoading: true, link: "/view-products-stock?tab=issues" },
   ]);
   const [isLoadingMetrics, setIsLoadingMetrics] = useState(true);
   const [isLoadingActivity, setIsLoadingActivity] = useState(true);
@@ -80,19 +82,17 @@ export default function StoreManagerDashboardPage() {
     setRecentActivity([]);
 
     const today = new Date();
-    const todayStartISO = startOfDay(today).toISOString();
-    const todayEndISO = endOfDay(today).toISOString();
+    const todayStartISO = startOfDay(today).toISOString().split('T')[0];
     const weekStartTimestamp = Timestamp.fromDate(startOfWeek(today, { weekStartsOn: 1 }));
     const weekEndTimestamp = Timestamp.fromDate(endOfWeek(today, { weekStartsOn: 1 }));
 
     try {
-      const todaysBillsQuery = query(collection(db, "invoices"),
-        where("createdBy", "==", currentManagerUid),
-        where("isoDate", ">=", todayStartISO),
-        where("isoDate", "<=", todayEndISO)
+      const todaysLedgerEntriesQuery = query(collection(db, "ledgerEntries"),
+        where("createdByUid", "==", currentManagerUid),
+        where("date", "==", todayStartISO) 
       );
-      const todaysBillsSnapshot = await getCountFromServer(todaysBillsQuery);
-      updateMetricState("Today's Bills Generated", { value: todaysBillsSnapshot.data().count.toString() });
+      const todaysLedgerEntriesSnapshot = await getCountFromServer(todaysLedgerEntriesQuery);
+      updateMetricState("Today's Ledger Entries", { value: todaysLedgerEntriesSnapshot.data().count.toString() });
 
       const customersAddedQuery = query(collection(db, "customers"),
         where("createdBy", "==", currentManagerUid),
@@ -102,12 +102,12 @@ export default function StoreManagerDashboardPage() {
       const customersAddedSnapshot = await getCountFromServer(customersAddedQuery);
       updateMetricState("Customers Added This Week", { value: customersAddedSnapshot.data().count.toString() });
 
-      const pendingBillsQuery = query(collection(db, "invoices"),
-        where("createdBy", "==", currentManagerUid),
+      const pendingCustomerPaymentsQuery = query(collection(db, "payments"),
+        where("type", "==", "customer"),
         where("status", "==", "Pending")
       );
-      const pendingBillsSnapshot = await getCountFromServer(pendingBillsQuery);
-      updateMetricState("Pending Bills (Yours)", {value: pendingBillsSnapshot.data().count.toString()});
+      const pendingCustomerPaymentsSnapshot = await getCountFromServer(pendingCustomerPaymentsQuery);
+      updateMetricState("Pending Customer Payments", {value: pendingCustomerPaymentsSnapshot.data().count.toString()});
 
       const reportedIssuesQuery = query(collection(db, "issueReports"),
         where("reportedByUid", "==", currentManagerUid),
@@ -116,23 +116,26 @@ export default function StoreManagerDashboardPage() {
       const reportedIssuesSnapshot = await getCountFromServer(reportedIssuesQuery);
       updateMetricState("Reported Product Issues", {value: reportedIssuesSnapshot.data().count.toString()});
 
-      const recentActivityQuery = query(collection(db, "invoices"),
-        where("createdBy", "==", currentManagerUid),
+      const recentLedgerActivityQuery = query(collection(db, "ledgerEntries"),
+        where("createdByUid", "==", currentManagerUid),
         orderBy("createdAt", "desc"),
-        limit(3)
+        limit(10) 
       );
-      const activitySnapshot = await getDocs(recentActivityQuery);
+      const activitySnapshot = await getDocs(recentLedgerActivityQuery);
       const activities = activitySnapshot.docs.map(doc => {
-        const data = doc.data();
+        const data = doc.data() as LedgerEntry;
         let dateFormatted = "Recently";
-        if (data.createdAt instanceof Timestamp) {
+         if (data.createdAt instanceof Timestamp) {
             dateFormatted = format(data.createdAt.toDate(), "MMM dd, HH:mm");
         } else if (typeof data.isoDate === 'string') {
-            try {
-                dateFormatted = format(parseISO(data.isoDate), "MMM dd, HH:mm");
-            } catch (e) { /* ignore date parse error, use default */ }
+            try { dateFormatted = format(parseISO(data.isoDate), "MMM dd, HH:mm"); } catch (e) { /* use default */ }
         }
-        return `${dateFormatted}: Bill ${data.invoiceNumber || 'N/A'} created for ${data.customerName || 'Unknown Customer'}.`;
+        
+        let entryPurposeText = data.entryPurpose === "Payment Posting" ? 
+            (data.type === 'sale' ? 'Payment Rcvd' : 'Payment Sent') : 
+            data.type.charAt(0).toUpperCase() + data.type.slice(1);
+
+        return `${dateFormatted}: Entry ID ${data.id.substring(0,6)}... for ${data.entityName || 'N/A'} - ${formatCurrency(data.grandTotal)} (${entryPurposeText})`;
       });
       setRecentActivity(activities);
 
@@ -141,7 +144,7 @@ export default function StoreManagerDashboardPage() {
       if (error.code === 'failed-precondition') {
         toast({
             title: "Database Index Required",
-            description: `Dashboard data query failed. A Firestore index is needed (likely involving 'createdBy' field on 'invoices' or 'customers'). Check browser console for a link to create it. Without these indexes, dashboard data will not load.`,
+            description: `Dashboard data query failed. A Firestore index is needed (e.g., for 'ledgerEntries' by 'createdByUid' and 'date'/'createdAt', or 'customers' by 'createdBy' and 'createdAt'). Check browser console for a link to create it. Without these indexes, dashboard data will not load.`,
             variant: "destructive", duration: 20000,
         });
       } else {
@@ -154,27 +157,22 @@ export default function StoreManagerDashboardPage() {
         setIsLoadingMetrics(false);
         setIsLoadingActivity(false);
     }
-  }, [appContext, toast]); // Removed isLoadingActivity from dependencies as it's set within the callback
+  }, [appContext, toast]); 
 
   useEffect(() => { 
-    // Fetch data only if context is available and user is a store manager
     if (appContext && appContext.firebaseUser && appContext.userRole === 'store_manager') {
       fetchManagerDashboardData(); 
     } else if (appContext && appContext.firebaseUser && appContext.userRole !== 'store_manager') {
-      // This case should ideally be handled by middleware redirecting non-managers
       console.warn("StoreDashboard: User is not a store manager. Data fetch skipped.");
       setIsLoadingMetrics(false);
       setIsLoadingActivity(false);
     } else {
-      // Context might not be ready yet, or user is null
       console.log("StoreDashboard: AppContext or firebaseUser not yet available. Waiting...");
     }
   }, [appContext, fetchManagerDashboardData]);
 
 
   if (!appContext || !appContext.firebaseUser || appContext.userRole !== 'store_manager') {
-    // Show a minimal loading/placeholder if context isn't ready or user isn't a manager
-    // This helps prevent rendering the full dashboard structure prematurely
     return (
         <div className="flex min-h-[calc(100vh-10rem)] items-center justify-center">
             <Activity className="h-10 w-10 text-muted-foreground animate-spin" />
@@ -230,7 +228,7 @@ export default function StoreManagerDashboardPage() {
         <Card className="shadow-lg rounded-xl">
           <CardHeader>
             <CardTitle className="font-headline text-foreground flex items-center"><TrendingUp className="mr-2 h-6 w-6 text-primary" />Your Recent Activity</CardTitle>
-             <CardDescription>Latest interactions and tasks performed by you.</CardDescription>
+             <CardDescription>Latest ledger entries created by you.</CardDescription>
           </CardHeader>
           <CardContent>
              {isLoadingActivity && recentActivity.length === 0 ? ( 
@@ -242,7 +240,7 @@ export default function StoreManagerDashboardPage() {
                 <div className="h-48 flex flex-col items-center justify-center bg-muted/30 rounded-md border border-dashed">
                     <AlertCircle className="h-10 w-10 text-muted-foreground mb-2" />
                     <p className="text-muted-foreground font-semibold">No Recent Activity</p>
-                    <p className="text-sm text-muted-foreground">You haven&apos;t performed any actions recently, or data is still loading.</p>
+                    <p className="text-sm text-muted-foreground">You haven&apos;t created any ledger entries recently.</p>
                 </div>
              ) : (
                 <ul className="space-y-2">
@@ -259,4 +257,3 @@ export default function StoreManagerDashboardPage() {
     </>
   );
 }
-
