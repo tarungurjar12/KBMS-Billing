@@ -1171,14 +1171,14 @@ export default function DailyLedgerPage() {
                       </TableCell>
                       <TableCell className="text-xs max-w-[100px] truncate hidden xl:table-cell" title={entry.notes || undefined}>{entry.notes || "N/A"}</TableCell>
                       <TableCell className="text-xs hidden md:table-cell">
-                        <div className="flex items-center gap-1.5" title={entry.createdByUid}>
+                        <div className="flex items-center gap-1.5">
                             <UserCircle2 className="h-3.5 w-3.5 text-muted-foreground shrink-0"/>
-                            {entry.createdByName}
+                            {entry.createdByName || "N/A"}
                         </div>
                       </TableCell>
                        <TableCell className="text-xs hidden lg:table-cell">
                         {entry.updatedByName ? (
-                            <div className="flex items-center gap-1.5" title={entry.updatedByUid || undefined}>
+                            <div className="flex items-center gap-1.5">
                                 <UserCircle2 className="h-3.5 w-3.5 text-muted-foreground shrink-0"/>
                                 {entry.updatedByName}
                             </div>
@@ -1217,5 +1217,3 @@ export default function DailyLedgerPage() {
   );
 }
 
-
-    
