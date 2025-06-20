@@ -18,12 +18,13 @@ import { z } from "zod";
 import { BookOpen, PlusCircle, Trash2, Search, Users, Truck, XCircle, Filter, FileWarning, Calculator, Edit, MoreHorizontal, UserCircle2, Eye, UserX, Landmark } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
-import { collection, getDocs, addDoc, serverTimestamp, query, orderBy, where, doc, runTransaction, Timestamp, deleteDoc, getDoc } from 'firebase/firestore';
+import { collection, getDocs, addDoc, serverTimestamp, query, orderBy, where, doc, runTransaction, Timestamp, deleteDoc, getDoc, writeBatch } from 'firebase/firestore';
 import type { DocumentSnapshot, DocumentData, DocumentReference } from 'firebase/firestore';
 import { db, auth } from '@/lib/firebase/firebaseConfig';
 import type { Customer } from './../customers/page';
 import type { Seller } from './../sellers/page';
 import type { Product } from './../products/page';
+import type { Invoice } from './../billing/page'; 
 import { format, parseISO } from 'date-fns';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -64,8 +65,8 @@ export interface LedgerEntry {
   subTotal: number;
   gstApplied: boolean;
   taxAmount: number;
-  grandTotal: number; // For Payment Record, this is the payment_amount. For Ledger Record, it's calculated.
-  paymentAmount?: number; // Only for Payment Record type
+  grandTotal: number; 
+  paymentAmount?: number; 
   paymentMethod: typeof PAYMENT_METHODS_LEDGER[number] | null;
   paymentStatus: typeof PAYMENT_STATUSES_LEDGER[number];
   notes: string | null; 
@@ -79,6 +80,7 @@ export interface LedgerEntry {
   amountPaidNow?: number; 
   remainingAmount?: number; 
   associatedPaymentRecordId?: string | null; 
+  relatedInvoiceId?: string | null; // Field to link to an Invoice, especially for consolidated payments
 }
 
 const ledgerItemSchema = z.object({
@@ -97,11 +99,11 @@ const baseLedgerEntrySchema = z.object({
   entityType: z.enum(['customer', 'seller', 'unknown_customer', 'unknown_seller'], { required_error: "Entity type is required." }),
   entityId: z.string().nullable().optional().transform(val => (val === undefined || val === "") ? null : val),
   entityName: z.string().min(1, "Entity name is required."),
-  items: z.array(ledgerItemSchema).optional(), // Optional now
+  items: z.array(ledgerItemSchema).optional(), 
   applyGst: z.boolean().default(false),
   paymentStatus: z.enum(PAYMENT_STATUSES_LEDGER, { required_error: "Payment status is required."}),
   paymentMethod: z.enum(PAYMENT_METHODS_LEDGER).nullable().optional().transform(val => (val === undefined || val === "") ? null : val),
-  paymentAmount: z.preprocess( // Specific for Payment Record
+  paymentAmount: z.preprocess( 
     (val) => {
       if (val === undefined || val === null || String(val).trim() === "") {
         return undefined; 
@@ -113,7 +115,7 @@ const baseLedgerEntrySchema = z.object({
       .positive({ message: "Payment amount must be positive." })
       .optional()
   ),
-  amountPaidNow: z.preprocess( // For Ledger Record entries with partial payment
+  amountPaidNow: z.preprocess( 
     (val) => {
       if (val === undefined || val === null || String(val).trim() === "") {
         return undefined; 
@@ -126,12 +128,12 @@ const baseLedgerEntrySchema = z.object({
       .optional()
   ),
   notes: z.string().optional().transform(value => (value === undefined || String(value).trim() === "") ? "N/A" : String(value).trim()),
+  relatedInvoiceId: z.string().nullable().optional().transform(val => (val === undefined || String(val).trim() === "") ? null : val),
 });
 
 const GST_RATE = 0.18; 
 
 const ledgerEntrySchema = baseLedgerEntrySchema.superRefine((data, ctx) => {
-  // Validations for Ledger Record entries
   if (data.entryPurpose === "Ledger Record") {
     if (!data.items || data.items.length === 0) {
       ctx.addIssue({
@@ -153,7 +155,6 @@ const ledgerEntrySchema = baseLedgerEntrySchema.superRefine((data, ctx) => {
     }
   }
 
-  // Validations for Payment Record entries
   if (data.entryPurpose === "Payment Record") {
     if (data.paymentAmount === undefined || data.paymentAmount <= 0) {
       ctx.addIssue({
@@ -162,22 +163,18 @@ const ledgerEntrySchema = baseLedgerEntrySchema.superRefine((data, ctx) => {
         path: ["paymentAmount"],
       });
     }
-    if (!data.paymentMethod) { // Payment method is always required for payment records
+    if (!data.paymentMethod) { 
         ctx.addIssue({
             code: z.ZodIssueCode.custom,
             message: "Payment method is required for Payment Record entries.",
             path: ["paymentMethod"],
         });
     }
-     // For payment records, paymentStatus should typically be 'paid' (for us) or 'sent' (by us)
-    if (data.type === 'sale' && data.paymentStatus !== 'paid') { // Payment Received from Customer
-        // It's implicitly 'paid' from our perspective
-    } else if (data.type === 'purchase' && data.paymentStatus !== 'paid') { // Payment Sent to Supplier
-        // It's implicitly 'paid' from our perspective
+    if (data.type === 'sale' && data.paymentStatus !== 'paid') { 
+    } else if (data.type === 'purchase' && data.paymentStatus !== 'paid') { 
     }
   }
 
-  // General payment method validation (applies if status implies payment made/received)
   if ((data.paymentStatus === "paid" || data.paymentStatus === "partial") && data.entryPurpose === "Ledger Record" && !data.paymentMethod) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -224,6 +221,8 @@ export default function DailyLedgerPage() {
   const [selectedUserFilterName, setSelectedUserFilterName] = useState<string | null>(null);
   const [isEntryDetailsDialogOpen, setIsEntryDetailsDialogOpen] = useState(false);
   const [selectedEntryForDetails, setSelectedEntryForDetails] = useState<LedgerEntry | null>(null);
+  const [allInvoices, setAllInvoices] = useState<Invoice[]>([]);
+
 
   const [currentUserRole, setCurrentUserRole] = useState<'admin' | 'store_manager' | undefined>();
 
@@ -235,7 +234,7 @@ export default function DailyLedgerPage() {
       paymentStatus: 'paid', paymentMethod: 'Cash',
       paymentAmount: undefined, amountPaidNow: undefined, 
       notes: "", 
-      entityId: null,
+      entityId: null, relatedInvoiceId: null,
     },
   });
   const { fields, append, remove, update } = useFieldArray({ control: form.control, name: "items" });
@@ -247,11 +246,12 @@ export default function DailyLedgerPage() {
   const fetchData = useCallback(async (date: string) => {
     setIsLoading(true);
     try {
-      const [custSnap, sellSnap, prodSnap, entrySnap] = await Promise.all([
+      const [custSnap, sellSnap, prodSnap, entrySnap, invoiceSnap] = await Promise.all([
         getDocs(query(collection(db, "customers"), orderBy("name"))),
         getDocs(query(collection(db, "sellers"), orderBy("name"))),
         getDocs(query(collection(db, "products"), orderBy("name"))),
-        getDocs(query(collection(db, "ledgerEntries"), where("date", "==", date), orderBy("createdAt", "desc")))
+        getDocs(query(collection(db, "ledgerEntries"), where("date", "==", date), orderBy("createdAt", "desc"))),
+        getDocs(query(collection(db, "invoices"), orderBy("invoiceNumber", "desc"))) 
       ]);
 
       setCustomers(custSnap.docs.map(d => ({ id: d.id, ...d.data() } as Customer)));
@@ -260,6 +260,7 @@ export default function DailyLedgerPage() {
         const data = d.data();
         return { id: d.id, ...data, displayPrice: formatCurrency(data.numericPrice || 0) } as Product;
       }));
+       setAllInvoices(invoiceSnap.docs.map(d => ({id: d.id, ...d.data()} as Invoice)));
       setLedgerEntries(entrySnap.docs.map(d => {
         const data = d.data();
         return {
@@ -279,6 +280,7 @@ export default function DailyLedgerPage() {
             amountPaidNow: typeof data.amountPaidNow === 'number' ? data.amountPaidNow : (data.paymentStatus === 'paid' ? data.grandTotal : 0),
             remainingAmount: typeof data.remainingAmount === 'number' ? data.remainingAmount : (data.grandTotal - (typeof data.amountPaidNow === 'number' ? data.amountPaidNow : (data.paymentStatus === 'paid' ? data.grandTotal : 0))),
             associatedPaymentRecordId: data.associatedPaymentRecordId || null,
+            relatedInvoiceId: data.relatedInvoiceId || null,
         } as LedgerEntry;
       }));
 
@@ -419,6 +421,7 @@ export default function DailyLedgerPage() {
             paymentAmount: editingLedgerEntry.entryPurpose === "Payment Record" ? editingLedgerEntry.grandTotal : undefined,
             amountPaidNow: editingLedgerEntry.entryPurpose === "Ledger Record" && editingLedgerEntry.paymentStatus === 'partial' ? editingLedgerEntry.amountPaidNow : undefined,
             notes: editingLedgerEntry.notes === "N/A" ? "" : editingLedgerEntry.notes || "",
+            relatedInvoiceId: editingLedgerEntry.relatedInvoiceId || null,
         });
       } else {
         form.reset({
@@ -435,6 +438,7 @@ export default function DailyLedgerPage() {
             amountPaidNow: undefined,
             notes: "", 
             entityId: null,
+            relatedInvoiceId: null,
         });
       }
     }
@@ -447,7 +451,7 @@ export default function DailyLedgerPage() {
             { value: 'customer', label: 'Existing Customer' },
             { value: 'unknown_customer', label: 'Unknown Customer' }
         ];
-    } else { 
+    } else { // purchase
         return [
             { value: 'seller', label: 'Existing Seller' },
             { value: 'unknown_seller', label: 'Unknown Seller' }
@@ -468,17 +472,14 @@ export default function DailyLedgerPage() {
             form.setValue("applyGst", false); 
             form.setValue("items", []); 
         } else { // Ledger Record
-            if (currentEntityType === "unknown_customer") {
+            if (currentEntityType === "unknown_customer" || currentEntityType === "unknown_seller") {
                 form.setValue("paymentStatus", 'paid');
                 form.setValue("paymentMethod", form.getValues("paymentMethod") || 'Cash');
-            } else if (currentEntityType === "unknown_seller") {
-                form.setValue("paymentStatus", 'paid');
-                form.setValue("paymentMethod", form.getValues("paymentMethod") || 'Cash');
-            } else if (transactionTypeWatcher === 'sale') {
+            } else if (transactionTypeWatcher === 'sale') { // Known customer sale
                 form.setValue("entityType", 'customer');
                 form.setValue("paymentStatus", 'paid');
                 form.setValue("paymentMethod", 'Cash');
-            } else { // purchase
+            } else { // Known seller purchase
                 form.setValue("entityType", 'seller');
                 form.setValue("paymentStatus", 'pending');
                 form.setValue("paymentMethod", null);
@@ -664,6 +665,7 @@ export default function DailyLedgerPage() {
       amountPaidNow: amountPaidForLedgerSave,
       remainingAmount: remainingAmountForLedgerSave,
       notes: data.notes,
+      relatedInvoiceId: data.relatedInvoiceId || null,
       updatedAt: serverTimestamp(),
     };
     
@@ -686,19 +688,27 @@ export default function DailyLedgerPage() {
       await runTransaction(db, async (transaction) => {
         let ledgerDocRef: DocumentReference;
         let originalLedgerEntryData: LedgerEntry | null = null;
-        let originalAssociatedPaymentRecordId: string | null = null;
         
         if (editingLedgerEntry) {
           ledgerDocRef = doc(db, "ledgerEntries", editingLedgerEntry.id);
           const originalLedgerSnap = await transaction.get(ledgerDocRef);
           if (!originalLedgerSnap.exists()) throw new Error("Original ledger entry not found for editing.");
           originalLedgerEntryData = originalLedgerSnap.data() as LedgerEntry;
-          originalAssociatedPaymentRecordId = originalLedgerEntryData.associatedPaymentRecordId || null;
+          // Delete old associated payment record if editing and one existed
+          if (originalLedgerEntryData.associatedPaymentRecordId) {
+              const oldPaymentRef = doc(db, "payments", originalLedgerEntryData.associatedPaymentRecordId);
+              const oldPaymentSnap = await transaction.get(oldPaymentRef);
+              if (oldPaymentSnap.exists()) {
+                  transaction.delete(oldPaymentRef); 
+              }
+          }
         } else {
           ledgerDocRef = doc(collection(db, "ledgerEntries"));
         }
 
+        // Stock adjustments for "Ledger Record" type
         if (data.entryPurpose === "Ledger Record") {
+            // ... (stock adjustment logic remains the same)
             const productIdsInvolved = new Set<string>();
             if (originalLedgerEntryData && originalLedgerEntryData.entryPurpose === "Ledger Record") {
               originalLedgerEntryData.items.forEach(item => productIdsInvolved.add(item.productId));
@@ -766,21 +776,9 @@ export default function DailyLedgerPage() {
                     ledgerEntryId: ledgerDocRef.id,
                 });
             }
-        } 
-        
-        // Delete old associated payment record if editing and one existed
-        if (editingLedgerEntry && originalAssociatedPaymentRecordId) {
-            const oldPaymentRef = doc(db, "payments", originalAssociatedPaymentRecordId);
-            const oldPaymentSnap = await transaction.get(oldPaymentRef);
-            if (oldPaymentSnap.exists()) {
-                 transaction.delete(oldPaymentRef); 
-            } else {
-                console.warn(`Tried to delete non-existent payment record ID: ${originalAssociatedPaymentRecordId}`);
-            }
         }
         
         let newAssociatedPaymentRecordId: string | null = null;
-        // Create a new payment record if current ledger entry purpose/status warrants it
         if (data.entryPurpose === "Payment Record" || (data.entryPurpose === "Ledger Record" && (data.paymentStatus === 'paid' || data.paymentStatus === 'partial'))) {
           const paymentRecordRef = doc(collection(db, "payments"));
           newAssociatedPaymentRecordId = paymentRecordRef.id;
@@ -788,10 +786,10 @@ export default function DailyLedgerPage() {
           let paymentStatusForRecord: typeof PAYMENT_STATUSES_PAYMENT_PAGE[number];
           if (data.entryPurpose === "Payment Record") {
             paymentStatusForRecord = data.type === 'sale' ? 'Received' : 'Sent';
-          } else { // Ledger Record (paid or partial)
+          } else { 
             if (data.paymentStatus === 'paid') {
                 paymentStatusForRecord = data.type === 'sale' ? 'Received' : 'Sent';
-            } else { // partial
+            } else { 
                 paymentStatusForRecord = 'Partial';
             }
           }
@@ -800,7 +798,7 @@ export default function DailyLedgerPage() {
             type: data.type === 'sale' ? 'customer' : 'supplier', 
             relatedEntityName: ledgerDataForSave.entityName!,
             relatedEntityId: ledgerDataForSave.entityId || `unknown-${ledgerDataForSave.entityType}-${Date.now()}`,
-            relatedInvoiceId: null, // Ledger-based payments might not have a direct invoice link initially
+            relatedInvoiceId: ledgerDataForSave.relatedInvoiceId || null, 
             date: format(parseISO(ledgerDataForSave.date!), "MMM dd, yyyy"), 
             isoDate: ledgerDataForSave.date!, 
             amountPaid: data.entryPurpose === "Payment Record" ? (data.paymentAmount || 0) : amountPaidForLedgerSave, 
@@ -810,7 +808,7 @@ export default function DailyLedgerPage() {
             transactionId: null, 
             status: paymentStatusForRecord,
             notes: `Payment from Ledger Entry: ${ledgerDocRef.id}. ${ledgerDataForSave.notes || ''}`.trim(),
-            ledgerEntryId: ledgerDocRef.id, // Link back to this ledger entry
+            ledgerEntryId: ledgerDocRef.id, 
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           };
@@ -824,10 +822,72 @@ export default function DailyLedgerPage() {
         } else {
             transaction.set(ledgerDocRef, finalLedgerDataToCommit as DocumentData);
         }
+
+        // --- Start: Payment Reconciliation for Consolidated Invoices ---
+        if (data.entryPurpose === "Payment Record" && data.relatedInvoiceId && (data.paymentAmount || 0) > 0) {
+            const targetInvoiceRef = doc(db, "invoices", data.relatedInvoiceId);
+            const targetInvoiceSnap = await transaction.get(targetInvoiceRef);
+
+            if (targetInvoiceSnap.exists()) {
+                const targetInvoiceData = targetInvoiceSnap.data() as Invoice;
+                if (targetInvoiceData.consolidatedLedgerEntryIds && targetInvoiceData.consolidatedLedgerEntryIds.length > 0) {
+                    let paymentAmountToDistribute = data.paymentAmount || 0;
+                    
+                    // Fetch original ledger entries and sort by date (oldest first)
+                    const originalLedgerEntriesData: LedgerEntry[] = [];
+                    for (const entryId of targetInvoiceData.consolidatedLedgerEntryIds) {
+                        const originalEntryRef = doc(db, "ledgerEntries", entryId);
+                        const originalEntrySnap = await transaction.get(originalEntryRef);
+                        if (originalEntrySnap.exists()) {
+                            originalLedgerEntriesData.push({ id: originalEntrySnap.id, ...originalEntrySnap.data() } as LedgerEntry);
+                        }
+                    }
+                    originalLedgerEntriesData.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+                    for (const originalEntry of originalLedgerEntriesData) {
+                        if (paymentAmountToDistribute <= 0) break;
+                        if ((originalEntry.remainingAmount || 0) <= 0) continue;
+
+                        const amountToApply = Math.min(paymentAmountToDistribute, originalEntry.remainingAmount || 0);
+                        
+                        const updatedOriginalEntry: Partial<LedgerEntry> = {
+                            amountPaidNow: (originalEntry.amountPaidNow || 0) + amountToApply,
+                            remainingAmount: (originalEntry.remainingAmount || 0) - amountToApply,
+                            updatedAt: serverTimestamp(),
+                        };
+                        if (updatedOriginalEntry.remainingAmount! <= 0) {
+                            updatedOriginalEntry.paymentStatus = 'paid';
+                            updatedOriginalEntry.remainingAmount = 0;
+                        } else {
+                            updatedOriginalEntry.paymentStatus = 'partial';
+                        }
+                        transaction.update(doc(db, "ledgerEntries", originalEntry.id), updatedOriginalEntry);
+                        paymentAmountToDistribute -= amountToApply;
+                    }
+
+                    // Update the consolidated invoice itself
+                    const newTotalAmountForConsolidated = Math.max(0, targetInvoiceData.totalAmount - (data.paymentAmount || 0) + paymentAmountToDistribute); // Add back any undistributed amount
+                    let newStatusForConsolidated: Invoice['status'] = 'Pending';
+                    if (newTotalAmountForConsolidated <= 0) {
+                        newStatusForConsolidated = 'Paid';
+                    } else if (newTotalAmountForConsolidated < targetInvoiceData.totalAmount) {
+                        newStatusForConsolidated = 'Partially Paid';
+                    }
+                    transaction.update(targetInvoiceRef, {
+                        totalAmount: newTotalAmountForConsolidated, // Or a new field like remainingBalanceOnInvoice
+                        status: newStatusForConsolidated,
+                        updatedAt: serverTimestamp()
+                    });
+                }
+            }
+        }
+        // --- End: Payment Reconciliation ---
+
+
       });
 
       toast({ title: editingLedgerEntry ? "Ledger Entry Updated" : "Ledger Entry Saved", description: "Transaction recorded, stock updated (if applicable), and payment record handled." });
-      form.reset({ date: selectedDate, type: 'sale', entryPurpose:ENTRY_PURPOSES[0], entityType: 'customer', entityName: '', items: [], applyGst: false, paymentStatus: 'paid', paymentMethod: 'Cash', paymentAmount: undefined, amountPaidNow: undefined, notes: "", entityId: null });
+      form.reset({ date: selectedDate, type: 'sale', entryPurpose:ENTRY_PURPOSES[0], entityType: 'customer', entityName: '', items: [], applyGst: false, paymentStatus: 'paid', paymentMethod: 'Cash', paymentAmount: undefined, amountPaidNow: undefined, notes: "", entityId: null, relatedInvoiceId: null });
       setIsLedgerFormOpen(false);
       setEditingLedgerEntry(null);
       fetchData(selectedDate);
@@ -993,7 +1053,7 @@ export default function DailyLedgerPage() {
           if (!isOpen) { 
             setProductSearchTerm(''); 
             setEditingLedgerEntry(null); 
-            form.reset({ date: selectedDate, type: 'sale', entryPurpose: ENTRY_PURPOSES[0], entityType: 'customer', entityName: '', items: [], applyGst: false, paymentStatus: 'paid', paymentMethod: 'Cash', paymentAmount: undefined, amountPaidNow: undefined, notes: "", entityId: null });
+            form.reset({ date: selectedDate, type: 'sale', entryPurpose: ENTRY_PURPOSES[0], entityType: 'customer', entityName: '', items: [], applyGst: false, paymentStatus: 'paid', paymentMethod: 'Cash', paymentAmount: undefined, amountPaidNow: undefined, notes: "", entityId: null, relatedInvoiceId: null });
           }
           setIsLedgerFormOpen(isOpen);
       }}>
@@ -1110,11 +1170,31 @@ export default function DailyLedgerPage() {
                 )}
                 
                 {entryPurposeWatcher === "Payment Record" && (
+                  <>
                      <FormField control={form.control} name="paymentAmount" render={({ field }) => (
                         <FormItem><FormLabel>Payment Amount (₹)</FormLabel>
                             <FormControl><Input type="number" step="0.01" placeholder="e.g., 1000.00" {...field} onChange={e => field.onChange(e.target.value ? parseFloat(e.target.value) : undefined)} value={field.value ?? ""} /></FormControl>
                             <FormMessage />
                         </FormItem>)} />
+                     <FormField control={form.control} name="relatedInvoiceId" render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>For Invoice # (Optional)</FormLabel>
+                            <Select onValueChange={field.onChange} value={field.value ?? ""}>
+                                <FormControl><SelectTrigger><SelectValue placeholder="Select if payment is for a specific invoice" /></SelectTrigger></FormControl>
+                                <SelectContent>
+                                    {allInvoices.filter(inv => inv.status !== 'Paid' && inv.status !== 'Cancelled' && (form.getValues("entityId") ? inv.customerId === form.getValues("entityId") : true))
+                                      .map(inv => (
+                                        <SelectItem key={inv.id} value={inv.id}>
+                                            {inv.invoiceNumber} - {inv.customerName} ({formatCurrency(inv.totalAmount)}) - Status: {inv.status}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                            <FormDescription>Link this payment to an existing invoice, especially useful for consolidated invoices.</FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                      )} />
+                  </>
                 )}
 
                 {entryPurposeWatcher === "Ledger Record" && (
@@ -1276,6 +1356,9 @@ export default function DailyLedgerPage() {
                         {selectedEntryForDetails.notes && selectedEntryForDetails.notes !== "N/A" && (
                             <> <Separator /> <div><strong className="text-muted-foreground">Notes:</strong> {selectedEntryForDetails.notes}</div></>
                         )}
+                         {selectedEntryForDetails.relatedInvoiceId && (
+                             <> <Separator /> <div><strong className="text-muted-foreground">Linked Invoice ID:</strong> {selectedEntryForDetails.relatedInvoiceId}</div></>
+                        )}
                         <Separator />
                          <div>
                              <h4 className="font-semibold mb-1">Audit Information:</h4>
@@ -1387,6 +1470,7 @@ export default function DailyLedgerPage() {
                             (entry.items.map(i => `${i.productName} (x${i.quantity})`).join(', ').substring(0, 50) + (entry.items.map(i => `${i.productName} (x${i.quantity})`).join(', ').length > 50 ? '...' : ''))
                             : "Payment Record"
                         }
+                         {entry.relatedInvoiceId && entry.entryPurpose === "Payment Record" && <span className="block text-muted-foreground text-[10px]">Inv: {allInvoices.find(i => i.id === entry.relatedInvoiceId)?.invoiceNumber || entry.relatedInvoiceId.substring(0,6)+'...'}</span>}
                       </TableCell>
                       <TableCell className="text-right font-semibold">{formatCurrency(entry.grandTotal)}</TableCell>
                       <TableCell className="capitalize">

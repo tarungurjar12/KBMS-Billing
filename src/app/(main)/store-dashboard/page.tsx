@@ -12,7 +12,7 @@ import { db } from '@/lib/firebase/firebaseConfig';
 import { format, startOfWeek, endOfWeek, startOfDay, endOfDay, parseISO } from 'date-fns';
 import { useToast } from "@/hooks/use-toast";
 import { AppContext, useAppContext } from '../layout'; 
-import type { LedgerEntry } from '../ledger/page';
+import type { LedgerEntry, LedgerItem } from '../ledger/page'; // Import LedgerItem
 
 /**
  * @fileOverview Store Manager Dashboard page.
@@ -123,19 +123,48 @@ export default function StoreManagerDashboardPage() {
       );
       const activitySnapshot = await getDocs(recentLedgerActivityQuery);
       const activities = activitySnapshot.docs.map(doc => {
-        const data = doc.data() as LedgerEntry;
+        const docData = doc.data();
+        const data: LedgerEntry = {
+          id: doc.id, // Ensure doc.id is mapped
+          date: docData.date,
+          type: docData.type,
+          entryPurpose: docData.entryPurpose,
+          entityType: docData.entityType,
+          entityId: docData.entityId,
+          entityName: docData.entityName,
+          items: (docData.items || []) as LedgerItem[],
+          subTotal: docData.subTotal,
+          gstApplied: docData.gstApplied,
+          taxAmount: docData.taxAmount,
+          grandTotal: docData.grandTotal,
+          paymentAmount: docData.paymentAmount,
+          paymentMethod: docData.paymentMethod,
+          paymentStatus: docData.paymentStatus,
+          notes: docData.notes,
+          createdByUid: docData.createdByUid,
+          createdByName: docData.createdByName,
+          createdAt: docData.createdAt,
+          updatedAt: docData.updatedAt,
+          updatedByUid: docData.updatedByUid,
+          updatedByName: docData.updatedByName,
+          originalTransactionAmount: docData.originalTransactionAmount,
+          amountPaidNow: docData.amountPaidNow,
+          remainingAmount: docData.remainingAmount,
+          associatedPaymentRecordId: docData.associatedPaymentRecordId,
+        };
+        
         let dateFormatted = "Recently";
          if (data.createdAt instanceof Timestamp) {
             dateFormatted = format(data.createdAt.toDate(), "MMM dd, HH:mm");
-        } else if (typeof data.isoDate === 'string') {
-            try { dateFormatted = format(parseISO(data.isoDate), "MMM dd, HH:mm"); } catch (e) { /* use default */ }
+        } else if (typeof data.date === 'string') { // Use data.date (which should be ISO string)
+            try { dateFormatted = format(parseISO(data.date), "MMM dd, HH:mm"); } catch (e) { /* use default */ }
         }
         
-        let entryPurposeText = data.entryPurpose === "Payment Posting" ? 
+        let entryPurposeText = data.entryPurpose === "Payment Record" ? 
             (data.type === 'sale' ? 'Payment Rcvd' : 'Payment Sent') : 
             data.type.charAt(0).toUpperCase() + data.type.slice(1);
 
-        return `${dateFormatted}: Entry ID ${data.id.substring(0,6)}... for ${data.entityName || 'N/A'} - ${formatCurrency(data.grandTotal)} (${entryPurposeText})`;
+        return `${dateFormatted}: Entry ID ${data.id ? data.id.substring(0,6) : 'N/A'}... for ${data.entityName || 'N/A'} - ${formatCurrency(data.grandTotal)} (${entryPurposeText})`;
       });
       setRecentActivity(activities);
 

@@ -21,7 +21,7 @@ import type { Customer } from './../customers/page';
 import type { Product } from './../products/page';
 import type { InvoiceItem, Invoice } from './../billing/page';
 import type { LedgerEntry } from './../ledger/page';
-import { format } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
@@ -113,7 +113,7 @@ export default function CreateBillPage() {
       const q = query(collection(db, "ledgerEntries"), 
         where("entityId", "==", customerId), 
         where("type", "==", "sale"), 
-        where("entryPurpose", "==", "Ledger Record"),
+        where("entryPurpose", "==", "Ledger Record"), // Ensure it's a transactional record
         where("paymentStatus", "in", ["pending", "partial"])
       );
       const snapshot = await getDocs(q);
@@ -128,9 +128,9 @@ export default function CreateBillPage() {
           remainingAmount: data.remainingAmount || 0, 
         } as PendingLedgerItemToInvoice;
       });
-      setPendingLedgerItems(items);
-      if (items.length === 0) {
-        toast({title: "No Pending Items", description: "This customer has no pending or partially paid sales ledger entries.", variant: "default"});
+      setPendingLedgerItems(items.filter(item => (item.remainingAmount || 0) > 0)); // Only show items with a balance > 0
+      if (items.filter(item => (item.remainingAmount || 0) > 0).length === 0) {
+        toast({title: "No Pending Items", description: "This customer has no pending or partially paid sales ledger entries with a balance due.", variant: "default"});
       }
     } catch (error) {
       toast({title: "Error Fetching Pending Items", variant: "destructive"});
@@ -235,6 +235,8 @@ export default function CreateBillPage() {
         }
 
         let invoiceItemsForSave: InvoiceItem[];
+        let consolidatedLedgerEntryIds: string[] = [];
+
         if (billCreationMode === 'standard') {
             const allProductIdsInvolved = new Set([...billItems.map(item => item.id), ...originalBillItemsForEdit.map(item => item.id)]);
             const productSnapshots = new Map<string, DocumentSnapshot<DocumentData>>();
@@ -260,8 +262,11 @@ export default function CreateBillPage() {
             for (const pu of productUpdates) transaction.update(pu.ref, { stock: pu.newStock, updatedAt: serverTimestamp() });
             invoiceItemsForSave = billItems.map(i => ({ productId: i.id, name: i.name, quantity: i.quantity, unitPrice: i.numericPrice, total: i.total, unitOfMeasure: i.unitOfMeasure }));
         } else { // from_pending_ledger
-            invoiceItemsForSave = pendingLedgerItems.filter(i => i.isSelected).map(li => {
-                const formattedDate = format(new Date(li.date), "dd/MM/yy");
+            const selectedLedgerItems = pendingLedgerItems.filter(i => i.isSelected);
+            consolidatedLedgerEntryIds = selectedLedgerItems.map(li => li.id);
+
+            invoiceItemsForSave = selectedLedgerItems.map(li => {
+                const formattedDate = format(parseISO(li.date), "dd/MM/yy");
                 const itemNamesArray = li.items.map(item => item.productName);
                 let itemNamesSummaryForDisplay;
                 if (itemNamesArray.length > 2) {
@@ -283,12 +288,15 @@ export default function CreateBillPage() {
             });
         }
         
-        const billData: Omit<Invoice, 'id' | 'createdAt' | 'updatedAt'> & {createdAt?: any, updatedAt?: any, createdBy: string} = { 
+        const billData: Omit<Invoice, 'id' | 'createdAt' | 'updatedAt'> & {createdAt?: any, updatedAt?: any, createdBy: string, consolidatedLedgerEntryIds?: string[]} = { 
           customerId: selectedCustomerId, customerName: customers.find(c=>c.id === selectedCustomerId)?.name || "N/A",
           items: invoiceItemsForSave, subTotal: subTotalHook, cgst, sgst, igst, totalAmount: grandTotal, displayTotal: formatCurrency(grandTotal),
           status: "Pending", invoiceNumber: (editInvoiceId && billCreationMode === 'standard') ? existingInvoiceNumber! : `INV-${Date.now().toString().slice(-6)}`,
           date: format(new Date(), "MMM dd, yyyy"), isoDate: new Date().toISOString(), createdBy: currentFirebaseUser.uid, 
         };
+        if (billCreationMode === 'from_pending_ledger' && consolidatedLedgerEntryIds.length > 0) {
+            billData.consolidatedLedgerEntryIds = consolidatedLedgerEntryIds;
+        }
         
         if (editInvoiceId && billCreationMode === 'standard') {
             transaction.update(doc(db, "invoices", editInvoiceId), {...billData, updatedAt: serverTimestamp()});
@@ -341,8 +349,9 @@ export default function CreateBillPage() {
                     <Label>Bill Creation Mode</Label>
                     <div className="flex gap-2 mt-1">
                         <Button variant={billCreationMode === 'standard' ? 'default' : 'outline'} onClick={() => setBillCreationMode('standard')} disabled={isSubmitting}>Standard Bill</Button>
-                        <Button variant={billCreationMode === 'from_pending_ledger' ? 'default' : 'outline'} onClick={() => setBillCreationMode('from_pending_ledger')} disabled={isSubmitting}>From Pending Ledger</Button>
+                        <Button variant={billCreationMode === 'from_pending_ledger' ? 'default' : 'outline'} onClick={() => setBillCreationMode('from_pending_ledger')} disabled={isSubmitting || !selectedCustomerId}>From Pending Ledger</Button>
                     </div>
+                     {billCreationMode === 'from_pending_ledger' && !selectedCustomerId && <p className="text-xs text-destructive mt-1">Please select a customer first to use this mode.</p>}
                 </div>
               )}
             </CardContent>
@@ -391,10 +400,10 @@ export default function CreateBillPage() {
                                 <Checkbox id={`item-${item.id}`} checked={item.isSelected} onCheckedChange={() => handleTogglePendingItemSelection(item.id)} disabled={isSubmitting} className="mt-1"/>
                                 <div className="flex-grow text-sm">
                                     <Label htmlFor={`item-${item.id}`} className="font-medium cursor-pointer leading-tight">
-                                        Date: {format(new Date(item.date), "dd/MM/yy")} - Items: {item.items.map(i => i.productName).join(', ').substring(0, 50)}{item.items.map(i => i.productName).join(', ').length > 50 ? '...' : ''}
+                                        Date: {format(parseISO(item.date), "dd/MM/yy")} - Items: {item.items.map(i => i.productName).join(', ').substring(0, 50)}{item.items.map(i => i.productName).join(', ').length > 50 ? '...' : ''}
                                     </Label>
-                                    <p className="text-xs text-muted-foreground mt-0.5">
-                                      Full Details: {item.items.map(i => `${i.productName} (x${i.quantity})`).join(', ').substring(0,70)}{item.items.map(i => `${i.productName} (x${i.quantity})`).join(', ').length > 70 ? '...' : ''}
+                                    <p className="text-xs text-muted-foreground mt-0.5 whitespace-pre-line">
+                                      Full Details: {item.items.map(i => `${i.productName} (x${i.quantity})`).join('\n')}
                                     </p>
                                     <p className="text-xs font-semibold mt-1">Pending Amt: {formatCurrency(item.remainingAmount || 0)}</p>
                                 </div>

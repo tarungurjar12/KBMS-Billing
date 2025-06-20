@@ -54,6 +54,7 @@ export interface Invoice {
   createdAt?: Timestamp; 
   dueDate?: string; 
   updatedAt?: Timestamp; 
+  consolidatedLedgerEntryIds?: string[]; // New field
 }
 
 export interface CompanyDetailsForInvoice {
@@ -174,6 +175,7 @@ export default function BillingPage() {
           createdAt: data.createdAt,
           dueDate: data.dueDate,
           updatedAt: data.updatedAt,
+          consolidatedLedgerEntryIds: data.consolidatedLedgerEntryIds || [],
         } as Invoice;
       });
       setInvoices(fetchedInvoices);
