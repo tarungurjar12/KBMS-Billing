@@ -12,7 +12,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { format, parseISO } from 'date-fns';
 import { useToast } from "@/hooks/use-toast";
 import type { PaymentRecord } from './payments/page';
-import type { LedgerEntry, LedgerItem } from './ledger/page'; // Import LedgerItem for strong typing
+import type { LedgerEntry, LedgerItem } from './ledger/page'; 
 
 /**
  * @fileOverview Admin Dashboard page for the KBMS Billing application.
@@ -97,23 +97,22 @@ export default function AdminDashboardPage() {
       const recentSalesQuery = query(
         collection(db, "ledgerEntries"),
         where("type", "==", "sale"),
-        where("entryPurpose", "==", "Transactional"),
+        where("entryPurpose", "==", "Ledger Record"), // Assuming 'Ledger Record' is the correct value
         orderBy("createdAt", "desc"),
         limit(5)
       );
       const recentSalesSnapshot = await getDocs(recentSalesQuery);
       const salesData = recentSalesSnapshot.docs.map(doc => {
         const data = doc.data();
-        // Ensure all fields from LedgerEntry are mapped, especially 'id'
         return {
-          id: doc.id, // Crucial fix: map document ID
+          id: doc.id, 
           date: data.date,
           type: data.type,
           entryPurpose: data.entryPurpose,
           entityType: data.entityType,
           entityId: data.entityId,
           entityName: data.entityName,
-          items: (data.items || []) as LedgerItem[], // Ensure items is an array and typed
+          items: (data.items || []) as LedgerItem[], 
           subTotal: data.subTotal,
           gstApplied: data.gstApplied,
           taxAmount: data.taxAmount,
@@ -132,6 +131,7 @@ export default function AdminDashboardPage() {
           amountPaidNow: data.amountPaidNow,
           remainingAmount: data.remainingAmount,
           associatedPaymentRecordId: data.associatedPaymentRecordId,
+          relatedInvoiceId: data.relatedInvoiceId,
         } as LedgerEntry;
       });
       setRecentSalesActivity(salesData);

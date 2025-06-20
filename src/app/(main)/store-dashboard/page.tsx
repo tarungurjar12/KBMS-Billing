@@ -12,7 +12,7 @@ import { db } from '@/lib/firebase/firebaseConfig';
 import { format, startOfWeek, endOfWeek, startOfDay, endOfDay, parseISO } from 'date-fns';
 import { useToast } from "@/hooks/use-toast";
 import { AppContext, useAppContext } from '../layout'; 
-import type { LedgerEntry, LedgerItem } from '../ledger/page'; // Import LedgerItem
+import type { LedgerEntry, LedgerItem } from '../ledger/page'; 
 
 /**
  * @fileOverview Store Manager Dashboard page.
@@ -125,7 +125,7 @@ export default function StoreManagerDashboardPage() {
       const activities = activitySnapshot.docs.map(doc => {
         const docData = doc.data();
         const data: LedgerEntry = {
-          id: doc.id, // Ensure doc.id is mapped
+          id: doc.id, 
           date: docData.date,
           type: docData.type,
           entryPurpose: docData.entryPurpose,
@@ -151,12 +151,13 @@ export default function StoreManagerDashboardPage() {
           amountPaidNow: docData.amountPaidNow,
           remainingAmount: docData.remainingAmount,
           associatedPaymentRecordId: docData.associatedPaymentRecordId,
+          relatedInvoiceId: docData.relatedInvoiceId,
         };
         
         let dateFormatted = "Recently";
          if (data.createdAt instanceof Timestamp) {
             dateFormatted = format(data.createdAt.toDate(), "MMM dd, HH:mm");
-        } else if (typeof data.date === 'string') { // Use data.date (which should be ISO string)
+        } else if (typeof data.date === 'string') { 
             try { dateFormatted = format(parseISO(data.date), "MMM dd, HH:mm"); } catch (e) { /* use default */ }
         }
         
@@ -164,7 +165,7 @@ export default function StoreManagerDashboardPage() {
             (data.type === 'sale' ? 'Payment Rcvd' : 'Payment Sent') : 
             data.type.charAt(0).toUpperCase() + data.type.slice(1);
 
-        return `${dateFormatted}: Entry ID ${data.id ? data.id.substring(0,6) : 'N/A'}... for ${data.entityName || 'N/A'} - ${formatCurrency(data.grandTotal)} (${entryPurposeText})`;
+        return `${dateFormatted}: Ledger update for ${data.entityName || 'N/A'} - ${formatCurrency(data.grandTotal)} (${entryPurposeText})`;
       });
       setRecentActivity(activities);
 
@@ -286,3 +287,4 @@ export default function StoreManagerDashboardPage() {
     </>
   );
 }
+

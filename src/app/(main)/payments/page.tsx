@@ -22,6 +22,7 @@ import { useToast } from "@/hooks/use-toast";
 import { collection, getDocs, doc, updateDoc, deleteDoc, query, orderBy, serverTimestamp, addDoc, Timestamp, where } from 'firebase/firestore';
 import { db } from '@/lib/firebase/firebaseConfig';
 import { format, parseISO, startOfDay, endOfDay } from 'date-fns';
+import type { Invoice } from './../billing/page';
 
 /**
  * @fileOverview Page for Admin to manage Payment Records in Firestore.
@@ -116,6 +117,7 @@ const formatCurrency = (num: number): string => `₹${num.toLocaleString('en-IN'
 export default function PaymentsPage() {
   const { toast } = useToast();
   const [allPayments, setAllPayments] = useState<PaymentRecord[]>([]);
+  const [allInvoices, setAllInvoices] = useState<Invoice[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMetrics, setIsLoadingMetrics] = useState(true);
   const [isFormDialogOpen, setIsFormDialogOpen] = useState(false);
@@ -177,25 +179,36 @@ export default function PaymentsPage() {
     setIsLoading(true);
     setIsLoadingMetrics(true);
     try {
-      const q = query(collection(db, "payments"), orderBy("isoDate", "desc"));
-      const querySnapshot = await getDocs(q);
-      const fetchedPayments = querySnapshot.docs.map(docSnapshot => {
+      const paymentsQuery = query(collection(db, "payments"), orderBy("isoDate", "desc"));
+      const invoicesQuery = query(collection(db, "invoices"), orderBy("invoiceNumber", "desc"));
+      
+      const [paymentsSnapshot, invoicesSnapshot] = await Promise.all([
+          getDocs(paymentsQuery),
+          getDocs(invoicesQuery)
+      ]);
+
+      const fetchedInvoices = invoicesSnapshot.docs.map(docSnapshot => ({
+          id: docSnapshot.id,
+          ...docSnapshot.data()
+      } as Invoice));
+      setAllInvoices(fetchedInvoices);
+      
+      const fetchedPayments = paymentsSnapshot.docs.map(docSnapshot => {
         const data = docSnapshot.data();
         
-        let paymentDate = "N/A"; // For display
-        let isoDateValue: string | null = null; // For comparison ("YYYY-MM-DD"), default to null
+        let paymentDate = "N/A"; 
+        let isoDateValue: string | null = null; 
 
-        if (data.isoDate) { // This is the critical field from Firestore
+        if (data.isoDate) { 
              if (typeof data.isoDate === 'string') {
                 try {
-                    const datePart = data.isoDate.split('T')[0]; // Ensure YYYY-MM-DD format
-                    parseISO(datePart); // Validate if it's a parsable date string
+                    const datePart = data.isoDate.split('T')[0]; 
+                    parseISO(datePart); 
                     paymentDate = format(parseISO(datePart), "MMM dd, yyyy");
                     isoDateValue = datePart;
                 } catch (e) {
                     console.warn("Invalid isoDate string format in DB:", data.isoDate, e);
                     paymentDate = "Invalid Date";
-                    // isoDateValue remains null
                 }
             } else if (data.isoDate instanceof Timestamp) {
                 const tsDate = data.isoDate.toDate();
@@ -204,15 +217,12 @@ export default function PaymentsPage() {
             }
         }
 
-        // Fallback to createdAt ONLY if isoDateValue is still null (meaning isoDate was missing or invalid)
         if (!isoDateValue && data.createdAt instanceof Timestamp) {
-            // console.log(`Payment ${docSnapshot.id}: Falling back to createdAt for date.`);
             const createdDate = data.createdAt.toDate();
             paymentDate = format(createdDate, "MMM dd, yyyy");
             isoDateValue = createdDate.toISOString().split('T')[0];
         }
         
-        // If still no valid date after all checks, set to a non-matching placeholder
         if (!isoDateValue) {
             isoDateValue = "0000-00-00"; 
             paymentDate = "Date Unavailable";
@@ -222,7 +232,7 @@ export default function PaymentsPage() {
           id: docSnapshot.id, type: data.type || 'customer',
           relatedEntityName: data.relatedEntityName || 'N/A', relatedEntityId: data.relatedEntityId || '',
           relatedInvoiceId: data.relatedInvoiceId || null, date: paymentDate,
-          isoDate: isoDateValue, // This is "YYYY-MM-DD" or "0000-00-00"
+          isoDate: isoDateValue, 
           amountPaid: data.amountPaid || 0,
           displayAmountPaid: formatCurrency(data.amountPaid || 0),
           originalInvoiceAmount: data.originalInvoiceAmount || null,
@@ -290,7 +300,7 @@ export default function PaymentsPage() {
        if (error.code === 'failed-precondition') {
         toast({
             title: "Database Index Required",
-            description: `A query for payments failed. Firestore index 'payments' (isoDate DESC) likely needed. Check console for exact link.`,
+            description: `A query failed. Firestore index (e.g., 'payments' by 'isoDate' DESC or 'invoices' by 'invoiceNumber' DESC) likely needed. Check console for details.`,
             variant: "destructive", duration: 15000,
         });
       } else {
@@ -340,7 +350,7 @@ export default function PaymentsPage() {
           remainingBalance = 0;
         }
       } else if (values.status === 'Completed' || values.status === 'Received' || values.status === 'Sent') {
-        remainingBalance = 0; // if no original amount but status is complete, balance is 0
+        remainingBalance = 0; 
       }
 
 
@@ -407,63 +417,75 @@ export default function PaymentsPage() {
   }, [allPayments, activeMainTab, activeStatusFilter]);
 
 
-  const renderPaymentTable = (paymentsToRender: PaymentRecord[], type: "customer" | "supplier") => (
-    <div className="overflow-x-auto">
-    <Table>
-      <TableHeader><TableRow>
-          <TableHead>Date</TableHead>
-          <TableHead>{type === "customer" ? "Customer" : "Supplier"} Name</TableHead>
-          <TableHead>Ref ID</TableHead>
-          <TableHead>Method</TableHead>
-          <TableHead className="text-right">Amount Paid (₹)</TableHead>
-          <TableHead className="text-right">Original Amt (₹)</TableHead>
-          <TableHead className="text-right">Balance Due (₹)</TableHead>
-          <TableHead className="text-center">Status</TableHead>
-          <TableHead className="text-right">Actions</TableHead>
-      </TableRow></TableHeader>
-      <TableBody>
-        {paymentsToRender.map((payment) => (
-          <TableRow key={payment.id}>
-            <TableCell>{payment.date}</TableCell>
-            <TableCell>{payment.relatedEntityName}</TableCell>
-            <TableCell>{payment.relatedInvoiceId || payment.ledgerEntryId || "N/A"}</TableCell>
-            <TableCell>{payment.method || "N/A"}</TableCell>
-            <TableCell className="text-right">{payment.displayAmountPaid}</TableCell>
-            <TableCell className="text-right">{payment.originalInvoiceAmount ? formatCurrency(payment.originalInvoiceAmount) : "N/A"}</TableCell>
-            <TableCell className="text-right">{payment.remainingBalanceOnInvoice !== null ? formatCurrency(payment.remainingBalanceOnInvoice) : "N/A"}</TableCell>
-            <TableCell className="text-center">
-              <Badge
-                variant={getBadgeVariant(payment.status)}
-                className={
-                    (payment.status === "Completed" || payment.status === "Received" || payment.status === "Sent") ? "bg-accent text-accent-foreground" :
-                    payment.status === "Partial" ? "border-yellow-500 text-yellow-600 dark:border-yellow-400 dark:text-yellow-300 bg-transparent" :
-                    (payment.status === "Pending" || payment.status === "Failed") ? "border-blue-500 text-blue-600 dark:border-blue-400 dark:text-blue-300 bg-transparent" : 
-                    ""
-                }
-              >{payment.status}</Badge>
-            </TableCell>
-             <TableCell className="text-right">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /><span className="sr-only">Actions for payment {payment.id}</span></Button></DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => openEditDialog(payment)}><Edit className="mr-2 h-4 w-4" /> Edit Record</DropdownMenuItem>
-                  <DropdownMenuItem 
-                    onClick={() => handleDeletePayment(payment.id, `${payment.relatedEntityName} - ${payment.displayAmountPaid}`)} 
-                    className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground"
-                    disabled={!!payment.ledgerEntryId} 
-                  >
-                    <Trash2 className="mr-2 h-4 w-4" /> Delete Record
-                  </DropdownMenuItem>
-                  {!!payment.ledgerEntryId && <DropdownMenuItem disabled><span className="text-xs text-muted-foreground">Linked to ledger</span></DropdownMenuItem>}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
-    </div>
-  );
+  const renderPaymentTable = (paymentsToRender: PaymentRecord[], type: "customer" | "supplier") => {
+    const getRefDisplay = (payment: PaymentRecord) => {
+        if (payment.relatedInvoiceId) {
+            const invoice = allInvoices.find(inv => inv.id === payment.relatedInvoiceId);
+            if (invoice) return invoice.invoiceNumber;
+            return `Inv Ref: ${payment.relatedInvoiceId.substring(0,6)}...`;
+        }
+        if (payment.ledgerEntryId) return `Ledger Ref: ${payment.ledgerEntryId.substring(0,6)}...`;
+        return "N/A";
+    };
+
+    return (
+        <div className="overflow-x-auto">
+        <Table>
+          <TableHeader><TableRow>
+              <TableHead>Date</TableHead>
+              <TableHead>{type === "customer" ? "Customer" : "Supplier"} Name</TableHead>
+              <TableHead>Ref ID</TableHead>
+              <TableHead>Method</TableHead>
+              <TableHead className="text-right">Amount Paid (₹)</TableHead>
+              <TableHead className="text-right">Original Amt (₹)</TableHead>
+              <TableHead className="text-right">Balance Due (₹)</TableHead>
+              <TableHead className="text-center">Status</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+          </TableRow></TableHeader>
+          <TableBody>
+            {paymentsToRender.map((payment) => (
+              <TableRow key={payment.id}>
+                <TableCell>{payment.date}</TableCell>
+                <TableCell>{payment.relatedEntityName}</TableCell>
+                <TableCell>{getRefDisplay(payment)}</TableCell>
+                <TableCell>{payment.method || "N/A"}</TableCell>
+                <TableCell className="text-right">{payment.displayAmountPaid}</TableCell>
+                <TableCell className="text-right">{payment.originalInvoiceAmount ? formatCurrency(payment.originalInvoiceAmount) : "N/A"}</TableCell>
+                <TableCell className="text-right">{payment.remainingBalanceOnInvoice !== null ? formatCurrency(payment.remainingBalanceOnInvoice) : "N/A"}</TableCell>
+                <TableCell className="text-center">
+                  <Badge
+                    variant={getBadgeVariant(payment.status)}
+                    className={
+                        (payment.status === "Completed" || payment.status === "Received" || payment.status === "Sent") ? "bg-accent text-accent-foreground" :
+                        payment.status === "Partial" ? "border-yellow-500 text-yellow-600 dark:border-yellow-400 dark:text-yellow-300 bg-transparent" :
+                        (payment.status === "Pending" || payment.status === "Failed") ? "border-blue-500 text-blue-600 dark:border-blue-400 dark:text-blue-300 bg-transparent" : 
+                        ""
+                    }
+                  >{payment.status}</Badge>
+                </TableCell>
+                 <TableCell className="text-right">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /><span className="sr-only">Actions for payment</span></Button></DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => openEditDialog(payment)}><Edit className="mr-2 h-4 w-4" /> Edit Record</DropdownMenuItem>
+                      <DropdownMenuItem 
+                        onClick={() => handleDeletePayment(payment.id, `${payment.relatedEntityName} - ${payment.displayAmountPaid}`)} 
+                        className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground"
+                        disabled={!!payment.ledgerEntryId} 
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" /> Delete Record
+                      </DropdownMenuItem>
+                      {!!payment.ledgerEntryId && <DropdownMenuItem disabled><span className="text-xs text-muted-foreground">Linked to ledger</span></DropdownMenuItem>}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+        </div>
+      );
+  };
   
   const getEmptyStateMessage = () => {
     const entityType = activeMainTab === 'customer' ? 'Customer' : 'Supplier';
@@ -515,7 +537,7 @@ export default function PaymentsPage() {
           <DialogHeader>
             <DialogTitle>{editingPayment ? "Edit Payment Record" : "Record New Payment"}</DialogTitle>
             <DialogDescription>
-              {editingPayment ? `Update details for payment ID: ${editingPayment.id.substring(0,8)}...` : "Fill in the details for the new payment record."}
+              {editingPayment ? `Update details for payment.` : "Fill in the details for the new payment record."}
             </DialogDescription>
           </DialogHeader>
           <Form {...form}>
@@ -530,7 +552,7 @@ export default function PaymentsPage() {
               />
               <FormField control={form.control} name="relatedEntityName" render={({ field }) => (<FormItem><FormLabel>{form.watch("type") === "customer" ? "Customer Name" : "Supplier Name"}</FormLabel><FormControl><Input placeholder={`Enter ${form.watch("type")} name`} {...field} readOnly={!!editingPayment && !!editingPayment.ledgerEntryId} /></FormControl><FormMessage /></FormItem>)} />
               <FormField control={form.control} name="relatedEntityId" render={({ field }) => (<FormItem><FormLabel>{form.watch("type") === "customer" ? "Customer ID" : "Supplier ID"} (from database)</FormLabel><FormControl><Input placeholder={`Enter ${form.watch("type")} Firestore ID`} {...field} readOnly={!!editingPayment && !!editingPayment.ledgerEntryId} /></FormControl><FormMessage /></FormItem>)} />
-              <FormField control={form.control} name="relatedInvoiceId" render={({ field }) => (<FormItem><FormLabel>Related Invoice/PO/Ledger ID (Optional)</FormLabel><FormControl><Input placeholder="e.g., INV00123 or Ledger ID" {...field} value={field.value ?? ""} readOnly={!!editingPayment && !!editingPayment.ledgerEntryId} /></FormControl><FormMessage /></FormItem>)} />
+              <FormField control={form.control} name="relatedInvoiceId" render={({ field }) => (<FormItem><FormLabel>Related Invoice/PO/Ledger Reference (Optional)</FormLabel><FormControl><Input placeholder="e.g., INV00123 or Ledger Ref" {...field} value={field.value ?? ""} readOnly={!!editingPayment && !!editingPayment.ledgerEntryId} /></FormControl><FormMessage /></FormItem>)} />
               <FormField control={form.control} name="isoDate" render={({ field }) => (<FormItem><FormLabel>Payment Date</FormLabel><FormControl><Input type="date" {...field} readOnly={!!editingPayment && !!editingPayment.ledgerEntryId}/></FormControl><FormMessage /></FormItem>)} />
 
               <FormField control={form.control} name="status" render={({ field }) => (
@@ -587,7 +609,7 @@ export default function PaymentsPage() {
         value={activeMainTab} 
         onValueChange={(value) => {
             setActiveMainTab(value as 'customer' | 'supplier');
-            setActiveStatusFilter('all'); // Reset status filter when main tab changes
+            setActiveStatusFilter('all'); 
         }} 
         className="w-full"
       >
