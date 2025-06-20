@@ -80,7 +80,7 @@ export interface LedgerEntry {
   amountPaidNow?: number; 
   remainingAmount?: number; 
   associatedPaymentRecordId?: string | null; 
-  relatedInvoiceId?: string | null; // Field to link to an Invoice, especially for consolidated payments
+  relatedInvoiceId?: string | null; 
 }
 
 const ledgerItemSchema = z.object({
@@ -665,47 +665,30 @@ export default function DailyLedgerPage() {
       remainingAmount: remainingAmountForLedgerSave,
       notes: data.notes,
       relatedInvoiceId: data.relatedInvoiceId || null,
-      updatedAt: serverTimestamp(),
+      // Timestamps and user info will be handled below
     };
-    
-    if (editingLedgerEntry) {
-        ledgerDataForSave.createdByUid = editingLedgerEntry.createdByUid;
-        ledgerDataForSave.createdByName = editingLedgerEntry.createdByName;
-        ledgerDataForSave.createdAt = editingLedgerEntry.createdAt; 
-        ledgerDataForSave.updatedByUid = currentUser.uid;
-        ledgerDataForSave.updatedByName = currentUserName;
-    } else {
-        ledgerDataForSave.createdByUid = currentUser.uid;
-        ledgerDataForSave.createdByName = currentUserName;
-        ledgerDataForSave.createdAt = serverTimestamp() as Timestamp; 
-        ledgerDataForSave.updatedByUid = null;
-        ledgerDataForSave.updatedByName = null;
-    }
-
 
     try {
       await runTransaction(db, async (transaction) => {
-        let ledgerDocRef: DocumentReference;
-        let originalLedgerEntryData: LedgerEntry | null = null;
+        const ledgerDocRef = editingLedgerEntry ? doc(db, "ledgerEntries", editingLedgerEntry.id) : doc(collection(db, "ledgerEntries"));
         
+        // --- Phase 1: Reads ---
+        let originalLedgerEntryData: LedgerEntry | null = null;
+        let oldPaymentSnap: DocumentSnapshot<DocumentData> | null = null;
+        const productSnapshots = new Map<string, DocumentSnapshot<DocumentData>>();
+        let targetInvoiceSnap: DocumentSnapshot<DocumentData> | null = null;
+        const originalConsolidatedLedgerEntrySnaps = new Map<string, DocumentSnapshot<DocumentData>>();
+
         if (editingLedgerEntry) {
-          ledgerDocRef = doc(db, "ledgerEntries", editingLedgerEntry.id);
           const originalLedgerSnap = await transaction.get(ledgerDocRef);
           if (!originalLedgerSnap.exists()) throw new Error("Original ledger entry not found for editing.");
           originalLedgerEntryData = originalLedgerSnap.data() as LedgerEntry;
-          // Delete old associated payment record if editing and one existed
           if (originalLedgerEntryData.associatedPaymentRecordId) {
               const oldPaymentRef = doc(db, "payments", originalLedgerEntryData.associatedPaymentRecordId);
-              const oldPaymentSnap = await transaction.get(oldPaymentRef);
-              if (oldPaymentSnap.exists()) {
-                  transaction.delete(oldPaymentRef); 
-              }
+              oldPaymentSnap = await transaction.get(oldPaymentRef);
           }
-        } else {
-          ledgerDocRef = doc(collection(db, "ledgerEntries"));
         }
 
-        // Stock adjustments for "Ledger Record" type
         if (data.entryPurpose === "Ledger Record") {
             const productIdsInvolved = new Set<string>();
             if (originalLedgerEntryData && originalLedgerEntryData.entryPurpose === "Ledger Record") {
@@ -713,7 +696,6 @@ export default function DailyLedgerPage() {
             }
             (ledgerDataForSave.items || []).forEach(item => productIdsInvolved.add(item.productId));
 
-            const productSnapshots = new Map<string, DocumentSnapshot<DocumentData>>();
             for (const productId of productIdsInvolved) {
               const productRefFromDb = doc(db, "products", productId); 
               const productSnap = await transaction.get(productRefFromDb);
@@ -725,9 +707,25 @@ export default function DailyLedgerPage() {
               }
               productSnapshots.set(productId, productSnap);
             }
+        }
 
-            const productStockUpdates: Array<{ ref: DocumentReference; newStock: number; previousStock: number; productName: string; sku: string; originalItemEffect: any; newItemEffect: any; }> = [];
-            for (const productId of productIdsInvolved) {
+        if (data.entryPurpose === "Payment Record" && data.relatedInvoiceId) {
+            targetInvoiceSnap = await transaction.get(doc(db, "invoices", data.relatedInvoiceId));
+            if (targetInvoiceSnap.exists() && targetInvoiceSnap.data()?.consolidatedLedgerEntryIds?.length > 0) {
+                for (const entryId of targetInvoiceSnap.data()!.consolidatedLedgerEntryIds) {
+                    const originalEntryRef = doc(db, "ledgerEntries", entryId);
+                    const snap = await transaction.get(originalEntryRef);
+                    if (snap.exists()) {
+                        originalConsolidatedLedgerEntrySnaps.set(entryId, snap);
+                    }
+                }
+            }
+        }
+        
+        // --- Phase 2: Logic & Calculations ---
+        const productStockUpdates: Array<{ ref: DocumentReference; newStock: number; previousStock: number; productName: string; sku: string; originalItemEffect: any; newItemEffect: any; }> = [];
+        if (data.entryPurpose === "Ledger Record") {
+             for (const productId of productSnapshots.keys()) {
                 const productSnap = productSnapshots.get(productId)!; 
                 const currentDbStock = productSnap.data()!.stock as number;
                 const productName = productSnap.data()!.name as string;
@@ -746,7 +744,7 @@ export default function DailyLedgerPage() {
                 }
 
                 if (newItem) {
-                    const quantityToApply = ledgerDataForSave.type === 'sale' ? -newItem.quantity : newItem.quantity;  
+                    const quantityToApply = (ledgerDataForSave.type as 'sale' | 'purchase') === 'sale' ? -newItem.quantity : newItem.quantity;  
                     calculatedNewStock += quantityToApply;
                     newItemEffectLog = { quantity: newItem.quantity, type: ledgerDataForSave.type as 'sale' | 'purchase' };
                 }
@@ -757,43 +755,27 @@ export default function DailyLedgerPage() {
                     productStockUpdates.push({ ref: productSnap.ref, newStock: calculatedNewStock, previousStock: currentDbStock, productName, sku, originalItemEffect: originalItemEffectLog, newItemEffect: newItemEffectLog });
                 }
             }
-             for (const pu of productStockUpdates) {
-                if (!pu.ref || !pu.ref.firestore) throw new Error(`Invalid product reference for ${pu.productName}`);
-                transaction.update(pu.ref, { stock: pu.newStock, updatedAt: serverTimestamp() });
-                const stockMovementLogRef = doc(collection(db, "stockMovements"));
-                let notesForLog = `Stock for ${pu.productName} (SKU: ${pu.sku}) `;
-                notesForLog += editingLedgerEntry ? `updated by edit of ledger entry.` : `adjusted by new ledger entry.`;
-                if (editingLedgerEntry && pu.originalItemEffect) notesForLog += ` Original: ${pu.originalItemEffect.type} of ${pu.originalItemEffect.quantity}.`;
-                if (pu.newItemEffect) notesForLog += ` Current: ${pu.newItemEffect.type} of ${pu.newItemEffect.quantity}.`;
-                transaction.set(stockMovementLogRef, {
-                    productId: pu.ref.id, productName: pu.productName, sku: pu.sku,
-                    previousStock: pu.previousStock, newStock: pu.newStock,
-                    adjustmentType: editingLedgerEntry ? `ledger_edit_${pu.newItemEffect?.type || 'reversion'}` : `ledger_new_${pu.newItemEffect?.type || 'item_missing'}`,
-                    adjustmentValue: pu.newStock - pu.previousStock, notes: notesForLog.trim(),
-                    timestamp: serverTimestamp(), adjustedByUid: currentUser.uid, adjustedByEmail: currentUser.email || "N/A",
-                    ledgerEntryId: ledgerDocRef.id,
-                });
-            }
         }
-        
+
         let newAssociatedPaymentRecordId: string | null = null;
+        let paymentDataForSave: (Omit<PaymentRecord, 'id' | 'createdAt' | 'updatedAt' | 'displayAmountPaid'> & {createdAt: any, updatedAt?: any, ledgerEntryId: string}) | null = null;
+
         if (data.entryPurpose === "Payment Record" || (data.entryPurpose === "Ledger Record" && (data.paymentStatus === 'paid' || data.paymentStatus === 'partial'))) {
-          const paymentRecordRef = doc(collection(db, "payments"));
-          newAssociatedPaymentRecordId = paymentRecordRef.id;
+          newAssociatedPaymentRecordId = doc(collection(db, "payments")).id;
           
           let paymentStatusForRecord: typeof PAYMENT_STATUSES_PAYMENT_PAGE[number];
           if (data.entryPurpose === "Payment Record") {
-            paymentStatusForRecord = data.type === 'sale' ? 'Received' : 'Sent';
+            paymentStatusForRecord = (data.type as 'sale' | 'purchase') === 'sale' ? 'Received' : 'Sent';
           } else { 
             if (data.paymentStatus === 'paid') {
-                paymentStatusForRecord = data.type === 'sale' ? 'Received' : 'Sent';
+                paymentStatusForRecord = (data.type as 'sale' | 'purchase') === 'sale' ? 'Received' : 'Sent';
             } else { 
                 paymentStatusForRecord = 'Partial';
             }
           }
 
-          const paymentData: Omit<PaymentRecord, 'id' | 'createdAt' | 'updatedAt' | 'displayAmountPaid'> & {createdAt: any, updatedAt?: any, ledgerEntryId: string} = {
-            type: data.type === 'sale' ? 'customer' : 'supplier', 
+          paymentDataForSave = {
+            type: (data.type as 'sale' | 'purchase') === 'sale' ? 'customer' : 'supplier', 
             relatedEntityName: ledgerDataForSave.entityName!,
             relatedEntityId: ledgerDataForSave.entityId || `unknown-${ledgerDataForSave.entityType}-${Date.now()}`,
             relatedInvoiceId: ledgerDataForSave.relatedInvoiceId || null, 
@@ -810,10 +792,98 @@ export default function DailyLedgerPage() {
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           };
-          transaction.set(paymentRecordRef, paymentData);
         }
         
-        const finalLedgerDataToCommit = { ...ledgerDataForSave, associatedPaymentRecordId: newAssociatedPaymentRecordId };
+        const finalLedgerDataToCommit: Partial<LedgerEntry> = {
+            ...ledgerDataForSave, 
+            associatedPaymentRecordId: newAssociatedPaymentRecordId,
+            updatedAt: serverTimestamp(),
+        };
+        if (editingLedgerEntry && originalLedgerEntryData) {
+            finalLedgerDataToCommit.createdByUid = originalLedgerEntryData.createdByUid;
+            finalLedgerDataToCommit.createdByName = originalLedgerEntryData.createdByName;
+            finalLedgerDataToCommit.createdAt = originalLedgerEntryData.createdAt; 
+            finalLedgerDataToCommit.updatedByUid = currentUser.uid;
+            finalLedgerDataToCommit.updatedByName = currentUserName;
+        } else {
+            finalLedgerDataToCommit.createdByUid = currentUser.uid;
+            finalLedgerDataToCommit.createdByName = currentUserName;
+            finalLedgerDataToCommit.createdAt = serverTimestamp() as Timestamp; 
+            finalLedgerDataToCommit.updatedByUid = null;
+            finalLedgerDataToCommit.updatedByName = null;
+        }
+
+        const reconciledOriginalLedgerUpdates: Array<{ref: DocumentReference, data: Partial<LedgerEntry>}> = [];
+        let reconciledTargetInvoiceUpdate: {ref: DocumentReference, data: Partial<Invoice>} | null = null;
+
+        if (data.entryPurpose === "Payment Record" && targetInvoiceSnap?.exists() && originalConsolidatedLedgerEntrySnaps.size > 0) {
+            const targetInvoiceData = targetInvoiceSnap.data() as Invoice;
+            let paymentAmountToDistribute = data.paymentAmount || 0;
+            
+            const originalLedgerEntriesDataToSort: LedgerEntry[] = [];
+            originalConsolidatedLedgerEntrySnaps.forEach(snap => originalLedgerEntriesDataToSort.push({ id: snap.id, ...snap.data() } as LedgerEntry));
+            originalLedgerEntriesDataToSort.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+            for (const originalEntry of originalLedgerEntriesDataToSort) {
+                if (paymentAmountToDistribute <= 0) break;
+                if ((originalEntry.remainingAmount || 0) <= 0) continue;
+
+                const amountToApply = Math.min(paymentAmountToDistribute, originalEntry.remainingAmount || 0);
+                
+                const updatedOriginalEntryData: Partial<LedgerEntry> = {
+                    amountPaidNow: (originalEntry.amountPaidNow || 0) + amountToApply,
+                    remainingAmount: (originalEntry.remainingAmount || 0) - amountToApply,
+                    updatedAt: serverTimestamp(),
+                };
+                if (updatedOriginalEntryData.remainingAmount! <= 0) {
+                    updatedOriginalEntryData.paymentStatus = 'paid';
+                    updatedOriginalEntryData.remainingAmount = 0;
+                } else {
+                    updatedOriginalEntryData.paymentStatus = 'partial';
+                }
+                reconciledOriginalLedgerUpdates.push({ref: doc(db, "ledgerEntries", originalEntry.id), data: updatedOriginalEntryData});
+                paymentAmountToDistribute -= amountToApply;
+            }
+
+            const newTotalAmountForConsolidated = Math.max(0, targetInvoiceData.totalAmount - (data.paymentAmount || 0) + paymentAmountToDistribute); 
+            let newStatusForConsolidated: Invoice['status'] = 'Pending';
+            if (newTotalAmountForConsolidated <= 0) {
+                newStatusForConsolidated = 'Paid';
+            } else if (newTotalAmountForConsolidated < targetInvoiceData.totalAmount) {
+                newStatusForConsolidated = 'Partially Paid';
+            }
+            reconciledTargetInvoiceUpdate = {
+                ref: targetInvoiceSnap.ref, 
+                data: { totalAmount: newTotalAmountForConsolidated, status: newStatusForConsolidated, updatedAt: serverTimestamp() }
+            };
+        }
+
+        // --- Phase 3: Writes ---
+        if (oldPaymentSnap?.exists()) {
+            transaction.delete(oldPaymentSnap.ref); 
+        }
+
+        for (const pu of productStockUpdates) {
+            if (!pu.ref || !pu.ref.firestore) throw new Error(`Invalid product reference for ${pu.productName}`);
+            transaction.update(pu.ref, { stock: pu.newStock, updatedAt: serverTimestamp() });
+            const stockMovementLogRef = doc(collection(db, "stockMovements"));
+            let notesForLog = `Stock for ${pu.productName} (SKU: ${pu.sku}) `;
+            notesForLog += editingLedgerEntry ? `updated by edit of ledger entry.` : `adjusted by new ledger entry.`;
+            if (editingLedgerEntry && pu.originalItemEffect) notesForLog += ` Original: ${pu.originalItemEffect.type} of ${pu.originalItemEffect.quantity}.`;
+            if (pu.newItemEffect) notesForLog += ` Current: ${pu.newItemEffect.type} of ${pu.newItemEffect.quantity}.`;
+            transaction.set(stockMovementLogRef, {
+                productId: pu.ref.id, productName: pu.productName, sku: pu.sku,
+                previousStock: pu.previousStock, newStock: pu.newStock,
+                adjustmentType: editingLedgerEntry ? `ledger_edit_${pu.newItemEffect?.type || 'reversion'}` : `ledger_new_${pu.newItemEffect?.type || 'item_missing'}`,
+                adjustmentValue: pu.newStock - pu.previousStock, notes: notesForLog.trim(),
+                timestamp: serverTimestamp(), adjustedByUid: currentUser.uid, adjustedByEmail: currentUser.email || "N/A",
+                ledgerEntryId: ledgerDocRef.id,
+            });
+        }
+
+        if (paymentDataForSave && newAssociatedPaymentRecordId) {
+             transaction.set(doc(db, "payments", newAssociatedPaymentRecordId), paymentDataForSave);
+        }
         
         if (editingLedgerEntry) {
             transaction.update(ledgerDocRef, finalLedgerDataToCommit as DocumentData);
@@ -821,65 +891,12 @@ export default function DailyLedgerPage() {
             transaction.set(ledgerDocRef, finalLedgerDataToCommit as DocumentData);
         }
 
-        // --- Start: Payment Reconciliation for Consolidated Invoices ---
-        if (data.entryPurpose === "Payment Record" && data.relatedInvoiceId && (data.paymentAmount || 0) > 0) {
-            const targetInvoiceRef = doc(db, "invoices", data.relatedInvoiceId);
-            const targetInvoiceSnap = await transaction.get(targetInvoiceRef);
-
-            if (targetInvoiceSnap.exists()) {
-                const targetInvoiceData = targetInvoiceSnap.data() as Invoice;
-                if (targetInvoiceData.consolidatedLedgerEntryIds && targetInvoiceData.consolidatedLedgerEntryIds.length > 0) {
-                    let paymentAmountToDistribute = data.paymentAmount || 0;
-                    
-                    const originalLedgerEntriesData: LedgerEntry[] = [];
-                    for (const entryId of targetInvoiceData.consolidatedLedgerEntryIds) {
-                        const originalEntryRef = doc(db, "ledgerEntries", entryId);
-                        const originalEntrySnap = await transaction.get(originalEntryRef);
-                        if (originalEntrySnap.exists()) {
-                            originalLedgerEntriesData.push({ id: originalEntrySnap.id, ...originalEntrySnap.data() } as LedgerEntry);
-                        }
-                    }
-                    originalLedgerEntriesData.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
-                    for (const originalEntry of originalLedgerEntriesData) {
-                        if (paymentAmountToDistribute <= 0) break;
-                        if ((originalEntry.remainingAmount || 0) <= 0) continue;
-
-                        const amountToApply = Math.min(paymentAmountToDistribute, originalEntry.remainingAmount || 0);
-                        
-                        const updatedOriginalEntry: Partial<LedgerEntry> = {
-                            amountPaidNow: (originalEntry.amountPaidNow || 0) + amountToApply,
-                            remainingAmount: (originalEntry.remainingAmount || 0) - amountToApply,
-                            updatedAt: serverTimestamp(),
-                        };
-                        if (updatedOriginalEntry.remainingAmount! <= 0) {
-                            updatedOriginalEntry.paymentStatus = 'paid';
-                            updatedOriginalEntry.remainingAmount = 0;
-                        } else {
-                            updatedOriginalEntry.paymentStatus = 'partial';
-                        }
-                        transaction.update(doc(db, "ledgerEntries", originalEntry.id), updatedOriginalEntry);
-                        paymentAmountToDistribute -= amountToApply;
-                    }
-
-                    const newTotalAmountForConsolidated = Math.max(0, targetInvoiceData.totalAmount - (data.paymentAmount || 0) + paymentAmountToDistribute); 
-                    let newStatusForConsolidated: Invoice['status'] = 'Pending';
-                    if (newTotalAmountForConsolidated <= 0) {
-                        newStatusForConsolidated = 'Paid';
-                    } else if (newTotalAmountForConsolidated < targetInvoiceData.totalAmount) {
-                        newStatusForConsolidated = 'Partially Paid';
-                    }
-                    transaction.update(targetInvoiceRef, {
-                        totalAmount: newTotalAmountForConsolidated, 
-                        status: newStatusForConsolidated,
-                        updatedAt: serverTimestamp()
-                    });
-                }
-            }
+        for (const updateOp of reconciledOriginalLedgerUpdates) {
+            transaction.update(updateOp.ref, updateOp.data);
         }
-        // --- End: Payment Reconciliation ---
-
-
+        if (reconciledTargetInvoiceUpdate) {
+            transaction.update(reconciledTargetInvoiceUpdate.ref, reconciledTargetInvoiceUpdate.data);
+        }
       });
 
       toast({ title: editingLedgerEntry ? "Ledger Entry Updated" : "Ledger Entry Saved", description: "Transaction recorded, stock updated (if applicable), and payment record handled." });
@@ -1013,13 +1030,13 @@ export default function DailyLedgerPage() {
         );
         const matchesNotes = entry.notes ? entry.notes.toLowerCase().includes(searchTermLower) : false;
         const matchesPaymentMethod = entry.paymentMethod ? entry.paymentMethod.toLowerCase().includes(searchTermLower) : false;
-        const matchesId = entry.id.toLowerCase().includes(searchTermLower);
+        
         const matchesCreator = entry.createdByName?.toLowerCase().includes(searchTermLower);
         const matchesUpdater = entry.updatedByName?.toLowerCase().includes(searchTermLower);
         const matchesPurpose = entry.entryPurpose.toLowerCase().includes(searchTermLower);
         const matchesPaymentAmount = entry.entryPurpose === "Payment Record" && entry.grandTotal.toString().includes(searchTermLower);
 
-        return matchesEntity || matchesItems || matchesNotes || matchesPaymentMethod || matchesId || matchesCreator || matchesUpdater || matchesPurpose || matchesPaymentAmount;
+        return matchesEntity || matchesItems || matchesNotes || matchesPaymentMethod || matchesCreator || matchesUpdater || matchesPurpose || matchesPaymentAmount;
     });
   }, [ledgerEntries, activeLedgerTab, ledgerSearchTerm, selectedUserFilterName, formatCurrency]);
   
@@ -1524,4 +1541,5 @@ export default function DailyLedgerPage() {
     </>
   );
 }
+
 
