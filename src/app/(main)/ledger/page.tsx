@@ -251,7 +251,7 @@ export default function DailyLedgerPage() {
         getDocs(query(collection(db, "sellers"), orderBy("name"))),
         getDocs(query(collection(db, "products"), orderBy("name"))),
         getDocs(query(collection(db, "ledgerEntries"), where("date", "==", date), orderBy("createdAt", "desc"))),
-        getDocs(query(collection(db, "invoices"), orderBy("invoiceNumber", "desc"))) 
+        getDocs(query(collection(db, "invoices"), orderBy("createdAt", "desc"))) 
       ]);
 
       setCustomers(custSnap.docs.map(d => ({ id: d.id, ...d.data() } as Customer)));
@@ -618,28 +618,19 @@ export default function DailyLedgerPage() {
     try {
       await runTransaction(db, async (transaction) => {
         
-        // --- Phase 1: Reads (All reads must come before any writes) ---
+        // --- Phase 1: Reads ---
         const ledgerDocRef = editingLedgerEntry ? doc(db, "ledgerEntries", editingLedgerEntry.id) : doc(collection(db, "ledgerEntries"));
         
         let originalLedgerEntryData: LedgerEntry | null = null;
-        let oldPaymentSnap: DocumentSnapshot<DocumentData> | null = null;
         if (editingLedgerEntry) {
           const originalLedgerSnap = await transaction.get(ledgerDocRef);
           if (!originalLedgerSnap.exists()) throw new Error("Original ledger entry not found for editing.");
           originalLedgerEntryData = originalLedgerSnap.data() as LedgerEntry;
-          if (originalLedgerEntryData.associatedPaymentRecordId) {
-              const oldPaymentRef = doc(db, "payments", originalLedgerEntryData.associatedPaymentRecordId);
-              oldPaymentSnap = await transaction.get(oldPaymentRef);
-          }
         }
         
         const productIdsInvolved = new Set<string>();
-        if (data.entryPurpose === "Ledger Record") {
-            (data.items || []).forEach(item => productIdsInvolved.add(item.productId));
-        }
-        if (originalLedgerEntryData?.entryPurpose === "Ledger Record") {
-            originalLedgerEntryData.items.forEach(item => productIdsInvolved.add(item.productId));
-        }
+        if (data.entryPurpose === "Ledger Record") { (data.items || []).forEach(item => productIdsInvolved.add(item.productId)); }
+        if (originalLedgerEntryData?.entryPurpose === "Ledger Record") { originalLedgerEntryData.items.forEach(item => productIdsInvolved.add(item.productId)); }
         
         const productSnapshots = new Map<string, DocumentSnapshot<DocumentData>>();
         for (const productId of productIdsInvolved) {
@@ -661,7 +652,7 @@ export default function DailyLedgerPage() {
             }
         }
         
-        // --- Phase 2: Logic & Calculations (No writes here) ---
+        // --- Phase 2: Logic & Calculations ---
         let subTotalForSave: number, taxAmountForSave: number, grandTotalForSave: number;
         let itemsForSave: LedgerItem[], amountPaidForLedgerSave: number, remainingAmountForLedgerSave: number;
         
@@ -672,19 +663,11 @@ export default function DailyLedgerPage() {
             grandTotalForSave = subTotalForSave + taxAmountForSave;
             amountPaidForLedgerSave = data.paymentStatus === 'paid' ? grandTotalForSave : (data.paymentStatus === 'partial' ? data.amountPaidNow || 0 : 0);
             remainingAmountForLedgerSave = grandTotalForSave - amountPaidForLedgerSave;
-        } else { // Payment Record
+        } else {
             itemsForSave = []; subTotalForSave = 0; taxAmountForSave = 0;
             grandTotalForSave = data.paymentAmount || 0;
             amountPaidForLedgerSave = grandTotalForSave; remainingAmountForLedgerSave = 0;
         }
-
-        let ledgerDataForSave: Partial<LedgerEntry> = {
-          date: data.date, type: data.type, entryPurpose: data.entryPurpose, entityType: data.entityType, entityId: data.entityId, entityName: data.entityName, 
-          items: itemsForSave, subTotal: subTotalForSave, gstApplied: data.entryPurpose === "Ledger Record" ? data.applyGst : false, taxAmount: taxAmountForSave, grandTotal: grandTotalForSave,
-          paymentMethod: (data.entryPurpose === "Payment Record" || (data.entryPurpose === "Ledger Record" && (data.paymentStatus === 'paid' || data.paymentStatus === 'partial'))) ? data.paymentMethod : null,
-          paymentStatus: data.paymentStatus, originalTransactionAmount: grandTotalForSave, amountPaidNow: amountPaidForLedgerSave, remainingAmount: remainingAmountForLedgerSave,
-          notes: data.notes, relatedInvoiceId: data.relatedInvoiceId || null,
-        };
 
         const productStockUpdates: Array<{ ref: DocumentReference; newStock: number }> = [];
         if (data.entryPurpose === "Ledger Record") {
@@ -705,28 +688,6 @@ export default function DailyLedgerPage() {
             }
         }
 
-        let newAssociatedPaymentRecordId: string | null = null;
-        let paymentDataForSave: (Omit<PaymentRecord, 'id' | 'createdAt' | 'updatedAt' | 'displayAmountPaid'> & {createdAt: any, updatedAt?: any, ledgerEntryId: string}) | null = null;
-        if (data.entryPurpose === "Payment Record" || (data.entryPurpose === "Ledger Record" && (data.paymentStatus === 'paid' || data.paymentStatus === 'partial'))) {
-          newAssociatedPaymentRecordId = doc(collection(db, "payments")).id;
-          paymentDataForSave = {
-            type: data.type === 'sale' ? 'customer' : 'supplier', 
-            relatedEntityName: data.entityName, relatedEntityId: data.entityId || `unknown-${data.entityType}-${Date.now()}`,
-            relatedInvoiceId: data.relatedInvoiceId || null, date: format(parseISO(data.date), "MMM dd, yyyy"), isoDate: data.date, 
-            amountPaid: amountPaidForLedgerSave, originalInvoiceAmount: grandTotalForSave, remainingBalanceOnInvoice: remainingAmountForLedgerSave, 
-            method: ledgerDataForSave.paymentMethod as any, transactionId: null, 
-            status: data.paymentStatus === 'paid' ? (data.type === 'sale' ? 'Received' : 'Sent') : 'Partial',
-            notes: `Payment from Ledger Entry. ${data.notes || ''}`.trim(), ledgerEntryId: ledgerDocRef.id, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
-          };
-        }
-
-        const finalLedgerDataToCommit: Partial<LedgerEntry> = { ...ledgerDataForSave, associatedPaymentRecordId: newAssociatedPaymentRecordId, updatedAt: serverTimestamp() };
-        if (editingLedgerEntry && originalLedgerEntryData) {
-            Object.assign(finalLedgerDataToCommit, { createdByUid: originalLedgerEntryData.createdByUid, createdByName: originalLedgerEntryData.createdByName, createdAt: originalLedgerEntryData.createdAt, updatedByUid: currentUser.uid, updatedByName: currentUserName });
-        } else {
-            Object.assign(finalLedgerDataToCommit, { createdByUid: currentUser.uid, createdByName: currentUserName, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
-        }
-
         const reconciledOriginalLedgerUpdates: Array<{ref: DocumentReference, data: Partial<LedgerEntry>}> = [];
         let reconciledTargetInvoiceUpdate: {ref: DocumentReference, data: Partial<Invoice>} | null = null;
         if (targetInvoiceSnap?.exists() && originalConsolidatedLedgerEntrySnaps.size > 0) {
@@ -744,22 +705,58 @@ export default function DailyLedgerPage() {
                     remainingAmount: (originalEntry.remainingAmount || 0) - amountToApply,
                     updatedAt: serverTimestamp(),
                 };
-                updatedOriginalEntryData.paymentStatus = (updatedOriginalEntryData.remainingAmount ?? 0) <= 0 ? 'paid' : 'partial';
+                updatedOriginalEntryData.paymentStatus = (updatedOriginalEntryData.remainingAmount ?? 0) <= 0.01 ? 'paid' : 'partial';
                 reconciledOriginalLedgerUpdates.push({ref: doc(db, "ledgerEntries", originalEntry.id), data: updatedOriginalEntryData});
                 paymentToDistribute -= amountToApply;
             }
             const newTotalAmountForConsolidated = Math.max(0, targetInvoiceData.totalAmount - grandTotalForSave);
             reconciledTargetInvoiceUpdate = {
                 ref: targetInvoiceSnap.ref, 
-                data: { totalAmount: newTotalAmountForConsolidated, status: newTotalAmountForConsolidated <= 0 ? 'Paid' : 'Partially Paid', updatedAt: serverTimestamp() }
+                data: { totalAmount: newTotalAmountForConsolidated, status: newTotalAmountForConsolidated <= 0.01 ? 'Paid' : 'Partially Paid', updatedAt: serverTimestamp() }
             };
         }
 
-        // --- Phase 3: Writes (All writes happen here) ---
-        if (oldPaymentSnap?.exists()) transaction.delete(oldPaymentSnap.ref);
+        // --- Phase 3: Writes ---
+        const finalLedgerDataToCommit: Partial<LedgerEntry> & { updatedAt: any } = { 
+          date: data.date, type: data.type, entryPurpose: data.entryPurpose, entityType: data.entityType, entityId: data.entityId, entityName: data.entityName, 
+          items: itemsForSave, subTotal: subTotalForSave, gstApplied: data.entryPurpose === "Ledger Record" ? data.applyGst : false, taxAmount: taxAmountForSave, grandTotal: grandTotalForSave,
+          paymentMethod: (data.entryPurpose === "Payment Record" || (data.entryPurpose === "Ledger Record" && (data.paymentStatus === 'paid' || data.paymentStatus === 'partial'))) ? data.paymentMethod : null,
+          paymentStatus: data.paymentStatus, originalTransactionAmount: grandTotalForSave, amountPaidNow: amountPaidForLedgerSave, remainingAmount: remainingAmountForLedgerSave,
+          notes: data.notes, relatedInvoiceId: data.relatedInvoiceId || null, updatedAt: serverTimestamp(),
+        };
+
+        if (editingLedgerEntry && originalLedgerEntryData) {
+            Object.assign(finalLedgerDataToCommit, { updatedByUid: currentUser.uid, updatedByName: currentUserName });
+        } else {
+            Object.assign(finalLedgerDataToCommit, { createdByUid: currentUser.uid, createdByName: currentUserName, createdAt: serverTimestamp() });
+        }
+        
+        if (originalLedgerEntryData?.associatedPaymentRecordId) {
+            transaction.delete(doc(db, "payments", originalLedgerEntryData.associatedPaymentRecordId));
+        }
+
+        let newAssociatedPaymentRecordId: string | null = null;
+        if (data.entryPurpose === "Payment Record" || (data.entryPurpose === "Ledger Record" && (data.paymentStatus === 'paid' || data.paymentStatus === 'partial'))) {
+          const paymentDocRef = doc(collection(db, "payments"));
+          newAssociatedPaymentRecordId = paymentDocRef.id;
+          finalLedgerDataToCommit.associatedPaymentRecordId = newAssociatedPaymentRecordId;
+
+          const paymentDataForSave: Omit<PaymentRecord, 'id' | 'displayAmountPaid'> & { ledgerEntryId: string } = {
+            type: data.type === 'sale' ? 'customer' : 'supplier', 
+            relatedEntityName: data.entityName, relatedEntityId: data.entityId || `unknown-${data.entityType}-${Date.now()}`,
+            relatedInvoiceId: data.relatedInvoiceId || null, date: format(parseISO(data.date), "MMM dd, yyyy"), isoDate: data.date, 
+            amountPaid: amountPaidForLedgerSave, originalInvoiceAmount: grandTotalForSave, remainingBalanceOnInvoice: remainingAmountForLedgerSave, 
+            method: finalLedgerDataToCommit.method as any, transactionId: null, 
+            status: data.paymentStatus === 'paid' ? (data.type === 'sale' ? 'Received' : 'Sent') : 'Partial',
+            notes: `Payment from Ledger Entry. ${data.notes || ''}`.trim(), ledgerEntryId: ledgerDocRef.id, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+          };
+          transaction.set(paymentDocRef, paymentDataForSave);
+        } else {
+           finalLedgerDataToCommit.associatedPaymentRecordId = null;
+        }
+
         productStockUpdates.forEach(pu => transaction.update(pu.ref, { stock: pu.newStock, updatedAt: serverTimestamp() }));
-        if (paymentDataForSave && newAssociatedPaymentRecordId) transaction.set(doc(db, "payments", newAssociatedPaymentRecordId), paymentDataForSave);
-        if (editingLedgerEntry) transaction.update(ledgerDocRef, finalLedgerDataToCommit as DocumentData); else transaction.set(ledgerDocRef, finalLedgerDataToCommit as DocumentData);
+        if (editingLedgerEntry) transaction.set(ledgerDocRef, finalLedgerDataToCommit, { merge: true }); else transaction.set(ledgerDocRef, finalLedgerDataToCommit);
         reconciledOriginalLedgerUpdates.forEach(updateOp => transaction.update(updateOp.ref, updateOp.data));
         if (reconciledTargetInvoiceUpdate) transaction.update(reconciledTargetInvoiceUpdate.ref, reconciledTargetInvoiceUpdate.data);
       });
@@ -1242,7 +1239,7 @@ export default function DailyLedgerPage() {
                              </div>
                         </div>
                         {selectedEntryForDetails.associatedPaymentRecordId && (
-                             <> <Separator /> <div><strong className="text-muted-foreground">Linked Payment Ref:</strong> {selectedEntryForDetails.associatedPaymentRecordId}</div></>
+                             <> <Separator /> <div><strong className="text-muted-foreground">Linked Payment Ref:</strong> {selectedEntryForDetails.associatedPaymentRecordId.substring(0, 10)}...</div></>
                         )}
                     </div>
                 </ScrollArea>
@@ -1311,7 +1308,7 @@ export default function DailyLedgerPage() {
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader><TableRow>
-                  <TableHead className="w-32">Type</TableHead>
+                  <TableHead className="min-w-[150px]">Type</TableHead>
                   <TableHead className="min-w-[150px]">Entity</TableHead>
                   <TableHead className="min-w-[200px]">Details</TableHead>
                   <TableHead className="text-right min-w-[100px]">Total (₹)</TableHead>
@@ -1325,10 +1322,10 @@ export default function DailyLedgerPage() {
                       <TableCell>
                         <Badge 
                             variant={entry.type === 'sale' ? 'default' : 'secondary'} 
-                            className={
+                            className={`${
                                 entry.entryPurpose === "Payment Record" ? (entry.type === 'sale' ? "bg-teal-100 text-teal-700 dark:bg-teal-700/80 dark:text-teal-100" : "bg-purple-100 text-purple-700 dark:bg-purple-700/80 dark:text-purple-100") :
                                 (entry.type === 'sale' ? 'bg-green-100 text-green-700 dark:bg-green-700/80 dark:text-green-100' : 'bg-blue-100 text-blue-700 dark:bg-blue-700/80 dark:text-blue-100')
-                            }
+                            } whitespace-nowrap`}
                         >
                             {entry.entryPurpose === "Payment Record" ? 
                                 (entry.type === 'sale' ? 'Payment Received' : 'Payment Sent') :
@@ -1342,7 +1339,7 @@ export default function DailyLedgerPage() {
                             (entry.items.map(i => `${i.productName} (x${i.quantity})`).join(', ').substring(0, 50) + (entry.items.map(i => `${i.productName} (x${i.quantity})`).join(', ').length > 50 ? '...' : ''))
                             : "Payment Record"
                         }
-                         {entry.relatedInvoiceId && entry.entryPurpose === "Payment Record" && <span className="block text-muted-foreground text-[10px]">Inv: {allInvoices.find(i => i.id === entry.relatedInvoiceId)?.invoiceNumber || `Ref: ${entry.relatedInvoiceId}`}</span>}
+                         {entry.relatedInvoiceId && entry.entryPurpose === "Payment Record" && <span className="block text-muted-foreground text-[10px]">Inv: {allInvoices.find(i => i.id === entry.relatedInvoiceId)?.invoiceNumber || `Ref: ${entry.relatedInvoiceId.substring(0,6)}...`}</span>}
                       </TableCell>
                       <TableCell className="text-right font-semibold">{formatCurrency(entry.grandTotal)}</TableCell>
                       <TableCell className="capitalize">
@@ -1402,6 +1399,7 @@ export default function DailyLedgerPage() {
     </>
   );
 }
+
 
 
 
