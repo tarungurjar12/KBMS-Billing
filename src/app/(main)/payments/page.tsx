@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/page-header";
-import { CreditCard, PlusCircle, MoreHorizontal, Edit, Trash2, DollarSign, FileWarning, TrendingUp, AlertCircle, Activity } from "lucide-react";
+import { CreditCard, PlusCircle, MoreHorizontal, Edit, Trash2, DollarSign, FileWarning, TrendingUp, AlertCircle, Activity, Search, Filter, XCircle } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -21,7 +21,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { useToast } from "@/hooks/use-toast";
 import { collection, getDocs, doc, updateDoc, deleteDoc, query, orderBy, serverTimestamp, addDoc, Timestamp, where } from 'firebase/firestore';
 import { db } from '@/lib/firebase/firebaseConfig';
-import { format, parseISO, startOfDay, endOfDay } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 import type { Invoice } from './../billing/page';
 
 /**
@@ -132,6 +132,8 @@ export default function PaymentsPage() {
   ]);
   const [activeMainTab, setActiveMainTab] = useState<'customer' | 'supplier'>('customer');
   const [activeStatusFilter, setActiveStatusFilter] = useState<StatusFilterType>('all');
+  const [selectedDate, setSelectedDate] = useState<string | null>(new Date().toISOString().split('T')[0]);
+  const [searchTerm, setSearchTerm] = useState('');
 
 
   const form = useForm<PaymentFormValues>({
@@ -179,7 +181,7 @@ export default function PaymentsPage() {
     setIsLoading(true);
     setIsLoadingMetrics(true);
     try {
-      const paymentsQuery = query(collection(db, "payments"), orderBy("isoDate", "desc"));
+      const paymentsQuery = query(collection(db, "payments"), orderBy("isoDate", "desc"), orderBy("createdAt", "desc"));
       const invoicesQuery = query(collection(db, "invoices"), orderBy("invoiceNumber", "desc"));
       
       const [paymentsSnapshot, invoicesSnapshot] = await Promise.all([
@@ -199,22 +201,17 @@ export default function PaymentsPage() {
         let paymentDate = "N/A"; 
         let isoDateValue: string | null = null; 
 
-        if (data.isoDate) { 
-             if (typeof data.isoDate === 'string') {
-                try {
-                    const datePart = data.isoDate.split('T')[0]; 
-                    parseISO(datePart); 
-                    paymentDate = format(parseISO(datePart), "MMM dd, yyyy");
-                    isoDateValue = datePart;
-                } catch (e) {
-                    console.warn("Invalid isoDate string format in DB:", data.isoDate, e);
-                    paymentDate = "Invalid Date";
-                }
-            } else if (data.isoDate instanceof Timestamp) {
-                const tsDate = data.isoDate.toDate();
-                paymentDate = format(tsDate, "MMM dd, yyyy");
-                isoDateValue = tsDate.toISOString().split('T')[0];
-            }
+        if (data.isoDate && typeof data.isoDate === 'string') {
+            try {
+                const datePart = data.isoDate.split('T')[0]; 
+                parseISO(datePart); 
+                paymentDate = format(parseISO(datePart), "MMM dd, yyyy");
+                isoDateValue = datePart;
+            } catch (e) { console.warn("Invalid isoDate string format in DB:", data.isoDate, e); }
+        } else if (data.isoDate instanceof Timestamp) {
+            const tsDate = data.isoDate.toDate();
+            paymentDate = format(tsDate, "MMM dd, yyyy");
+            isoDateValue = tsDate.toISOString().split('T')[0];
         }
 
         if (!isoDateValue && data.createdAt instanceof Timestamp) {
@@ -246,41 +243,35 @@ export default function PaymentsPage() {
       });
       setAllPayments(fetchedPayments);
 
-      const todayISOStart = startOfDay(new Date()).toISOString().split('T')[0];
+      const todayISO = new Date().toISOString().split('T')[0];
 
       let totalReceived = 0, totalPending = 0, totalSent = 0;
       let todayReceived = 0, todayPending = 0, todaySent = 0;
 
       fetchedPayments.forEach(p => {
-        const paymentIsoDateOnly = p.isoDate; 
-        const isToday = paymentIsoDateOnly === todayISOStart; 
+        const isToday = p.isoDate === todayISO;
 
         if (p.type === 'customer') {
           if (p.status === 'Completed' || p.status === 'Received') {
             totalReceived += p.amountPaid;
             if (isToday) todayReceived += p.amountPaid;
           } else if (p.status === 'Partial') {
-            totalReceived += p.amountPaid; 
+            totalReceived += p.amountPaid;
             if (isToday) todayReceived += p.amountPaid;
             if (p.remainingBalanceOnInvoice && p.remainingBalanceOnInvoice > 0) {
               totalPending += p.remainingBalanceOnInvoice;
               if (isToday) todayPending += p.remainingBalanceOnInvoice;
             }
-          } else if (p.status === 'Pending' || p.status === 'Failed') { 
-            const pendingAmountForThisRecord = p.remainingBalanceOnInvoice !== null && p.remainingBalanceOnInvoice > 0 
-                                              ? p.remainingBalanceOnInvoice 
-                                              : (p.originalInvoiceAmount || 0);
-            if (pendingAmountForThisRecord > 0) {
-                totalPending += pendingAmountForThisRecord;
-                if (isToday) todayPending += pendingAmountForThisRecord;
+          } else if (p.status === 'Pending' || p.status === 'Failed') {
+            const pendingAmount = p.remainingBalanceOnInvoice ?? p.originalInvoiceAmount ?? 0;
+            if (pendingAmount > 0) {
+              totalPending += pendingAmount;
+              if (isToday) todayPending += pendingAmount;
             }
           }
         } else { // supplier
-          if (p.status === 'Completed' || p.status === 'Sent') {
+          if (p.status === 'Completed' || p.status === 'Sent' || p.status === 'Partial') {
             totalSent += p.amountPaid;
-            if (isToday) todaySent += p.amountPaid;
-          } else if (p.status === 'Partial') {
-             totalSent += p.amountPaid; 
             if (isToday) todaySent += p.amountPaid;
           }
         }
@@ -300,7 +291,7 @@ export default function PaymentsPage() {
        if (error.code === 'failed-precondition') {
         toast({
             title: "Database Index Required",
-            description: `A query failed. Firestore index (e.g., 'payments' by 'isoDate' DESC or 'invoices' by 'invoiceNumber' DESC) likely needed. Check console for details.`,
+            description: `A query failed. Firestore index (e.g., 'payments' by 'isoDate'/'createdAt' DESC or 'invoices' by 'invoiceNumber' DESC) likely needed. Check console for details.`,
             variant: "destructive", duration: 15000,
         });
       } else {
@@ -400,21 +391,33 @@ export default function PaymentsPage() {
   };
 
   const displayedPayments = useMemo(() => {
-    let filteredByType = allPayments.filter(p => p.type === activeMainTab);
-
-    if (activeStatusFilter === 'paid') {
-        if (activeMainTab === 'customer') {
-            filteredByType = filteredByType.filter(p => p.status === 'Completed' || p.status === 'Received');
-        } else { // supplier
-            filteredByType = filteredByType.filter(p => p.status === 'Completed' || p.status === 'Sent');
+    const searchTermLower = searchTerm.toLowerCase();
+    
+    return allPayments
+      .filter(p => p.type === activeMainTab)
+      .filter(p => {
+        if (!selectedDate) return true;
+        return p.isoDate === selectedDate;
+      })
+      .filter(p => {
+        if (!searchTermLower) return true;
+        const invoice = p.relatedInvoiceId ? allInvoices.find(inv => inv.id === p.relatedInvoiceId) : null;
+        return (
+          p.relatedEntityName.toLowerCase().includes(searchTermLower) ||
+          p.amountPaid.toString().includes(searchTermLower) ||
+          (invoice && invoice.invoiceNumber.toLowerCase().includes(searchTermLower))
+        );
+      })
+      .filter(p => {
+        if (activeStatusFilter === 'all') return true;
+        if (activeStatusFilter === 'paid') {
+          return p.status === 'Completed' || p.status === 'Received' || p.status === 'Sent';
         }
-    } else if (activeStatusFilter === 'partial') {
-        filteredByType = filteredByType.filter(p => p.status === 'Partial');
-    } else if (activeStatusFilter === 'pending') {
-        filteredByType = filteredByType.filter(p => p.status === 'Pending' || p.status === 'Failed');
-    }
-    return filteredByType;
-  }, [allPayments, activeMainTab, activeStatusFilter]);
+        if (activeStatusFilter === 'partial') return p.status === 'Partial';
+        if (activeStatusFilter === 'pending') return p.status === 'Pending' || p.status === 'Failed';
+        return false;
+      });
+  }, [allPayments, activeMainTab, activeStatusFilter, selectedDate, searchTerm, allInvoices]);
 
 
   const renderPaymentTable = (paymentsToRender: PaymentRecord[], type: "customer" | "supplier") => {
@@ -422,9 +425,9 @@ export default function PaymentsPage() {
         if (payment.relatedInvoiceId) {
             const invoice = allInvoices.find(inv => inv.id === payment.relatedInvoiceId);
             if (invoice) return invoice.invoiceNumber;
-            return `Inv Ref: ${payment.relatedInvoiceId.substring(0,6)}...`;
+            return `Inv Ref: ${payment.relatedInvoiceId}`;
         }
-        if (payment.ledgerEntryId) return `Ledger Ref: ${payment.ledgerEntryId.substring(0,6)}...`;
+        if (payment.ledgerEntryId) return `Ledger Ref: ${payment.ledgerEntryId}`;
         return "N/A";
     };
 
@@ -488,12 +491,9 @@ export default function PaymentsPage() {
   };
   
   const getEmptyStateMessage = () => {
-    const entityType = activeMainTab === 'customer' ? 'Customer' : 'Supplier';
-    if (activeStatusFilter === 'all') {
-        return `No ${entityType} Payments Recorded.`;
-    }
-    const statusText = activeStatusFilter.charAt(0).toUpperCase() + activeStatusFilter.slice(1);
-    return `No '${statusText}' ${entityType} Payments found.`;
+      if (searchTerm) return `No records match your search for "${searchTerm}".`;
+      if (selectedDate) return `No records found for ${format(parseISO(selectedDate), "MMM dd, yyyy")}.`;
+      return "No payment records found.";
   };
   
   const getEmptyStateButtonText = () => {
@@ -528,7 +528,30 @@ export default function PaymentsPage() {
           </Card>
         ))}
       </div>
-
+      
+      <Card className="shadow-lg rounded-xl mb-6">
+        <CardHeader>
+            <CardTitle className="font-headline text-foreground">Filter & Search Payments</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col sm:flex-row gap-3">
+          <div className="flex-1">
+            <Label htmlFor="date-filter">Date</Label>
+            <Input id="date-filter" type="date" value={selectedDate ?? ""} onChange={(e) => setSelectedDate(e.target.value)} />
+          </div>
+          <div className="flex-1">
+            <Label htmlFor="search-filter">Search</Label>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input id="search-filter" placeholder="By name, amount, invoice #" className="pl-8" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+            </div>
+          </div>
+          <div className="flex items-end">
+            <Button variant="outline" onClick={() => {setSelectedDate(null); setSearchTerm('');}} className="w-full sm:w-auto">
+              <XCircle className="mr-2 h-4 w-4" /> Clear Filters
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       <Dialog open={isFormDialogOpen} onOpenChange={(isOpen) => {
           if(!isOpen) { setIsFormDialogOpen(false); setEditingPayment(null); form.reset(); } else { setIsFormDialogOpen(isOpen); }
@@ -673,4 +696,3 @@ export default function PaymentsPage() {
     </>
   );
 }
-
