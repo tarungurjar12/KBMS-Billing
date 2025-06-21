@@ -113,12 +113,18 @@ export default function ManageSellersPage() {
   }, [editingSeller, isFormDialogOpen, form]);
 
   const handleFormSubmit = async (values: SellerFormValues) => {
-    const dataToSave = { ...values, updatedAt: serverTimestamp() };
-     Object.keys(dataToSave).forEach(key => { // Convert empty strings to null for optional fields
-        if (dataToSave[key as keyof typeof dataToSave] === "") {
-            dataToSave[key as keyof typeof dataToSave] = null;
-        }
-    });
+    const dataToSave = {
+      name: values.name,
+      contactPerson: values.contactPerson || null,
+      email: values.email || null,
+      phone: values.phone,
+      address: values.address || null,
+      gstin: values.gstin || null,
+      bankDetails: values.bankDetails || null,
+      purchaseTerms: values.purchaseTerms || null,
+      updatedAt: serverTimestamp(),
+    };
+
     try {
       if (editingSeller) {
         await updateDoc(doc(db, "sellers", editingSeller.id), dataToSave);
@@ -299,5 +305,3 @@ export default function ManageSellersPage() {
     </>
   );
 }
-
-    
