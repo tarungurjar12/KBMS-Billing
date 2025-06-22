@@ -159,6 +159,7 @@ export function SidebarNav() {
         console.log("SidebarNav: Firebase user logged out or session expired.");
         setCurrentUser(null);
         deleteCookie('userRole');
+        deleteCookie('companyId');
         setUserRole(undefined);
         setUnreadCount(0);
         if (pathname !== '/login' && pathname !== '/register-admin') { 
@@ -206,17 +207,24 @@ export function SidebarNav() {
 
   /**
    * Handles user logout.
-   * Signs out from Firebase. The onAuthStateChanged listener will then clear cookies and redirect.
+   * Signs out from Firebase, explicitly clears cookies, and redirects to the login page.
    */
   const handleLogout = async () => {
     try {
       await firebaseSignOut(auth);
-      // onAuthStateChanged will handle cookie deletion and redirection to /login
-      console.log("SidebarNav: Logout successful. Firebase sign-out initiated.");
+      // Explicitly clear cookies and redirect for a faster, more reliable UX
+      deleteCookie('userRole');
+      deleteCookie('companyId');
+      setUserRole(undefined);
+      setUnreadCount(0);
+      setCurrentUser(null);
+      router.push('/login');
+      console.log("SidebarNav: Logout successful. Firebase sign-out and client-side cleanup complete.");
     } catch (error) {
       console.error("Error signing out from Firebase: ", error);
-      // Fallback: Manually clear cookie and redirect if Firebase signout fails
+      // Fallback in case of error
       deleteCookie('userRole');
+      deleteCookie('companyId');
       setUserRole(undefined);
       router.push('/login');
     }
