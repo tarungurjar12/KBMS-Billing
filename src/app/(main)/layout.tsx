@@ -7,7 +7,7 @@ import { SidebarProvider, Sidebar, SidebarInset, SidebarTrigger, SidebarRail } f
 import { SidebarNav } from '@/components/layout/sidebar-nav';
 import { Skeleton } from '@/components/ui/skeleton';
 import { auth, db } from '@/lib/firebase/firebaseConfig';
-import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
+import { onAuthStateChanged, User as FirebaseUser, signOut } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import type { UserProfile } from './my-profile/page';
 
@@ -90,6 +90,17 @@ export default function MainAppLayout({
 
           if (userDocSnap.exists()) {
             const userData = userDocSnap.data();
+
+            // --- Single Session Validation ---
+            const storedSessionId = userData?.activeSessionId;
+            const cookieSessionId = getCookie('activeSessionId');
+            if (storedSessionId && cookieSessionId && storedSessionId !== cookieSessionId) {
+                console.warn(`MainAppLayout: Session mismatch. Stored: ${storedSessionId}, Cookie: ${cookieSessionId}. Forcing logout.`);
+                await signOut(auth); // This will trigger onAuthStateChanged again with null user
+                return; // Stop further processing for this invalid session
+            }
+            // --- End Single Session Validation ---
+
             const firestoreRole = userData?.role as UserProfile['role'];
             const firestoreCompanyId = userData?.companyId as string;
 
@@ -104,7 +115,7 @@ export default function MainAppLayout({
               console.warn("MainAppLayout verifyAndSetSession: User doc found but role/companyId missing/invalid in Firestore. UID:", firebaseUser.uid, "Data:", userData);
               setAuthStatus('unauthenticated'); 
               setCurrentRole(undefined); setCurrentCompanyId(undefined);
-              deleteCookie('userRole'); deleteCookie('companyId');
+              deleteCookie('userRole'); deleteCookie('companyId'); deleteCookie('activeSessionId');
               if (pathname !== '/login' && pathname !== '/register-admin') router.push('/login');
             }
           } else {
@@ -114,7 +125,7 @@ export default function MainAppLayout({
             if (pathname !== '/register-admin' && pathname !== '/login') {
                 setAuthStatus('unauthenticated');
                 setCurrentRole(undefined); setCurrentCompanyId(undefined);
-                deleteCookie('userRole'); deleteCookie('companyId');
+                deleteCookie('userRole'); deleteCookie('companyId'); deleteCookie('activeSessionId');
                 router.push('/login'); // Redirect to login if no profile and not on registration page
             } else {
                  setAuthStatus('unauthenticated'); // Allow login/register page to proceed
@@ -124,7 +135,7 @@ export default function MainAppLayout({
           console.error("MainAppLayout verifyAndSetSession: Error fetching user data from Firestore:", error);
           setAuthStatus('unauthenticated');
           setCurrentRole(undefined); setCurrentCompanyId(undefined);
-          deleteCookie('userRole'); deleteCookie('companyId');
+          deleteCookie('userRole'); deleteCookie('companyId'); deleteCookie('activeSessionId');
           if (pathname !== '/login' && pathname !== '/register-admin') router.push('/login');
         }
       }
@@ -135,6 +146,7 @@ export default function MainAppLayout({
       setCurrentFirebaseUser(null); 
       deleteCookie('userRole');
       deleteCookie('companyId');
+      deleteCookie('activeSessionId');
       console.log("MainAppLayout verifyAndSetSession: No Firebase user. Session ended or user logged out.");
       if (pathname !== '/login' && pathname !== '/register-admin') {
           router.push('/login');
@@ -236,6 +248,7 @@ export default function MainAppLayout({
   if (authStatus === 'authenticated' && (!currentRole || !currentCompanyId) && pathname !== '/login' && pathname !== '/register-admin') {
       deleteCookie('userRole');
       deleteCookie('companyId');
+      deleteCookie('activeSessionId');
       return (
           <div className="flex min-h-screen w-full items-center justify-center bg-background p-4">
               <p className="text-lg text-muted-foreground">Session error. Redirecting to login...</p>

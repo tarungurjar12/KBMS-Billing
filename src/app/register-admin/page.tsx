@@ -43,6 +43,18 @@ const adminRegistrationSchema = z.object({
 
 type AdminRegistrationFormValues = z.infer<typeof adminRegistrationSchema>;
 
+const setCookie = (name: string, value: string, days: number) => {
+  let expires = "";
+  if (days) {
+    const date = new Date();
+    date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
+    expires = "; expires=" + date.toUTCString();
+  }
+  if (typeof document !== 'undefined') {
+    document.cookie = name + "=" + (value || "") + expires + "; path=/";
+  }
+};
+
 export default function RegisterAdminPage() {
   const router = useRouter();
   const { toast } = useToast();
@@ -91,7 +103,8 @@ export default function RegisterAdminPage() {
       }
 
       // 4. Prepare data for Firestore document (using auth UID as companyId)
-      const companyId = user.uid; 
+      const companyId = user.uid;
+      const activeSessionId = Date.now().toString(); // Create first session ID
       const adminProfileData: UserProfile = {
         uid: user.uid,
         authUid: user.uid,
@@ -100,6 +113,7 @@ export default function RegisterAdminPage() {
         contactNumber: values.adminPhone, 
         role: 'admin',
         companyId: companyId,
+        activeSessionId: activeSessionId,
         companyName: values.companyName,
         companyAddress: values.companyAddress,
         companyContact: values.companyContactPhone, 
@@ -112,6 +126,9 @@ export default function RegisterAdminPage() {
 
       // 5. Create Firestore document in 'users' collection
       await setDoc(doc(db, "users", user.uid), adminProfileData);
+      
+      // Also set the cookie for the new session, although user will be redirected to login
+      setCookie('activeSessionId', activeSessionId, 1);
 
       toast({
         title: "Admin Account Created!",

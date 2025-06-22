@@ -22,6 +22,7 @@ export interface UserProfile {
   contactNumber: string; 
   role?: 'admin' | 'store_manager'; 
   companyId: string; 
+  activeSessionId?: string;
 
   companyName?: string | null; // Optional for general profile, but expected for admin
   companyAddress?: string | null;
@@ -94,6 +95,7 @@ export default function MyProfilePage() {
               createdAt: userData.createdAt,
               updatedAt: userData.updatedAt,
               status: userData.status,
+              activeSessionId: userData.activeSessionId,
             };
              if (profileData.companyId && profileData.companyId !== currentCompanyIdFromCookie && typeof document !== 'undefined') {
                 document.cookie = `companyId=${profileData.companyId}; path=/; max-age=${60*60*24*7}`;
@@ -303,7 +305,7 @@ export default function MyProfilePage() {
       }
     }
 
-    if (profileInfoUpdated && passwordChanged) toast({ title: "Profile &amp; Password Updated", description: "Information and password updated." });
+    if (profileInfoUpdated && passwordChanged) toast({ title: "Profile & Password Updated", description: "Information and password updated." });
     else if (profileInfoUpdated) toast({ title: "Profile Updated", description: "Your information has been updated." });
     else if (passwordChanged) toast({ title: "Password Changed", description: "Password successfully updated." });
     else if (!hasPersonalChanges && !hasCompanyChanges && !newPassword) toast({ title: "No Changes", description: "No information was changed." });
@@ -323,7 +325,7 @@ export default function MyProfilePage() {
 
   return (
     <>
-      <PageHeader title="My Profile" description="View and update your personal &amp; company information." icon={UserCircle}/>
+      <PageHeader title="My Profile" description="View and update your personal & company information." icon={UserCircle}/>
       <form onSubmit={handleUpdateProfile}>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <Card className="md:col-span-1 shadow-lg rounded-xl">

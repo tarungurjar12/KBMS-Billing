@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Building, Cog, UserPlus, Bug } from 'lucide-react';
 import { auth, db } from '@/lib/firebase/firebaseConfig';
 import { signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 import type { UserProfile } from '@/app/(main)/my-profile/page';
 import { useToast } from "@/hooks/use-toast";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -145,7 +145,15 @@ export default function LoginPage() {
       console.log("LoginPage handleLogin: Firebase signInWithEmailAndPassword successful for user:", user?.email);
 
       if (user && user.uid) {
+        // --- Single Session Logic ---
+        const newSessionId = Date.now().toString();
         const userDocRef = doc(db, "users", user.uid);
+        // Use setDoc with merge to create/update the field without overwriting the whole doc
+        await setDoc(userDocRef, { activeSessionId: newSessionId }, { merge: true });
+        setCookie('activeSessionId', newSessionId, 1);
+        console.log(`LoginPage handleLogin: Set new session ID ${newSessionId} for UID ${user.uid}`);
+        // --- End Single Session Logic ---
+
         let userDocSnap;
         let firestoreError: any = null;
 
@@ -185,6 +193,7 @@ export default function LoginPage() {
             await signOut(auth); 
             deleteCookie('userRole'); 
             deleteCookie('companyId');
+            deleteCookie('activeSessionId');
           }
         } else {
           const errorDetail = firestoreError 
@@ -195,6 +204,7 @@ export default function LoginPage() {
           await signOut(auth); 
           deleteCookie('userRole');
           deleteCookie('companyId');
+          deleteCookie('activeSessionId');
         }
       } else {
         console.error('LoginPage handleLogin: Firebase user object or UID is missing after successful sign-in.');
@@ -202,6 +212,7 @@ export default function LoginPage() {
         if (auth.currentUser) await signOut(auth);
         deleteCookie('userRole');
         deleteCookie('companyId');
+        deleteCookie('activeSessionId');
       }
     } catch (signInError: any) {
       console.error("LoginPage handleLogin: Firebase Sign-In Error. Code:", signInError.code, "Message:", signInError.message);
@@ -284,5 +295,3 @@ export default function LoginPage() {
     </div>
   );
 }
-
-    

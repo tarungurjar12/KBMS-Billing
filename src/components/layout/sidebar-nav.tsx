@@ -2,7 +2,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   Users,
@@ -130,7 +130,6 @@ const setCookie = (name: string, value: string, days: number) => {
  */
 export function SidebarNav() {
   const pathname = usePathname();
-  const router = useRouter();
   const { open } = useSidebar(); 
   const [userRole, setUserRole] = useState<string | undefined>(undefined);
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
@@ -158,13 +157,9 @@ export function SidebarNav() {
       } else {
         console.log("SidebarNav: Firebase user logged out or session expired.");
         setCurrentUser(null);
-        deleteCookie('userRole');
-        deleteCookie('companyId');
         setUserRole(undefined);
         setUnreadCount(0);
-        if (pathname !== '/login' && pathname !== '/register-admin') { 
-            router.push('/login');
-        }
+        // The main layout's listener will handle the redirection.
       }
     });
 
@@ -179,7 +174,7 @@ export function SidebarNav() {
         unsubscribeAuth();
         window.removeEventListener('userSessionChanged', handleRoleChanged);
     };
-  }, [router, pathname, updateUserRoleFromCookie]);
+  }, [updateUserRoleFromCookie]);
 
 
   // Effect for real-time notification count
@@ -207,26 +202,21 @@ export function SidebarNav() {
 
   /**
    * Handles user logout.
-   * Signs out from Firebase, explicitly clears cookies, and redirects to the login page.
+   * Signs out from Firebase, explicitly clears cookies, and forces a hard refresh to the login page.
    */
   const handleLogout = async () => {
     try {
       await firebaseSignOut(auth);
-      // Explicitly clear cookies and redirect for a faster, more reliable UX
+      // Explicitly delete cookies for faster UI feedback before reload
       deleteCookie('userRole');
       deleteCookie('companyId');
-      setUserRole(undefined);
-      setUnreadCount(0);
-      setCurrentUser(null);
-      router.push('/login');
-      console.log("SidebarNav: Logout successful. Firebase sign-out and client-side cleanup complete.");
+      deleteCookie('activeSessionId');
+      // Force a hard reload to the login page to clear all client-side state
+      window.location.href = '/login';
     } catch (error) {
-      console.error("Error signing out from Firebase: ", error);
-      // Fallback in case of error
-      deleteCookie('userRole');
-      deleteCookie('companyId');
-      setUserRole(undefined);
-      router.push('/login');
+      console.error("Error during sign out:", error);
+      // Fallback to ensure user is redirected
+      window.location.href = '/login';
     }
   };
 
