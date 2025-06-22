@@ -4,19 +4,20 @@
 import { useState, useEffect, useCallback } from "react";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Bell, FileWarning, CheckCheck } from "lucide-react";
+import { Bell, FileWarning, CheckCheck, CheckSquare, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, Timestamp } from 'firebase/firestore';
+import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, Timestamp, writeBatch, addDoc } from 'firebase/firestore';
 import { db, auth } from '@/lib/firebase/firebaseConfig';
 import type { User as FirebaseUser } from "firebase/auth";
 import Link from "next/link";
 import { formatDistanceToNow } from 'date-fns';
 import { Button } from "@/components/ui/button";
+import { useAppContext } from '../layout';
 
 /**
  * @fileOverview Notifications center page.
  * Displays a real-time list of notifications for the currently logged-in user.
- * Allows users to mark notifications as read.
+ * Allows users to mark notifications as read. Admins can resolve issues from notifications.
  */
 
 export interface Notification {
@@ -27,6 +28,12 @@ export interface Notification {
   link: string;
   isRead: boolean;
   createdAt: Timestamp;
+  // New fields for issue resolution workflow
+  type?: 'issue_report' | 'issue_resolved' | 'generic';
+  relatedDocId?: string; // e.g., the ID of the issueReport document
+  originatorUid?: string;
+  originatorName?: string;
+  productName?: string;
 }
 
 export default function NotificationsPage() {
@@ -34,6 +41,8 @@ export default function NotificationsPage() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
+  const { userRole } = useAppContext();
 
   useEffect(() => {
     const unsubscribeAuth = auth.onAuthStateChanged(user => {
@@ -113,6 +122,50 @@ export default function NotificationsPage() {
     }
   };
 
+  const handleMarkAsResolved = async (notification: Notification) => {
+    if (userRole !== 'admin' || !notification.relatedDocId || !notification.originatorUid) {
+        toast({ title: "Permission Denied", description: "Only admins can resolve issues.", variant: "destructive" });
+        return;
+    }
+
+    setResolvingId(notification.id);
+    try {
+        const batch = writeBatch(db);
+
+        // 1. Update the original issueReport document
+        const issueReportRef = doc(db, "issueReports", notification.relatedDocId);
+        batch.update(issueReportRef, { status: 'Resolved' });
+
+        // 2. Update the admin's notification to reflect it's handled
+        const adminNotifRef = doc(db, "notifications", notification.id);
+        batch.update(adminNotifRef, { 
+            isRead: true, 
+            title: `[Resolved] ${notification.title}` 
+        });
+
+        // 3. Create a new notification for the manager who reported the issue
+        const managerNotifRef = doc(collection(db, "notifications"));
+        batch.set(managerNotifRef, {
+            recipientUid: notification.originatorUid,
+            title: `Issue Resolved: ${notification.productName || 'Product Issue'}`,
+            message: `The issue you reported for "${notification.productName || 'a product'}" has been marked as resolved by an admin.`,
+            link: notification.link, // Link back to the same product page for confirmation
+            isRead: false,
+            createdAt: serverTimestamp(),
+            type: 'issue_resolved',
+            relatedDocId: notification.relatedDocId, // keep track of the original issue
+        });
+
+        await batch.commit();
+        toast({ title: "Issue Resolved", description: "The issue has been marked as resolved and the manager has been notified." });
+    } catch (error) {
+        console.error("Error resolving issue:", error);
+        toast({ title: "Error", description: "Could not resolve the issue. Please try again.", variant: "destructive" });
+    } finally {
+        setResolvingId(null);
+    }
+  };
+
 
   if (isLoading) {
     return <PageHeader title="Notifications" description="Loading your notifications..." icon={Bell} />;
@@ -167,6 +220,27 @@ export default function NotificationsPage() {
                       <p className="text-xs text-muted-foreground mt-1">
                         {formatDistanceToNow(notification.createdAt.toDate(), { addSuffix: true })}
                       </p>
+                       {userRole === 'admin' && notification.type === 'issue_report' && !notification.title.startsWith('[Resolved]') && (
+                        <div className="mt-2">
+                            <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                handleMarkAsResolved(notification);
+                            }}
+                            disabled={resolvingId === notification.id}
+                            >
+                            {resolvingId === notification.id ? (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                                <CheckSquare className="mr-2 h-4 w-4" />
+                            )}
+                            Mark as Resolved
+                            </Button>
+                        </div>
+                        )}
                     </div>
                   </div>
                 </Link>
@@ -178,3 +252,4 @@ export default function NotificationsPage() {
     </>
   );
 }
+

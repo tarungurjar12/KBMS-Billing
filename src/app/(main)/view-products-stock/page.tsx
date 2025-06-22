@@ -124,7 +124,7 @@ export default function ViewProductsStockPage() {
     }
     try {
       // Step 1: Create the issue report
-      await addDoc(collection(db, "issueReports"), {
+      const issueReportRef = await addDoc(collection(db, "issueReports"), {
         ...values, 
         reportedByUid: currentUser.uid,
         reportedByEmail: currentUser.email,
@@ -145,11 +145,17 @@ export default function ViewProductsStockPage() {
             const admin = adminDoc.data();
             return addDoc(collection(db, "notifications"), {
                 recipientUid: admin.uid,
-                title: `New Issue: ${values.productName}`,
-                message: `Manager ${currentUser.displayName || currentUser.email} reported an issue.`,
+                title: `New Issue Reported: ${values.productName}`,
+                message: `Manager ${currentUser.displayName || currentUser.email} reported an issue. Click to review.`,
                 link: `/products?highlight=${values.productId}`,
                 isRead: false,
                 createdAt: serverTimestamp(),
+                // New fields for resolution workflow
+                type: 'issue_report',
+                relatedDocId: issueReportRef.id,
+                originatorUid: currentUser.uid,
+                originatorName: currentUser.displayName || currentUser.email || 'Unknown Manager',
+                productName: values.productName,
             });
         });
         await Promise.all(notificationPromises);
@@ -348,3 +354,4 @@ export default function ViewProductsStockPage() {
     </>
   );
 }
+
