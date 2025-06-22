@@ -1,4 +1,5 @@
 
+
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
@@ -620,12 +621,16 @@ export default function DailyLedgerPage() {
         
         // --- Phase 1: Reads ---
         const ledgerDocRef = editingLedgerEntry ? doc(db, "ledgerEntries", editingLedgerEntry.id) : doc(collection(db, "ledgerEntries"));
+        const oldPaymentDocRef = editingLedgerEntry?.associatedPaymentRecordId ? doc(db, "payments", editingLedgerEntry.associatedPaymentRecordId) : null;
         
         let originalLedgerEntryData: LedgerEntry | null = null;
         if (editingLedgerEntry) {
           const originalLedgerSnap = await transaction.get(ledgerDocRef);
           if (!originalLedgerSnap.exists()) throw new Error("Original ledger entry not found for editing.");
           originalLedgerEntryData = originalLedgerSnap.data() as LedgerEntry;
+        }
+        if (oldPaymentDocRef) {
+          await transaction.get(oldPaymentDocRef); // Read to ensure it exists if we need to delete it.
         }
         
         const productIdsInvolved = new Set<string>();
@@ -698,7 +703,7 @@ export default function DailyLedgerPage() {
             originalLedgerEntriesDataToSort.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
             for (const originalEntry of originalLedgerEntriesDataToSort) {
-                if (paymentToDistribute <= 0 || (originalEntry.remainingAmount || 0) <= 0) continue;
+                if (paymentToDistribute <= 0 || (originalEntry.remainingAmount || 0) <= 0.01) continue;
                 const amountToApply = Math.min(paymentToDistribute, originalEntry.remainingAmount || 0);
                 const updatedOriginalEntryData: Partial<LedgerEntry> = {
                     amountPaidNow: (originalEntry.amountPaidNow || 0) + amountToApply,
@@ -716,7 +721,6 @@ export default function DailyLedgerPage() {
             };
         }
 
-        // --- Phase 3: Writes ---
         const finalLedgerDataToCommit: Partial<LedgerEntry> & { updatedAt: any } = { 
           date: data.date, type: data.type, entryPurpose: data.entryPurpose, entityType: data.entityType, entityId: data.entityId, entityName: data.entityName, 
           items: itemsForSave, subTotal: subTotalForSave, gstApplied: data.entryPurpose === "Ledger Record" ? data.applyGst : false, taxAmount: taxAmountForSave, grandTotal: grandTotalForSave,
@@ -731,10 +735,6 @@ export default function DailyLedgerPage() {
             Object.assign(finalLedgerDataToCommit, { createdByUid: currentUser.uid, createdByName: currentUserName, createdAt: serverTimestamp() });
         }
         
-        if (originalLedgerEntryData?.associatedPaymentRecordId) {
-            transaction.delete(doc(db, "payments", originalLedgerEntryData.associatedPaymentRecordId));
-        }
-
         let newAssociatedPaymentRecordId: string | null = null;
         if (data.entryPurpose === "Payment Record" || (data.entryPurpose === "Ledger Record" && (data.paymentStatus === 'paid' || data.paymentStatus === 'partial'))) {
           const paymentDocRef = doc(collection(db, "payments"));
@@ -746,13 +746,19 @@ export default function DailyLedgerPage() {
             relatedEntityName: data.entityName, relatedEntityId: data.entityId || `unknown-${data.entityType}-${Date.now()}`,
             relatedInvoiceId: data.relatedInvoiceId || null, date: format(parseISO(data.date), "MMM dd, yyyy"), isoDate: data.date, 
             amountPaid: amountPaidForLedgerSave, originalInvoiceAmount: grandTotalForSave, remainingBalanceOnInvoice: remainingAmountForLedgerSave, 
-            method: finalLedgerDataToCommit.method as any, transactionId: null, 
+            method: finalLedgerDataToCommit.paymentMethod || null,
+            transactionId: null, 
             status: data.paymentStatus === 'paid' ? (data.type === 'sale' ? 'Received' : 'Sent') : 'Partial',
             notes: `Payment from Ledger Entry. ${data.notes || ''}`.trim(), ledgerEntryId: ledgerDocRef.id, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
           };
           transaction.set(paymentDocRef, paymentDataForSave);
         } else {
            finalLedgerDataToCommit.associatedPaymentRecordId = null;
+        }
+
+        // --- Phase 3: Writes ---
+        if (oldPaymentDocRef) {
+            transaction.delete(oldPaymentDocRef);
         }
 
         productStockUpdates.forEach(pu => transaction.update(pu.ref, { stock: pu.newStock, updatedAt: serverTimestamp() }));
@@ -1399,6 +1405,7 @@ export default function DailyLedgerPage() {
     </>
   );
 }
+
 
 
 
