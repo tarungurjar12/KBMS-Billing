@@ -19,6 +19,7 @@ import {
   ClipboardPlus,
   PackageSearch,
   BookOpen, 
+  Bell,
 } from "lucide-react";
 import React, { useEffect, useState, useCallback } from 'react';
 
@@ -31,10 +32,12 @@ import {
   SidebarHeader,
   SidebarFooter,
   useSidebar,
+  SidebarMenuBadge,
 } from "@/components/ui/sidebar";
 import { Button } from "../ui/button";
-import { auth } from '@/lib/firebase/firebaseConfig'; 
+import { auth, db } from '@/lib/firebase/firebaseConfig'; 
 import { signOut as firebaseSignOut, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
 
 /**
  * @fileOverview Sidebar navigation component for the application.
@@ -74,6 +77,7 @@ const allNavItems: NavItem[] = [
   { href: "/billing", label: "Billing / Invoicing", icon: FileText, roles: ['admin', 'store_manager'] },
   { href: "/create-bill", label: "Create Bill/Invoice", icon: ClipboardPlus, roles: ['admin', 'store_manager'] },
   { href: "/customers", label: "Manage Customers", icon: Users, roles: ['admin', 'store_manager'] },
+  { href: "/notifications", label: "Notifications", icon: Bell, roles: ['admin', 'store_manager'] },
   { href: "/my-profile", label: "My Profile", icon: UserCircle, roles: ['admin', 'store_manager'] },
 ];
 
@@ -129,6 +133,8 @@ export function SidebarNav() {
   const router = useRouter();
   const { open } = useSidebar(); 
   const [userRole, setUserRole] = useState<string | undefined>(undefined);
+  const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [mounted, setMounted] = useState(false);
 
   /**
@@ -142,54 +148,61 @@ export function SidebarNav() {
     }
   }, [userRole]); // Dependency on userRole to compare current state with new cookie value
 
-  // Effect for initial mount and auth state/cookie changes
+  // Effect for initial mount and auth state changes
   useEffect(() => {
     setMounted(true); 
-    updateUserRoleFromCookie(); // Initial role check from cookie
-
-    const unsubscribe = onAuthStateChanged(auth, (user: FirebaseUser | null) => {
-      if (!user) { 
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setCurrentUser(user);
+        updateUserRoleFromCookie();
+      } else {
         console.log("SidebarNav: Firebase user logged out or session expired.");
-        deleteCookie('userRole'); 
-        setUserRole(undefined); 
-        if (pathname !== '/login') { 
+        setCurrentUser(null);
+        deleteCookie('userRole');
+        setUserRole(undefined);
+        setUnreadCount(0);
+        if (pathname !== '/login' && pathname !== '/register-admin') { 
             router.push('/login');
-        }
-      } else { 
-        const currentRoleCookie = getCookie('userRole');
-        if (currentRoleCookie) { 
-            if (userRole !== currentRoleCookie) setUserRole(currentRoleCookie);
-        } else if (user.email) { 
-            let newRole = '';
-            if (user.email.toLowerCase().includes('admin@')) newRole = 'admin';
-            else if (user.email.toLowerCase().includes('manager@')) newRole = 'store_manager';
-            
-            if (newRole) { 
-               setCookie('userRole', newRole, 1); 
-               setUserRole(newRole);
-            } else { 
-                console.warn("SidebarNav: Firebase user exists, but role couldn't be determined from email. Forcing logout.");
-                deleteCookie('userRole');
-                setUserRole(undefined);
-                firebaseSignOut(auth).catch(console.error); 
-                if (pathname !== '/login') router.push('/login');
-            }
         }
       }
     });
 
     // Listen for custom 'userRoleChanged' event from login page
     const handleRoleChanged = () => {
-        console.log("SidebarNav: 'userRoleChanged' event received. Updating role from cookie.");
+        console.log("SidebarNav: 'userSessionChanged' event received. Updating role from cookie.");
         updateUserRoleFromCookie();
     };
-    window.addEventListener('userRoleChanged', handleRoleChanged);
+    window.addEventListener('userSessionChanged', handleRoleChanged);
 
     return () => {
-        unsubscribe();
-        window.removeEventListener('userRoleChanged', handleRoleChanged);
+        unsubscribeAuth();
+        window.removeEventListener('userSessionChanged', handleRoleChanged);
     };
-  }, [router, pathname, updateUserRoleFromCookie, userRole]);
+  }, [router, pathname, updateUserRoleFromCookie]);
+
+
+  // Effect for real-time notification count
+  useEffect(() => {
+    if (!currentUser) {
+      setUnreadCount(0);
+      return;
+    }
+
+    const q = query(
+      collection(db, "notifications"),
+      where("recipientUid", "==", currentUser.uid),
+      where("isRead", "==", false)
+    );
+
+    const unsubscribeFirestore = onSnapshot(q, (snapshot) => {
+      setUnreadCount(snapshot.size);
+    }, (error) => {
+      console.error("Error fetching unread notification count:", error);
+    });
+
+    return () => unsubscribeFirestore();
+  }, [currentUser]);
+
 
   /**
    * Handles user logout.
@@ -221,7 +234,7 @@ export function SidebarNav() {
     return '/login'; 
   }
 
-  if (!userRole && pathname !== '/login') {
+  if (!userRole && pathname !== '/login' && pathname !== '/register-admin') {
     return null; 
   }
 
@@ -254,6 +267,9 @@ export function SidebarNav() {
               <Link href={item.href}>
                 <item.icon className="h-5 w-5" />
                 <span>{item.label}</span>
+                 {item.label === 'Notifications' && unreadCount > 0 && (
+                  <SidebarMenuBadge>{unreadCount}</SidebarMenuBadge>
+                )}
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
@@ -271,4 +287,3 @@ export function SidebarNav() {
     </>
   );
 }
-

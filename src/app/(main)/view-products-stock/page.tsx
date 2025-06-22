@@ -17,7 +17,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
-import { collection, getDocs, addDoc, serverTimestamp, query, orderBy, Timestamp } from 'firebase/firestore';
+import { collection, getDocs, addDoc, serverTimestamp, query, orderBy, Timestamp, where } from 'firebase/firestore';
 import { db, auth } from '@/lib/firebase/firebaseConfig';
 import type { User as FirebaseUser } from "firebase/auth";
 import type { Product } from './../products/page'; 
@@ -123,6 +123,7 @@ export default function ViewProductsStockPage() {
       return;
     }
     try {
+      // Step 1: Create the issue report
       await addDoc(collection(db, "issueReports"), {
         ...values, 
         reportedByUid: currentUser.uid,
@@ -131,6 +132,29 @@ export default function ViewProductsStockPage() {
         status: "New", 
         productSku: productToReport?.sku || "N/A", 
       });
+
+      // Step 2: Find all admins to notify them
+      const adminQuery = query(collection(db, "users"), where("role", "==", "admin"));
+      const adminSnapshot = await getDocs(adminQuery);
+
+      if (adminSnapshot.empty) {
+          console.warn("No admin users found to notify about the issue.");
+      } else {
+        // Step 3: Create a notification for each admin
+        const notificationPromises = adminSnapshot.docs.map(adminDoc => {
+            const admin = adminDoc.data();
+            return addDoc(collection(db, "notifications"), {
+                recipientUid: admin.uid,
+                title: `New Issue: ${values.productName}`,
+                message: `Manager ${currentUser.displayName || currentUser.email} reported an issue.`,
+                link: `/products?highlight=${values.productId}`,
+                isRead: false,
+                createdAt: serverTimestamp(),
+            });
+        });
+        await Promise.all(notificationPromises);
+      }
+
       toast({ title: "Issue Reported Successfully", description: `Thank you! Your report for ${values.productName} has been submitted to the Admin.` });
       setIsReportIssueDialogOpen(false); 
       setProductToReport(null);
