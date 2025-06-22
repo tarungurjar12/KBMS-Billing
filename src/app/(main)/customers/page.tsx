@@ -43,8 +43,8 @@ interface CustomerDetailsView extends Customer {
   payments: PaymentRecord[];
   ledgerEntries: LedgerEntry[];
   totalAmountPaid: number;
-  totalAmountPendingFromPayments: number;
-  pendingPaymentRecordsCount: number;
+  totalBalanceDue: number;
+  pendingLedgerEntriesCount: number;
 }
 
 const customerSchema = z.object({
@@ -212,29 +212,24 @@ export default function CustomersPage() {
       const ledgerSnapshot = await getDocs(ledgerEntriesQuery);
       const fetchedLedgerEntries = ledgerSnapshot.docs.map(d => ({ ...d.data(), id: d.id } as LedgerEntry));
       
-      let totalPaid = 0;
-      fetchedPayments.forEach(p => {
-        if (p.status === 'Completed' || p.status === 'Received' || p.status === 'Partial') {
-            totalPaid += p.amountPaid;
-        }
-      });
-
-      let totalPendingFromPayments = 0;
-      let pendingPaymentRecordsCount = 0;
-      fetchedPayments.forEach(p => {
-        if ((p.status === 'Pending' || p.status === 'Partial') && p.remainingBalanceOnInvoice && p.remainingBalanceOnInvoice > 0) {
-          totalPendingFromPayments += p.remainingBalanceOnInvoice;
-          pendingPaymentRecordsCount++;
-        }
-      });
+      const totalAmountPaid = fetchedPayments
+        .filter(p => p.status === 'Completed' || p.status === 'Received' || p.status === 'Partial')
+        .reduce((sum, p) => sum + p.amountPaid, 0);
+      
+      const totalBalanceDue = fetchedLedgerEntries
+        .reduce((sum, entry) => sum + (entry.remainingAmount || 0), 0);
+      
+      const pendingLedgerEntriesCount = fetchedLedgerEntries
+        .filter(entry => entry.paymentStatus === 'pending' || entry.paymentStatus === 'partial')
+        .length;
 
       setSelectedCustomerForDetails({
         ...customer,
         payments: fetchedPayments,
         ledgerEntries: fetchedLedgerEntries,
-        totalAmountPaid: totalPaid,
-        totalAmountPendingFromPayments: totalPendingFromPayments,
-        pendingPaymentRecordsCount: pendingPaymentRecordsCount,
+        totalAmountPaid: totalAmountPaid,
+        totalBalanceDue: totalBalanceDue,
+        pendingLedgerEntriesCount: pendingLedgerEntriesCount,
       });
 
     } catch (error: any) {
@@ -321,9 +316,9 @@ export default function CustomersPage() {
                         <CardHeader><CardTitle className="text-lg">Financial Summary</CardTitle></CardHeader>
                         <CardContent className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
                             <div><p className="text-muted-foreground">Total Paid (from Payments):</p><p className="font-semibold text-green-600">{formatCurrency(selectedCustomerForDetails.totalAmountPaid)}</p></div>
-                            <div><p className="text-muted-foreground">Total Pending (from Payments):</p><p className="font-semibold text-red-600">{formatCurrency(selectedCustomerForDetails.totalAmountPendingFromPayments)}</p></div>
+                            <div><p className="text-muted-foreground">Total Balance Due (from Ledger):</p><p className="font-semibold text-red-600">{formatCurrency(selectedCustomerForDetails.totalBalanceDue)}</p></div>
                             <Button variant="link" size="sm" className="p-0 h-auto justify-start text-left" onClick={() => handleGoToLedgerForPending(selectedCustomerForDetails.name)}>
-                                <div><p className="text-muted-foreground">Pending/Partial Payment Records:</p><p className="font-semibold text-blue-600">{selectedCustomerForDetails.pendingPaymentRecordsCount} (View Related Ledger)</p></div>
+                                <div><p className="text-muted-foreground">Pending/Partial Ledger Entries:</p><p className="font-semibold text-blue-600">{selectedCustomerForDetails.pendingLedgerEntriesCount} (View in Ledger)</p></div>
                             </Button>
                         </CardContent>
                     </Card>
@@ -391,5 +386,3 @@ export default function CustomersPage() {
     </>
   );
 }
-
-    
