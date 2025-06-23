@@ -1,5 +1,4 @@
 
-
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
@@ -260,47 +259,101 @@ export default function NotificationsPage() {
           if (requestType === 'update') {
               const batch = writeBatch(db);
               if (action === 'approve') {
-                  const newAssociatedPaymentRecordId = updatedData.associatedPaymentRecordId || null;
                   
                   await runTransaction(db, async (transaction) => {
                       const ledgerRef = doc(db, 'ledgerEntries', originalLedgerEntryId);
-                      const finalData = { ...updatedData, updatedAt: serverTimestamp(), updatedByUid: currentUser.uid, updatedByName: currentUser.displayName || currentUser.email };
-                      
-                      if (originalData.associatedPaymentRecordId) {
-                          const oldPaymentRef = doc(db, 'payments', originalData.associatedPaymentRecordId);
-                          transaction.delete(oldPaymentRef);
+
+                      // === READ PHASE ===
+                      const originalLedgerSnap = await transaction.get(ledgerRef);
+                      if (!originalLedgerSnap.exists()) throw new Error("Original ledger entry not found for update.");
+                      const originalLedgerEntryData = originalLedgerSnap.data() as LedgerEntry;
+
+                      const oldPaymentDocRef = originalLedgerEntryData.associatedPaymentRecordId
+                          ? doc(db, "payments", originalLedgerEntryData.associatedPaymentRecordId)
+                          : null;
+                      if(oldPaymentDocRef) {
+                          await transaction.get(oldPaymentDocRef);
                       }
 
-                      if (newAssociatedPaymentRecordId) {
-                          const newPaymentRef = doc(db, 'payments', newAssociatedPaymentRecordId);
-                           const paymentDataForSave = {
-                              type: finalData.type === 'sale' ? 'customer' : 'supplier',
-                              relatedEntityName: finalData.entityName,
-                              relatedEntityId: finalData.entityId || `unknown-${finalData.entityType}-${Date.now()}`,
-                              relatedInvoiceId: finalData.relatedInvoiceId || null,
-                              date: format(parseISO(finalData.date), "MMM dd, yyyy"),
-                              isoDate: finalData.date,
-                              amountPaid: finalData.amountPaidNow,
-                              originalInvoiceAmount: finalData.grandTotal,
-                              remainingBalanceOnInvoice: finalData.remainingAmount,
-                              method: finalData.paymentMethod,
+                      const productIdsInvolved = new Set<string>();
+                      (updatedData.items || []).forEach((item: LedgerItem) => productIdsInvolved.add(item.productId));
+                      (originalLedgerEntryData.items || []).forEach((item: LedgerItem) => productIdsInvolved.add(item.productId));
+                      
+                      const productSnapshots = new Map<string, DocumentSnapshot<DocumentData>>();
+                      for (const productId of productIdsInvolved) {
+                          const productRef = doc(db, "products", productId);
+                          const productSnap = await transaction.get(productRef);
+                          if (!productSnap.exists()) throw new Error(`Product ID ${productId} not found.`);
+                          productSnapshots.set(productId, productSnap);
+                      }
+                      // === END READ PHASE ===
+
+
+                      // === WRITE PHASE ===
+                      for (const productId of productIdsInvolved) {
+                          const productSnap = productSnapshots.get(productId)!;
+                          let currentDbStock = productSnap.data()!.stock as number;
+                          
+                          const originalItem = originalLedgerEntryData.items.find(i => i.productId === productId);
+                          const newItem = updatedData.items.find((i: LedgerItem) => i.productId === productId);
+
+                          if (originalItem) {
+                              currentDbStock += originalLedgerEntryData.type === 'sale' ? originalItem.quantity : -originalItem.quantity;
+                          }
+                          if (newItem) {
+                              currentDbStock += updatedData.type === 'sale' ? -newItem.quantity : newItem.quantity;
+                          }
+                          
+                          if (currentDbStock < 0) throw new Error(`Insufficient stock for ${productSnap.data()!.name}.`);
+                          transaction.update(productSnap.ref, { stock: currentDbStock, updatedAt: serverTimestamp() });
+                      }
+
+                      if (oldPaymentDocRef) {
+                          transaction.delete(oldPaymentDocRef);
+                      }
+
+                      const finalLedgerData = {
+                          ...updatedData,
+                          updatedAt: serverTimestamp(),
+                          updatedByUid: currentUser.uid,
+                          updatedByName: currentUser.displayName || currentUser.email,
+                          associatedPaymentRecordId: null 
+                      };
+
+                      const hasPayment = updatedData.paymentStatus === 'paid' || updatedData.paymentStatus === 'partial';
+                      if (hasPayment) {
+                          const newPaymentDocRef = doc(collection(db, "payments"));
+                          finalLedgerData.associatedPaymentRecordId = newPaymentDocRef.id;
+
+                          const paymentDataForSave = {
+                              type: updatedData.type === 'sale' ? 'customer' : 'supplier',
+                              relatedEntityName: updatedData.entityName,
+                              relatedEntityId: updatedData.entityId || `unknown-${updatedData.entityType}-${Date.now()}`,
+                              relatedInvoiceId: updatedData.relatedInvoiceId || null,
+                              date: format(parseISO(updatedData.date), "MMM dd, yyyy"),
+                              isoDate: updatedData.date,
+                              amountPaid: updatedData.amountPaidNow,
+                              originalInvoiceAmount: updatedData.grandTotal,
+                              remainingBalanceOnInvoice: updatedData.remainingAmount,
+                              method: updatedData.paymentMethod,
                               transactionId: null,
-                              status: finalData.paymentStatus === 'paid' ? (finalData.type === 'sale' ? 'Received' : 'Sent') : 'Partial',
-                              notes: `Payment from Ledger Entry. ${finalData.notes || ''}`.trim(),
+                              status: updatedData.paymentStatus === 'paid' ? (updatedData.type === 'sale' ? 'Received' : 'Sent') : 'Partial',
+                              notes: `Payment from Ledger Entry. ${updatedData.notes || ''}`.trim(),
                               ledgerEntryId: ledgerRef.id,
                               createdAt: serverTimestamp(),
                               updatedAt: serverTimestamp(),
                           };
-                          transaction.set(newPaymentRef, paymentDataForSave);
+                          transaction.set(newPaymentDocRef, paymentDataForSave);
                       }
-                      
-                      transaction.set(ledgerRef, finalData, { merge: true });
+
+                      transaction.set(ledgerRef, finalLedgerData, { merge: true });
                   });
+                  
                   batch.update(requestRef, { status: 'approved', reviewedByUid: currentUser.uid, reviewedAt: serverTimestamp() });
                   batch.set(managerNotifRef, { recipientUid: requestedByUid, title: `Ledger Update Approved`, message: `Your update for "${originalData.entityName}" was approved.`, link: `/ledger`, isRead: false, createdAt: serverTimestamp(), type: 'update_approved' });
                   batch.update(adminNotifRef, { isRead: true, title: `[Approved] ${selectedNotificationForReview.title}` });
                   await batch.commit();
-                  toast({ title: "Update Approved", description: "Ledger entry updated and manager notified." });
+                  toast({ title: "Update Approved", description: "Ledger entry and associated records have been updated." });
               } else { // Decline update
                   batch.update(requestRef, { status: 'declined', reviewedByUid: currentUser.uid, reviewedAt: serverTimestamp() });
                   batch.set(managerNotifRef, { recipientUid: requestedByUid, title: `Ledger Update Declined`, message: `Your update for "${originalData.entityName}" was declined.`, link: `/ledger`, isRead: false, createdAt: serverTimestamp(), type: 'update_declined' });
@@ -314,7 +367,6 @@ export default function NotificationsPage() {
                       const ledgerDocRef = doc(db, "ledgerEntries", originalLedgerEntryId);
                       const entryData = originalData;
 
-                      // === READ PHASE ===
                       const productRefs = entryData.entryPurpose === "Ledger Record"
                           ? entryData.items.map(item => doc(db, "products", item.productId))
                           : [];
@@ -329,7 +381,6 @@ export default function NotificationsPage() {
                           }
                       }
                       
-                      // === WRITE PHASE ===
                       if (entryData.entryPurpose === "Ledger Record") {
                           productSnaps.forEach((productSnap, index) => {
                               const item = entryData.items[index];

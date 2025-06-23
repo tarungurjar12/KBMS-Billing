@@ -275,7 +275,7 @@ export default function DailyLedgerPage() {
         if (role === 'store_manager' && currentUser) {
             const salesQuery = query(collection(db, "ledgerEntries"), where("date", "==", date), where("type", "==", "sale"));
             const salesSnapshot = await getDocs(salesQuery);
-            
+
             const purchasesQuery = query(collection(db, "ledgerEntries"), where("date", "==", date), where("type", "==", "purchase"), where("createdByUid", "==", currentUser.uid));
             const purchasesSnapshot = await getDocs(purchasesQuery);
             
@@ -651,14 +651,35 @@ export default function DailyLedgerPage() {
     // Manager Edit Request Logic
     if (currentUserRole === 'store_manager' && editingLedgerEntry) {
         try {
-            const sanitizedUpdatedData = {
+            // Recalculate totals based on the submitted form data
+            const itemsForSave = (data.items || []).map(item => ({ ...item, totalPrice: (item.quantity || 0) * (item.unitPrice || 0) }));
+            const subTotalForSave = itemsForSave.reduce((sum, item) => sum + item.totalPrice, 0);
+            const taxAmountForSave = data.applyGst ? subTotalForSave * GST_RATE : 0;
+            const grandTotalForSave = subTotalForSave + taxAmountForSave;
+            const amountPaidForLedgerSave = data.paymentStatus === 'paid' ? grandTotalForSave : (data.paymentStatus === 'partial' ? data.amountPaidNow || 0 : 0);
+            const remainingAmountForLedgerSave = grandTotalForSave - amountPaidForLedgerSave;
+
+            const updatedLedgerData = {
                 ...data,
-                paymentAmount: data.paymentAmount ?? null,
-                amountPaidNow: data.amountPaidNow ?? null,
-                items: data.items ?? [],
-                notes: data.notes ?? null,
-                relatedInvoiceId: data.relatedInvoiceId ?? null,
-                paymentMethod: data.paymentMethod ?? null,
+                items: itemsForSave,
+                subTotal: subTotalForSave,
+                gstApplied: data.applyGst,
+                taxAmount: taxAmountForSave,
+                grandTotal: grandTotalForSave,
+                amountPaidNow: amountPaidForLedgerSave,
+                remainingAmount: remainingAmountForLedgerSave,
+                originalTransactionAmount: grandTotalForSave,
+                paymentAmount: data.entryPurpose === 'Payment Record' ? data.paymentAmount : undefined,
+            };
+
+            const sanitizedUpdatedData = {
+                ...updatedLedgerData,
+                paymentAmount: updatedLedgerData.paymentAmount ?? null,
+                amountPaidNow: updatedLedgerData.amountPaidNow ?? null,
+                items: updatedLedgerData.items ?? [],
+                notes: updatedLedgerData.notes ?? null,
+                relatedInvoiceId: updatedLedgerData.relatedInvoiceId ?? null,
+                paymentMethod: updatedLedgerData.paymentMethod ?? null,
             };
             
             const sanitizedOriginalData: Partial<LedgerEntry> = {
@@ -709,6 +730,7 @@ export default function DailyLedgerPage() {
             toast({ title: "Update Request Sent", description: "Your request to update the ledger entry has been sent to an admin for approval." });
             setIsLedgerFormOpen(false);
             setEditingLedgerEntry(null);
+            fetchData(selectedDate);
         } catch (error: any) {
             console.error("Error sending update request:", error);
             toast({ title: "Request Failed", description: "Could not send the update request.", variant: "destructive" });
