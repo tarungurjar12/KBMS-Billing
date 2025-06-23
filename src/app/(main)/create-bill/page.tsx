@@ -113,7 +113,7 @@ export default function CreateBillPage() {
       const q = query(collection(db, "ledgerEntries"), 
         where("entityId", "==", customerId), 
         where("type", "==", "sale"), 
-        where("entryPurpose", "==", "Ledger Record"), // Ensure it's a transactional record
+        where("entryPurpose", "==", "Ledger Record"),
         where("paymentStatus", "in", ["pending", "partial"])
       );
       const snapshot = await getDocs(q);
@@ -128,7 +128,7 @@ export default function CreateBillPage() {
           remainingAmount: data.remainingAmount || 0, 
         } as PendingLedgerItemToInvoice;
       });
-      setPendingLedgerItems(items.filter(item => (item.remainingAmount || 0) > 0)); // Only show items with a balance > 0
+      setPendingLedgerItems(items.filter(item => (item.remainingAmount || 0) > 0));
       if (items.filter(item => (item.remainingAmount || 0) > 0).length === 0) {
         toast({title: "No Pending Items", description: "This customer has no pending or partially paid sales ledger entries with a balance due.", variant: "default"});
       }
@@ -171,7 +171,7 @@ export default function CreateBillPage() {
     setProductSearchTerm(""); 
   }, [toast, originalBillItemsForEdit]);
 
-  const handleQuantityChange = (productId: string, newQuantityStr: string) => {
+  const handleQuantityChange = useCallback((productId: string, newQuantityStr: string) => {
     const newQuantity = parseInt(newQuantityStr, 10);
     setBillItems(prevItems => {
       const itemIndex = prevItems.findIndex(item => item.id === productId);
@@ -189,7 +189,7 @@ export default function CreateBillPage() {
       updatedBillItems[itemIndex] = currentItem;
       return updatedBillItems;
     });
-  };
+  }, [products, toast, originalBillItemsForEdit]);
   
   const handleRemoveItem = (productId: string) => setBillItems(billItems.filter(item => item.id !== productId));
 
@@ -227,11 +227,11 @@ export default function CreateBillPage() {
     try {
       await runTransaction(db, async (transaction) => {
         let existingInvoiceNumber: string | undefined;
-        let newInvoiceRef: any = doc(collection(db, "invoices")); // Prepare new invoice ref
+        let newInvoiceRef: any = doc(collection(db, "invoices"));
 
         if (editInvoiceId && billCreationMode === 'standard') {
             const invoiceToEditRef = doc(db, "invoices", editInvoiceId);
-            newInvoiceRef = invoiceToEditRef; // Use existing ref if editing
+            newInvoiceRef = invoiceToEditRef; 
             const invoiceToEditSnap = await transaction.get(invoiceToEditRef);
             if (invoiceToEditSnap.exists()) existingInvoiceNumber = invoiceToEditSnap.data().invoiceNumber;
             else throw new Error(`Invoice with ID ${editInvoiceId} not found.`);
@@ -264,18 +264,17 @@ export default function CreateBillPage() {
             }
             for (const pu of productUpdates) transaction.update(pu.ref, { stock: pu.newStock, updatedAt: serverTimestamp() });
             invoiceItemsForSave = billItems.map(i => ({ productId: i.id, name: i.name, quantity: i.quantity, unitPrice: i.numericPrice, total: i.total, unitOfMeasure: i.unitOfMeasure }));
-        } else { // from_pending_ledger
+        } else { 
             const selectedLedgerItems = pendingLedgerItems.filter(i => i.isSelected);
             consolidatedLedgerEntryIds = selectedLedgerItems.map(li => li.id);
             
-            // Critical Fix: Update the original ledger entries
             for (const ledgerId of consolidatedLedgerEntryIds) {
                 const ledgerRef = doc(db, "ledgerEntries", ledgerId);
                 transaction.update(ledgerRef, {
                     paymentStatus: 'paid',
                     remainingAmount: 0,
-                    notes: `Consolidated into Invoice.`,
-                    relatedInvoiceId: newInvoiceRef.id, // Link back to the new invoice
+                    notes: `Consolidated into Invoice ${newInvoiceRef.id}.`,
+                    relatedInvoiceId: newInvoiceRef.id,
                     updatedAt: serverTimestamp()
                 });
             }
@@ -289,7 +288,6 @@ export default function CreateBillPage() {
                 } else {
                     itemNamesSummaryForDisplay = itemNamesArray.join(', ');
                 }
-                const fullItemDetails = li.items.map(item => `${item.productName} (x${item.quantity})`).join(', ');
                 const descriptionForInvoice = `Consolidated Ledger Entry from ${formattedDate}. Items: ${itemNamesSummaryForDisplay}.`;
                 
                 return {

@@ -15,14 +15,12 @@ import { format, formatDistanceToNow, parseISO } from 'date-fns';
 import { Button } from "@/components/ui/button";
 import { useAppContext } from '../layout';
 import type { LedgerEntry, LedgerItem } from '../ledger/page';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 
 /**
  * @fileOverview Notifications center page.
- * Displays a real-time list of notifications for the currently logged-in user.
- * Allows users to mark notifications as read. Admins can resolve issues from notifications.
  */
 
 export interface Notification {
@@ -45,7 +43,7 @@ interface UpdateRequest {
     requestType: 'update' | 'delete';
     originalLedgerEntryId: string;
     originalData: LedgerEntry;
-    updatedData?: any; // Only for 'update' type
+    updatedData?: any;
     requestedByUid: string;
     requestedByName: string;
     requestedAt: Timestamp;
@@ -63,19 +61,12 @@ const getChangedFields = (original: any, updated: any) => {
 
     allKeys.forEach(key => {
         if (key === 'items' || key === 'createdAt' || key === 'updatedAt' || key === 'id') return;
-
         const originalValue = original[key];
         const updatedValue = updated[key];
-
         if (JSON.stringify(originalValue) !== JSON.stringify(updatedValue)) {
-            changes.push({
-                key: key,
-                oldValue: originalValue,
-                newValue: updatedValue,
-            });
+            changes.push({ key: key, oldValue: originalValue, newValue: updatedValue });
         }
     });
-
     return changes;
 };
 
@@ -92,7 +83,6 @@ export default function NotificationsPage() {
   const [isLoadingReviewData, setIsLoadingReviewData] = useState(false);
   const [selectedNotificationForReview, setSelectedNotificationForReview] = useState<Notification | null>(null);
 
-
   useEffect(() => {
     const unsubscribeAuth = auth.onAuthStateChanged(user => {
       setCurrentUser(user);
@@ -108,60 +98,27 @@ export default function NotificationsPage() {
     if (!currentUser) return;
 
     setIsLoading(true);
-    const q = query(
-      collection(db, "notifications"),
-      where("recipientUid", "==", currentUser.uid),
-      orderBy("createdAt", "desc")
-    );
-
+    const q = query(collection(db, "notifications"), where("recipientUid", "==", currentUser.uid), orderBy("createdAt", "desc"));
     const unsubscribeFirestore = onSnapshot(q, (querySnapshot) => {
-      const fetchedNotifications = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-      } as Notification));
+      const fetchedNotifications = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Notification));
       setNotifications(fetchedNotifications);
       setIsLoading(false);
     }, (error) => {
       console.error("Error fetching notifications: ", error);
-      toast({
-        title: "Database Error",
-        description: "Could not load notifications in real-time.",
-        variant: "destructive"
-      });
+      toast({ title: "Database Error", description: "Could not load notifications in real-time.", variant: "destructive" });
       setIsLoading(false);
     });
 
     return () => unsubscribeFirestore();
-
   }, [currentUser, toast]);
 
-  const handleNotificationClick = async (notification: Notification, e: React.MouseEvent) => {
-    if (userRole === 'admin' && (notification.type === 'update_request' || notification.type === 'delete_request') && !notification.title.startsWith('[')) {
-        e.preventDefault();
-        await openReviewDialog(notification);
-        return;
-    }
-    
-    if (!notification.isRead) {
-      try {
-        const notifRef = doc(db, "notifications", notification.id);
-        await updateDoc(notifRef, { isRead: true });
-      } catch (error) {
-        console.error("Error marking notification as read: ", error);
-        toast({ title: "Update Error", description: "Could not mark notification as read.", variant: "destructive" });
-      }
-    }
-  };
-
-  const handleMarkAllAsRead = async () => {
+  const handleMarkAllAsRead = useCallback(async () => {
     if (!currentUser) return;
-    
     const unreadNotifications = notifications.filter(n => !n.isRead);
     if (unreadNotifications.length === 0) {
         toast({title: "No unread notifications", description: "Everything is already marked as read."});
         return;
     }
-
     try {
         const batch = writeBatch(db);
         unreadNotifications.forEach(notif => {
@@ -174,9 +131,9 @@ export default function NotificationsPage() {
         console.error("Error marking all as read:", error);
         toast({title: "Error", description: "Could not mark all notifications as read.", variant: "destructive"});
     }
-  };
+  }, [currentUser, notifications, toast]);
 
-  const handleMarkAsResolved = async (notification: Notification) => {
+  const handleMarkAsResolved = useCallback(async (notification: Notification) => {
     if (userRole !== 'admin' || !notification.relatedDocId || !notification.originatorUid) {
         toast({ title: "Permission Denied", description: "Only admins can resolve issues.", variant: "destructive" });
         return;
@@ -185,28 +142,18 @@ export default function NotificationsPage() {
     setResolvingId(notification.id);
     try {
         const batch = writeBatch(db);
-
         const issueReportRef = doc(db, "issueReports", notification.relatedDocId);
         batch.update(issueReportRef, { status: 'Resolved' });
-
         const adminNotifRef = doc(db, "notifications", notification.id);
-        batch.update(adminNotifRef, { 
-            isRead: true, 
-            title: `[Resolved] ${notification.title}` 
-        });
-
+        batch.update(adminNotifRef, { isRead: true, title: `[Resolved] ${notification.title}` });
         const managerNotifRef = doc(collection(db, "notifications"));
         batch.set(managerNotifRef, {
             recipientUid: notification.originatorUid,
             title: `Issue Resolved: ${notification.productName || 'Product Issue'}`,
             message: `The issue you reported for "${notification.productName || 'a product'}" has been marked as resolved by an admin.`,
-            link: notification.link, 
-            isRead: false,
-            createdAt: serverTimestamp(),
-            type: 'issue_resolved',
+            link: notification.link, isRead: false, createdAt: serverTimestamp(), type: 'issue_resolved',
             relatedDocId: notification.relatedDocId,
         });
-
         await batch.commit();
         toast({ title: "Issue Resolved", description: "The issue has been marked as resolved and the manager has been notified." });
     } catch (error: any) {
@@ -215,9 +162,9 @@ export default function NotificationsPage() {
     } finally {
         setResolvingId(null);
     }
-  };
+  }, [userRole, toast]);
 
-  const openReviewDialog = async (notification: Notification) => {
+  const openReviewDialog = useCallback(async (notification: Notification) => {
       if (!notification.relatedDocId) {
           toast({ title: "Error", description: "Notification is missing data for review.", variant: "destructive" });
           return;
@@ -240,210 +187,150 @@ export default function NotificationsPage() {
       } finally {
           setIsLoadingReviewData(false);
       }
-  };
+  }, [toast]);
+
+  const handleNotificationClick = useCallback(async (notification: Notification, e: React.MouseEvent) => {
+    if (userRole === 'admin' && (notification.type === 'update_request' || notification.type === 'delete_request') && !notification.title.startsWith('[')) {
+        e.preventDefault();
+        await openReviewDialog(notification);
+        return;
+    }
+    
+    if (!notification.isRead) {
+      try {
+        const notifRef = doc(db, "notifications", notification.id);
+        await updateDoc(notifRef, { isRead: true });
+      } catch (error) {
+        console.error("Error marking notification as read: ", error);
+        toast({ title: "Update Error", description: "Could not mark notification as read.", variant: "destructive" });
+      }
+    }
+  }, [userRole, toast, openReviewDialog]);
 
   const handleReviewRequest = async (action: 'approve' | 'decline') => {
-      if (!selectedUpdateRequest || !selectedNotificationForReview || !currentUser) {
-          toast({ title: "Error", description: "Cannot process request due to missing data.", variant: "destructive" });
-          return;
-      }
-      setResolvingId(selectedUpdateRequest.id);
-      
-      const { requestType, id: requestId, originalLedgerEntryId, originalData, updatedData, requestedByUid, requestedByName } = selectedUpdateRequest;
+    if (!selectedUpdateRequest || !selectedNotificationForReview || !currentUser) {
+        toast({ title: "Error", description: "Cannot process request due to missing data.", variant: "destructive" });
+        return;
+    }
+    setResolvingId(selectedUpdateRequest.id);
+    
+    const { requestType, id: requestId, originalLedgerEntryId, originalData, updatedData, requestedByUid } = selectedUpdateRequest;
+    const requestRef = doc(db, 'updateRequests', requestId);
+    const managerNotifRef = doc(collection(db, 'notifications'));
+    const adminNotifRef = doc(db, 'notifications', selectedNotificationForReview.id);
 
-      try {
-          const requestRef = doc(db, 'updateRequests', requestId);
-          const managerNotifRef = doc(collection(db, 'notifications'));
-          const adminNotifRef = doc(db, 'notifications', selectedNotificationForReview.id);
-          
-          if (requestType === 'update') {
-              if (action === 'approve') {
-                  
-                  await runTransaction(db, async (transaction) => {
-                      const ledgerRef = doc(db, 'ledgerEntries', originalLedgerEntryId);
+    try {
+        if (requestType === 'update') {
+            const batch = writeBatch(db);
+            if (action === 'approve') {
+                await runTransaction(db, async (transaction) => {
+                    const ledgerRef = doc(db, 'ledgerEntries', originalLedgerEntryId);
+                    const originalLedgerSnap = await transaction.get(ledgerRef);
+                    if (!originalLedgerSnap.exists()) throw new Error("Original ledger entry not found.");
+                    
+                    const oldPaymentDocRef = originalData.associatedPaymentRecordId ? doc(db, "payments", originalData.associatedPaymentRecordId) : null;
+                    if(oldPaymentDocRef) await transaction.get(oldPaymentDocRef);
 
-                      // === READ PHASE ===
-                      const originalLedgerSnap = await transaction.get(ledgerRef);
-                      if (!originalLedgerSnap.exists()) throw new Error("Original ledger entry not found for update.");
-                      const originalLedgerEntryData = originalLedgerSnap.data() as LedgerEntry;
+                    const productIdsInvolved = new Set<string>();
+                    (updatedData.items || []).forEach((item: LedgerItem) => productIdsInvolved.add(item.productId));
+                    (originalData.items || []).forEach((item: LedgerItem) => productIdsInvolved.add(item.productId));
+                    
+                    const productSnaps = new Map<string, DocumentSnapshot<DocumentData>>();
+                    for (const productId of productIdsInvolved) {
+                        const productRef = doc(db, "products", productId);
+                        productSnaps.set(productId, await transaction.get(productRef));
+                    }
+                    
+                    productSnaps.forEach((productSnap, productId) => {
+                      if (!productSnap.exists()) throw new Error(`Product ID ${productId} not found.`);
+                      let currentDbStock = productSnap.data()!.stock as number;
+                      const originalItem = originalData.items.find(i => i.productId === productId);
+                      const newItem = updatedData.items.find((i: LedgerItem) => i.productId === productId);
+                      if (originalItem) currentDbStock += originalData.type === 'sale' ? originalItem.quantity : -originalItem.quantity;
+                      if (newItem) currentDbStock += updatedData.type === 'sale' ? -newItem.quantity : newItem.quantity;
+                      if (currentDbStock < 0) throw new Error(`Insufficient stock for ${productSnap.data()!.name}.`);
+                      transaction.update(productSnap.ref, { stock: currentDbStock, updatedAt: serverTimestamp() });
+                    });
 
-                      const oldPaymentDocRef = originalLedgerEntryData.associatedPaymentRecordId
-                          ? doc(db, "payments", originalLedgerEntryData.associatedPaymentRecordId)
-                          : null;
-                      if(oldPaymentDocRef) {
-                          await transaction.get(oldPaymentDocRef);
-                      }
+                    const newEntryRequiresPayment = updatedData.paymentStatus === 'paid' || updatedData.paymentStatus === 'partial';
+                    let finalLedgerData = { ...updatedData, updatedAt: serverTimestamp(), updatedByUid: currentUser.uid, updatedByName: currentUser.displayName || currentUser.email };
+                    
+                    if(newEntryRequiresPayment){
+                        const paymentData = {
+                            type: updatedData.type === 'sale' ? 'customer' : 'supplier', relatedEntityName: updatedData.entityName, relatedEntityId: updatedData.entityId,
+                            relatedInvoiceId: updatedData.relatedInvoiceId ?? null, date: format(parseISO(updatedData.date), "MMM dd, yyyy"), isoDate: updatedData.date,
+                            amountPaid: updatedData.amountPaidNow, originalInvoiceAmount: updatedData.grandTotal, remainingBalanceOnInvoice: updatedData.remainingAmount,
+                            method: updatedData.paymentMethod, transactionId: null, status: updatedData.paymentStatus === 'paid' ? 'Completed' : 'Partial',
+                            notes: `From Ledger: ${updatedData.notes || ''}`.trim(), ledgerEntryId: ledgerRef.id, updatedAt: serverTimestamp()
+                        };
+                        if(oldPaymentDocRef) {
+                            transaction.set(oldPaymentDocRef, {...paymentData, createdAt: originalData.createdAt}, {merge: true});
+                        } else {
+                            const newPaymentDocRef = doc(collection(db, "payments"));
+                            transaction.set(newPaymentDocRef, {...paymentData, createdAt: serverTimestamp()});
+                            finalLedgerData.associatedPaymentRecordId = newPaymentDocRef.id;
+                        }
+                    } else if(oldPaymentDocRef) {
+                        transaction.delete(oldPaymentDocRef);
+                        finalLedgerData.associatedPaymentRecordId = null;
+                    }
+                    transaction.set(ledgerRef, finalLedgerData, { merge: true });
+                });
+                batch.update(requestRef, { status: 'approved', reviewedByUid: currentUser.uid, reviewedAt: serverTimestamp() });
+                batch.set(managerNotifRef, { recipientUid: requestedByUid, title: `Update Approved`, message: `Your update for "${originalData.entityName}" was approved.`, link: `/ledger`, isRead: false, createdAt: serverTimestamp(), type: 'update_approved' });
+                batch.update(adminNotifRef, { isRead: true, title: `[Approved] ${selectedNotificationForReview.title}` });
+            } else {
+                batch.update(requestRef, { status: 'declined', reviewedByUid: currentUser.uid, reviewedAt: serverTimestamp() });
+                batch.set(managerNotifRef, { recipientUid: requestedByUid, title: `Update Declined`, message: `Your update for "${originalData.entityName}" was declined.`, link: `/ledger`, isRead: false, createdAt: serverTimestamp(), type: 'update_declined' });
+                batch.update(adminNotifRef, { isRead: true, title: `[Declined] ${selectedNotificationForReview.title}` });
+            }
+            await batch.commit();
+            toast({ title: `Update ${action === 'approve' ? 'Approved' : 'Declined'}`, description: `Action completed successfully.` });
+        } else if (requestType === 'delete') {
+            if (action === 'approve') {
+                await runTransaction(db, async (transaction) => {
+                    const ledgerDocRef = doc(db, "ledgerEntries", originalLedgerEntryId);
+                    const productRefs = originalData.items.map(item => doc(db, "products", item.productId));
+                    const productSnaps = await Promise.all(productRefs.map(ref => transaction.get(ref)));
+                    
+                    productSnaps.forEach((productSnap, index) => {
+                        if (productSnap.exists()) {
+                            const item = originalData.items[index];
+                            const stockChange = originalData.type === 'sale' ? item.quantity : -item.quantity;
+                            transaction.update(productSnap.ref, { stock: productSnap.data().stock + stockChange });
+                        }
+                    });
 
-                      const productIdsInvolved = new Set<string>();
-                      (updatedData.items || []).forEach((item: LedgerItem) => productIdsInvolved.add(item.productId));
-                      (originalLedgerEntryData.items || []).forEach((item: LedgerItem) => productIdsInvolved.add(item.productId));
-                      
-                      const productSnapshots = new Map<string, DocumentSnapshot<DocumentData>>();
-                      for (const productId of productIdsInvolved) {
-                          const productRef = doc(db, "products", productId);
-                          const productSnap = await transaction.get(productRef);
-                          if (!productSnap.exists()) throw new Error(`Product ID ${productId} not found.`);
-                          productSnapshots.set(productId, productSnap);
-                      }
-                      // === END READ PHASE ===
-
-
-                      // === WRITE PHASE ===
-                      for (const productId of productIdsInvolved) {
-                          const productSnap = productSnapshots.get(productId)!;
-                          let currentDbStock = productSnap.data()!.stock as number;
-                          
-                          const originalItem = originalLedgerEntryData.items.find(i => i.productId === productId);
-                          const newItem = updatedData.items.find((i: LedgerItem) => i.productId === productId);
-
-                          if (originalItem) {
-                              currentDbStock += originalLedgerEntryData.type === 'sale' ? originalItem.quantity : -originalItem.quantity;
-                          }
-                          if (newItem) {
-                              currentDbStock += updatedData.type === 'sale' ? -newItem.quantity : newItem.quantity;
-                          }
-                          
-                          if (currentDbStock < 0) throw new Error(`Insufficient stock for ${productSnap.data()!.name}.`);
-                          transaction.update(productSnap.ref, { stock: currentDbStock, updatedAt: serverTimestamp() });
-                      }
-
-                      const finalLedgerData = {
-                          ...updatedData,
-                          updatedAt: serverTimestamp(),
-                          updatedByUid: currentUser.uid,
-                          updatedByName: currentUser.displayName || currentUser.email,
-                          associatedPaymentRecordId: originalLedgerEntryData.associatedPaymentRecordId, 
-                      };
-
-                      const newEntryRequiresPayment = updatedData.paymentStatus === 'paid' || updatedData.paymentStatus === 'partial';
-
-                      if (newEntryRequiresPayment) {
-                          const paymentDataForSave = {
-                              type: updatedData.type === 'sale' ? 'customer' : 'supplier',
-                              relatedEntityName: updatedData.entityName,
-                              relatedEntityId: updatedData.entityId || `unknown-${updatedData.entityType}-${Date.now()}`,
-                              relatedInvoiceId: updatedData.relatedInvoiceId || null,
-                              date: format(parseISO(updatedData.date), "MMM dd, yyyy"),
-                              isoDate: updatedData.date,
-                              amountPaid: updatedData.amountPaidNow,
-                              originalInvoiceAmount: updatedData.grandTotal,
-                              remainingBalanceOnInvoice: updatedData.remainingAmount,
-                              method: updatedData.paymentMethod,
-                              transactionId: null,
-                              status: updatedData.paymentStatus === 'paid' ? (updatedData.type === 'sale' ? 'Received' : 'Sent') : 'Partial',
-                              notes: `Payment from Ledger Entry. ${updatedData.notes || ''}`.trim(),
-                              ledgerEntryId: ledgerRef.id,
-                              createdAt: oldPaymentDocRef ? originalLedgerEntryData.createdAt : serverTimestamp(),
-                              updatedAt: serverTimestamp(),
-                          };
-                          
-                          if (oldPaymentDocRef) {
-                              transaction.set(oldPaymentDocRef, paymentDataForSave, { merge: true });
-                          } else {
-                              const newPaymentDocRef = doc(collection(db, "payments"));
-                              finalLedgerData.associatedPaymentRecordId = newPaymentDocRef.id;
-                              transaction.set(newPaymentDocRef, paymentDataForSave);
-                          }
-                      } else if (oldPaymentDocRef) {
-                          transaction.delete(oldPaymentDocRef);
-                          finalLedgerData.associatedPaymentRecordId = null;
-                      }
-
-                      transaction.set(ledgerRef, finalLedgerData, { merge: true });
-                  });
-                  
-                  const batch = writeBatch(db);
-                  batch.update(requestRef, { status: 'approved', reviewedByUid: currentUser.uid, reviewedAt: serverTimestamp() });
-                  batch.set(managerNotifRef, { recipientUid: requestedByUid, title: `Ledger Update Approved`, message: `Your update for "${originalData.entityName}" was approved.`, link: `/ledger`, isRead: false, createdAt: serverTimestamp(), type: 'update_approved' });
-                  batch.update(adminNotifRef, { isRead: true, title: `[Approved] ${selectedNotificationForReview.title}` });
-                  await batch.commit();
-                  toast({ title: "Update Approved", description: "Ledger entry and associated records have been updated." });
-              } else { // Decline update
-                  const batch = writeBatch(db);
-                  batch.update(requestRef, { status: 'declined', reviewedByUid: currentUser.uid, reviewedAt: serverTimestamp() });
-                  batch.set(managerNotifRef, { recipientUid: requestedByUid, title: `Ledger Update Declined`, message: `Your update for "${originalData.entityName}" was declined.`, link: `/ledger`, isRead: false, createdAt: serverTimestamp(), type: 'update_declined' });
-                  batch.update(adminNotifRef, { isRead: true, title: `[Declined] ${selectedNotificationForReview.title}` });
-                  await batch.commit();
-                  toast({ title: "Update Declined", description: "Update request declined and manager notified." });
-              }
-          } else if (requestType === 'delete') {
-              if (action === 'approve') {
-                  await runTransaction(db, async (transaction) => {
-                      const ledgerDocRef = doc(db, "ledgerEntries", originalLedgerEntryId);
-                      const entryData = originalData;
-                      
-                      // --- READ PHASE ---
-                      const ledgerSnap = await transaction.get(ledgerDocRef);
-                      if (!ledgerSnap.exists()) {
-                          console.warn(`Ledger entry ${originalLedgerEntryId} already deleted.`);
-                          return;
-                      }
-
-                      const productRefs = entryData.entryPurpose === "Ledger Record"
-                          ? entryData.items.map(item => doc(db, "products", item.productId))
-                          : [];
-                      
-                      let paymentSnap: DocumentSnapshot<DocumentData> | null = null;
-                      if (entryData.associatedPaymentRecordId) {
-                          paymentSnap = await transaction.get(doc(db, "payments", entryData.associatedPaymentRecordId));
-                      }
-                      
-                      const productSnaps = await Promise.all(
-                          productRefs.map(ref => transaction.get(ref))
-                      );
-                      // --- END READ PHASE ---
-                      
-                      // --- WRITE PHASE ---
-                      if (entryData.entryPurpose === "Ledger Record") {
-                          productSnaps.forEach((productSnap, index) => {
-                              if (!productSnap.exists()) {
-                                  console.warn(`Product with ID ${productRefs[index].id} not found during deletion, skipping stock update.`);
-                                  return;
-                              }
-                              const item = entryData.items[index];
-                              const stockChange = entryData.type === 'sale' ? item.quantity : -item.quantity;
-                              const newStock = productSnap.data()!.stock + stockChange;
-                              transaction.update(productSnap.ref, { stock: newStock });
-                          });
-                      }
-                      
-                      if (paymentSnap && paymentSnap.exists()) {
-                          transaction.delete(paymentSnap.ref);
-                      }
-                      
-                      transaction.delete(ledgerDocRef);
-                  });
-
-                  const batch = writeBatch(db);
-                  batch.update(requestRef, { status: 'approved', reviewedByUid: currentUser.uid, reviewedAt: serverTimestamp() });
-                  batch.set(managerNotifRef, { recipientUid: requestedByUid, title: `Deletion Request Approved`, message: `Your request to delete entry for "${originalData.entityName}" was approved.`, link: `/ledger`, isRead: false, createdAt: serverTimestamp(), type: 'delete_approved' });
-                  batch.update(adminNotifRef, { isRead: true, title: `[Deleted] ${selectedNotificationForReview.title}` });
-                  await batch.commit();
-                  toast({ title: "Deletion Approved", description: "Ledger entry has been deleted." });
-              } else { // Decline deletion
-                  const batch = writeBatch(db);
-                  batch.update(requestRef, { status: 'declined', reviewedByUid: currentUser.uid, reviewedAt: serverTimestamp() });
-                  batch.set(managerNotifRef, { recipientUid: requestedByUid, title: `Deletion Request Declined`, message: `Your request to delete entry for "${originalData.entityName}" was declined.`, link: `/ledger`, isRead: false, createdAt: serverTimestamp(), type: 'delete_declined' });
-                  batch.update(adminNotifRef, { isRead: true, title: `[Declined] ${selectedNotificationForReview.title}` });
-                  await batch.commit();
-                  toast({ title: "Deletion Declined", description: "Deletion request declined and manager notified." });
-              }
-          }
-      } catch (error: any) {
-          console.error("Error handling review request:", error);
-          toast({ title: "Action Failed", description: `Could not process the request: ${error.message}`, variant: "destructive" });
-      } finally {
-          setResolvingId(null);
-          setIsReviewDialogOpen(false);
-          setSelectedUpdateRequest(null);
-      }
+                    if (originalData.associatedPaymentRecordId) {
+                        transaction.delete(doc(db, "payments", originalData.associatedPaymentRecordId));
+                    }
+                    transaction.delete(ledgerDocRef);
+                });
+                const batch = writeBatch(db);
+                batch.update(requestRef, { status: 'approved', reviewedByUid: currentUser.uid, reviewedAt: serverTimestamp() });
+                batch.set(managerNotifRef, { recipientUid: requestedByUid, title: `Deletion Approved`, message: `Request to delete entry for "${originalData.entityName}" was approved.`, link: `/ledger`, isRead: false, createdAt: serverTimestamp(), type: 'delete_approved' });
+                batch.update(adminNotifRef, { isRead: true, title: `[Deleted] ${selectedNotificationForReview.title}` });
+                await batch.commit();
+                toast({ title: "Deletion Approved", description: "Ledger entry has been deleted." });
+            } else {
+                const batch = writeBatch(db);
+                batch.update(requestRef, { status: 'declined', reviewedByUid: currentUser.uid, reviewedAt: serverTimestamp() });
+                batch.set(managerNotifRef, { recipientUid: requestedByUid, title: `Deletion Declined`, message: `Request to delete entry for "${originalData.entityName}" was declined.`, link: `/ledger`, isRead: false, createdAt: serverTimestamp(), type: 'delete_declined' });
+                batch.update(adminNotifRef, { isRead: true, title: `[Declined] ${selectedNotificationForReview.title}` });
+                await batch.commit();
+                toast({ title: "Deletion Declined", description: "Deletion request declined." });
+            }
+        }
+    } catch (error: any) {
+        console.error("Error handling review request:", error);
+        toast({ title: "Action Failed", description: `Could not process the request: ${error.message}`, variant: "destructive" });
+    } finally {
+        setResolvingId(null);
+        setIsReviewDialogOpen(false);
+        setSelectedUpdateRequest(null);
+    }
   };
 
-
-  if (isLoading) {
-    return <PageHeader title="Notifications" description="Loading your notifications..." icon={Bell} />;
-  }
-  
   const unreadCount = notifications.filter(n => !n.isRead).length;
 
   const renderReviewDialogContent = () => {
@@ -467,19 +354,15 @@ export default function NotificationsPage() {
         );
     }
     
-    // UPDATE REQUEST VIEW
     const simpleChanges = getChangedFields(originalData, updatedData);
     const originalItems = originalData.items || [];
     const newItems = updatedData?.items || [];
-    // Basic item diff (more complex diff can be added later if needed)
     const itemChangeDetected = JSON.stringify(originalItems) !== JSON.stringify(newItems);
 
     return (
         <div className="space-y-4 text-sm">
             <p className="text-xs text-muted-foreground text-center">Requested by {requestedByName} on {requestedAt ? format(requestedAt.toDate(), "MMM dd, yyyy 'at' HH:mm") : 'a moment ago'}</p>
-            
             {simpleChanges.length === 0 && !itemChangeDetected && <p className="text-center text-muted-foreground p-4">No changes detected in main fields or items.</p>}
-
             {simpleChanges.map(({ key, oldValue, newValue }) => (
                 <div key={key} className="p-3 border rounded-lg bg-background shadow-sm">
                     <p className="font-semibold capitalize text-foreground mb-2">{key.replace(/([A-Z])/g, ' $1')}</p>
@@ -496,7 +379,6 @@ export default function NotificationsPage() {
                     </div>
                 </div>
             ))}
-            
             {itemChangeDetected && (
                <div className="p-3 border rounded-lg bg-background shadow-sm">
                     <p className="font-semibold text-foreground mb-2">Items Changed</p>
@@ -520,18 +402,17 @@ export default function NotificationsPage() {
     );
   };
 
+  if (isLoading) {
+    return <PageHeader title="Notifications" description="Loading your notifications..." icon={Bell} />;
+  }
+
   return (
     <>
       <PageHeader
         title="Notifications"
         description="Your latest alerts and updates are shown here."
         icon={Bell}
-        actions={
-            <Button onClick={handleMarkAllAsRead} disabled={unreadCount === 0}>
-                <CheckCheck className="mr-2 h-4 w-4"/>
-                Mark All as Read ({unreadCount})
-            </Button>
-        }
+        actions={ <Button onClick={handleMarkAllAsRead} disabled={unreadCount === 0}> <CheckCheck className="mr-2 h-4 w-4"/> Mark All as Read ({unreadCount}) </Button> }
       />
       <Card className="shadow-lg rounded-xl">
         <CardHeader>
@@ -549,61 +430,26 @@ export default function NotificationsPage() {
             <div className="space-y-3">
               {notifications.map((notification) => (
                 <Link href={notification.link} key={notification.id} onClick={(e) => handleNotificationClick(notification, e)} className="block">
-                  <div
-                    className={`p-4 border rounded-lg transition-colors flex items-start gap-4 ${
-                      !notification.isRead
-                        ? "bg-primary/10 border-primary/20 hover:bg-primary/20"
-                        : "bg-muted/50 hover:bg-muted"
-                    }`}
-                  >
-                    <div className="flex-shrink-0 mt-1">
-                      {!notification.isRead && (
-                        <div className="h-2.5 w-2.5 rounded-full bg-primary" aria-label="Unread"></div>
-                      )}
-                    </div>
+                  <div className={`p-4 border rounded-lg transition-colors flex items-start gap-4 ${!notification.isRead ? "bg-primary/10 border-primary/20 hover:bg-primary/20" : "bg-muted/50 hover:bg-muted"}`}>
+                    <div className="flex-shrink-0 mt-1">{!notification.isRead && (<div className="h-2.5 w-2.5 rounded-full bg-primary" aria-label="Unread"></div>)}</div>
                     <div className="flex-grow">
                       <p className="font-semibold text-foreground">{notification.title}</p>
                       <p className="text-sm text-muted-foreground">{notification.message}</p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        {formatDistanceToNow(notification.createdAt.toDate(), { addSuffix: true })}
-                      </p>
-                       {userRole === 'admin' && notification.type === 'issue_report' && !notification.title.startsWith('[Resolved]') && (
+                      <p className="text-xs text-muted-foreground mt-1">{formatDistanceToNow(notification.createdAt.toDate(), { addSuffix: true })}</p>
+                      {userRole === 'admin' && notification.type === 'issue_report' && !notification.title.startsWith('[Resolved]') && (
                         <div className="mt-2">
-                            <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                handleMarkAsResolved(notification);
-                            }}
-                            disabled={resolvingId === notification.id}
-                            >
-                            {resolvingId === notification.id ? (
-                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            ) : (
-                                <CheckSquare className="mr-2 h-4 w-4" />
-                            )}
-                            Mark as Resolved
-                            </Button>
+                          <Button size="sm" variant="outline" onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleMarkAsResolved(notification); }} disabled={resolvingId === notification.id}>
+                            {resolvingId === notification.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckSquare className="mr-2 h-4 w-4" />} Mark as Resolved
+                          </Button>
                         </div>
-                        )}
-                         {userRole === 'admin' && (notification.type === 'update_request' || notification.type === 'delete_request') && !notification.title.startsWith('[') && (
-                          <div className="mt-2">
-                            <Button
-                              size="sm"
-                              variant="default"
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                openReviewDialog(notification);
-                              }}
-                              disabled={resolvingId === notification.relatedDocId}
-                            >
-                                <Eye className="mr-2 h-4 w-4" /> Review Request
-                            </Button>
-                          </div>
-                        )}
+                      )}
+                      {userRole === 'admin' && (notification.type === 'update_request' || notification.type === 'delete_request') && !notification.title.startsWith('[') && (
+                        <div className="mt-2">
+                          <Button size="sm" variant="default" onClick={(e) => { e.preventDefault(); e.stopPropagation(); openReviewDialog(notification); }} disabled={resolvingId === notification.relatedDocId}>
+                            <Eye className="mr-2 h-4 w-4" /> Review Request
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </Link>
@@ -617,13 +463,9 @@ export default function NotificationsPage() {
           <DialogContent className="max-w-3xl">
               <DialogHeader>
                   <DialogTitle>Review Request</DialogTitle>
-                  <DialogDescription>
-                      From: {selectedUpdateRequest?.requestedByName} | Type: {selectedUpdateRequest?.requestType?.toUpperCase()}
-                  </DialogDescription>
+                  <DialogDescription>From: {selectedUpdateRequest?.requestedByName} | Type: {selectedUpdateRequest?.requestType?.toUpperCase()}</DialogDescription>
               </DialogHeader>
-              <ScrollArea className="max-h-[60vh] p-1">
-                 {renderReviewDialogContent()}
-              </ScrollArea>
+              <ScrollArea className="max-h-[60vh] p-1">{renderReviewDialogContent()}</ScrollArea>
               {selectedUpdateRequest?.status === 'pending' && (
                 <DialogFooter>
                     <Button variant="outline" onClick={() => handleReviewRequest('decline')} disabled={resolvingId === selectedUpdateRequest?.id}>

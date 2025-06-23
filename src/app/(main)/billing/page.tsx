@@ -21,6 +21,7 @@ import { InvoiceTemplate } from '@/components/invoice/invoice-template';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { useReactToPrint } from 'react-to-print';
+import { cn } from "@/lib/utils";
 
 /**
  * @fileOverview Page for Admin to manage Billing and Invoicing.
@@ -54,7 +55,7 @@ export interface Invoice {
   createdAt?: Timestamp; 
   dueDate?: string; 
   updatedAt?: Timestamp; 
-  consolidatedLedgerEntryIds?: string[]; // New field
+  consolidatedLedgerEntryIds?: string[];
 }
 
 export interface CompanyDetailsForInvoice {
@@ -212,11 +213,11 @@ export default function BillingPage() {
     fetchInvoices();
   }, [fetchInvoices]);
 
-  const handleCreateNewInvoice = () => {
+  const handleCreateNewInvoice = useCallback(() => {
     router.push("/create-bill");
-  };
+  }, [router]);
 
-  const handleViewInvoice = (invoiceId: string) => {
+  const handleViewInvoice = useCallback((invoiceId: string) => {
     const invoice = invoices.find(inv => inv.id === invoiceId);
     if (invoice) {
       setSelectedInvoiceForView(invoice);
@@ -224,9 +225,9 @@ export default function BillingPage() {
     } else {
       toast({ title: "Error", description: "Invoice details not found.", variant: "destructive" });
     }
-  };
+  }, [invoices, toast]);
 
-  const handleDownloadPDF = async (invoiceToDownload: Invoice | null, companyDetailsForPdf: CompanyDetailsForInvoice | null) => {
+  const handleDownloadPDF = useCallback(async (invoiceToDownload: Invoice | null, companyDetailsForPdf: CompanyDetailsForInvoice | null) => {
     if (!invoiceToDownload || !companyDetailsForPdf) {
       toast({ title: "Error", description: "Invoice or company details not available for PDF generation.", variant: "destructive" });
       return;
@@ -309,7 +310,7 @@ export default function BillingPage() {
     tempRoot.render(
       <InvoiceRenderer invoice={invoiceToDownload} companyDetails={companyDetailsForPdf} onRendered={(el) => generatePdfFromElement(el, invoiceToDownload)} />
     );
-  };
+  }, [toast]);
   
   const handleActualPrint = useReactToPrint({
     content: () => {
@@ -328,11 +329,11 @@ export default function BillingPage() {
     }
   });
 
-  const handleEditInvoice = (invoiceId: string) => {
+  const handleEditInvoice = useCallback((invoiceId: string) => {
     router.push(`/create-bill?editInvoiceId=${invoiceId}`); 
-  };
+  }, [router]);
   
-  const handleUpdateStatus = async (invoiceId: string, newStatus: Invoice['status']) => {
+  const handleUpdateStatus = useCallback(async (invoiceId: string, newStatus: Invoice['status']) => {
     try {
       const invoiceRef = doc(db, "invoices", invoiceId);
       await updateDoc(invoiceRef, { status: newStatus, updatedAt: serverTimestamp() });
@@ -342,9 +343,9 @@ export default function BillingPage() {
       console.error("Error updating invoice status: ", error);
       toast({ title: "Update Error", description: `Could not update invoice status: ${error.message}`, variant: "destructive" });
     }
-  };
+  }, [toast, fetchInvoices]);
 
-  const handleDeleteInvoice = async (invoiceId: string, invoiceNumber: string) => {
+  const handleDeleteInvoice = useCallback(async (invoiceId: string, invoiceNumber: string) => {
     if (currentUserRole !== 'admin') {
       toast({ title: "Permission Denied", description: "Only Admins can delete invoices.", variant: "destructive"});
       return;
@@ -357,7 +358,7 @@ export default function BillingPage() {
       console.error("Error deleting invoice: ", error);
       toast({ title: "Deletion Error", description: `Could not delete invoice: ${error.message}`, variant: "destructive" });
     }
-  };
+  }, [toast, fetchInvoices, currentUserRole]);
   
   const getBadgeVariant = (status: Invoice['status']): "default" | "secondary" | "destructive" | "outline" => {
     switch (status) {
@@ -391,14 +392,6 @@ export default function BillingPage() {
         <CardHeader>
           <CardTitle className="font-headline text-foreground">Invoice List</CardTitle>
           <CardDescription>A list of all generated invoices, fetched from Firestore. Most recent first.</CardDescription>
-            <div className="sm:hidden flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground pt-2">
-                <span className="font-semibold">Status:</span>
-                <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-green-500"></div>Paid</div>
-                <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-yellow-500"></div>Pending</div>
-                <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-red-500"></div>Overdue</div>
-                <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-blue-500"></div>Partial</div>
-                <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-gray-400"></div>Cancelled</div>
-            </div>
         </CardHeader>
         <CardContent>
           {isLoading && invoices.length === 0 ? (
@@ -437,11 +430,11 @@ export default function BillingPage() {
                         <TableCell className="text-center">
                           <Badge 
                               variant={getBadgeVariant(invoice.status)}
-                              className={
-                                  invoice.status === "Paid" ? "bg-accent text-accent-foreground" : 
-                                  invoice.status === "Partially Paid" ? "border-yellow-500 text-yellow-600 dark:border-yellow-400 dark:text-yellow-300 bg-transparent" : 
-                                  invoice.status === "Cancelled" ? "bg-muted text-muted-foreground border-muted-foreground/30" : ""
-                              }
+                              className={cn(
+                                  invoice.status === "Paid" && "bg-accent text-accent-foreground",
+                                  invoice.status === "Partially Paid" && "border-yellow-500 text-yellow-600 dark:border-yellow-400 dark:text-yellow-300 bg-transparent",
+                                  invoice.status === "Cancelled" && "bg-muted text-muted-foreground border-muted-foreground/30"
+                              )}
                           >
                             {invoice.status}
                           </Badge>
@@ -507,7 +500,7 @@ export default function BillingPage() {
               {/* Mobile Card View */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 lg:hidden">
                 {invoices.map((invoice) => (
-                  <Card key={invoice.id + "-mobile"} className={`flex flex-col justify-between ${getStatusRowClass(invoice.status)}`}>
+                  <Card key={invoice.id + "-mobile"} className={cn("flex flex-col justify-between", getStatusRowClass(invoice.status))}>
                     <CardHeader className="flex flex-row items-start justify-between gap-2 p-4 pb-2">
                       <div className="flex-1 space-y-1">
                         <CardTitle className="text-base font-bold">{invoice.customerName}</CardTitle>
@@ -545,11 +538,11 @@ export default function BillingPage() {
                     <CardContent className="p-4 pt-0">
                       <div className="flex justify-between items-center">
                         <span className="text-xl font-bold">{invoice.displayTotal}</span>
-                        <Badge variant={getBadgeVariant(invoice.status)} className={
-                          invoice.status === "Paid" ? "bg-accent text-accent-foreground" : 
-                          invoice.status === "Partially Paid" ? "border-yellow-500 text-yellow-600 dark:border-yellow-400 dark:text-yellow-300 bg-transparent" : 
-                          invoice.status === "Cancelled" ? "bg-muted text-muted-foreground border-muted-foreground/30" : ""
-                        }>{invoice.status}</Badge>
+                        <Badge variant={getBadgeVariant(invoice.status)} className={cn(
+                          invoice.status === "Paid" && "bg-accent text-accent-foreground",
+                          invoice.status === "Partially Paid" && "border-yellow-500 text-yellow-600 dark:border-yellow-400 dark:text-yellow-300 bg-transparent",
+                          invoice.status === "Cancelled" && "bg-muted text-muted-foreground border-muted-foreground/30"
+                        )}>{invoice.status}</Badge>
                       </div>
                     </CardContent>
                   </Card>
