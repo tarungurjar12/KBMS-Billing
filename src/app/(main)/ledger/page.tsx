@@ -920,7 +920,7 @@ export default function DailyLedgerPage() {
             <Button onClick={() => {
                 setEditingLedgerEntry(null);
                 setIsLedgerFormOpen(true);
-            }}>
+            }} className="mt-4 sm:mt-0">
                 <PlusCircle className="mr-2 h-4 w-4" /> Add New Ledger Entry
             </Button>
         }
@@ -1283,10 +1283,10 @@ export default function DailyLedgerPage() {
         </CardHeader>
         <CardContent>
           <Tabs value={activeLedgerTab} onValueChange={(value) => setActiveLedgerTab(value as any)} className="w-full mb-4">
-            <TabsList className="flex flex-wrap items-center justify-start gap-1 sm:gap-2">
-                <TabsTrigger value="all">All Entries</TabsTrigger>
-                <TabsTrigger value="customer">Customer</TabsTrigger>
-                <TabsTrigger value="seller">Seller</TabsTrigger>
+            <TabsList className="flex flex-col items-stretch h-auto sm:h-10 sm:flex-row sm:items-center sm:justify-start gap-1">
+                <TabsTrigger value="all" className="w-full sm:w-auto">All Entries</TabsTrigger>
+                <TabsTrigger value="customer" className="w-full sm:w-auto">Customer</TabsTrigger>
+                <TabsTrigger value="seller" className="w-full sm:w-auto">Seller</TabsTrigger>
             </TabsList>
           </Tabs>
 
@@ -1311,10 +1311,12 @@ export default function DailyLedgerPage() {
                 </Button>
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <>
+            {/* Desktop View: Table */}
+            <div className="hidden lg:block overflow-x-auto">
               <Table>
                 <TableHeader><TableRow>
-                  <TableHead className="min-w-[150px]">Type</TableHead>
+                  <TableHead className="min-w-[180px]">Type</TableHead>
                   <TableHead className="min-w-[150px]">Entity</TableHead>
                   <TableHead className="min-w-[200px]">Details</TableHead>
                   <TableHead className="text-right min-w-[100px]">Total (₹)</TableHead>
@@ -1399,12 +1401,64 @@ export default function DailyLedgerPage() {
                 </TableBody>
               </Table>
             </div>
+            
+            {/* Mobile/Tablet View: Cards */}
+            <div className="block lg:hidden space-y-4">
+                {displayedLedgerEntries.map(entry => (
+                    <Card key={entry.id + "-mobile"} className="w-full">
+                        <CardHeader className="flex flex-row items-start justify-between gap-2 p-4">
+                            <div className="flex-1 space-y-1">
+                                <CardTitle className="text-base font-bold">{entry.entityName}</CardTitle>
+                                <CardDescription className="text-xs">
+                                    <Badge 
+                                        variant={entry.type === 'sale' ? 'default' : 'secondary'} 
+                                        className={`mr-2 ${
+                                            entry.entryPurpose === "Payment Record" ? (entry.type === 'sale' ? "bg-teal-100 text-teal-700 dark:bg-teal-700/80 dark:text-teal-100" : "bg-purple-100 text-purple-700 dark:bg-purple-700/80 dark:text-purple-100") :
+                                            (entry.type === 'sale' ? 'bg-green-100 text-green-700 dark:bg-green-700/80 dark:text-green-100' : 'bg-blue-100 text-blue-700 dark:bg-blue-700/80 dark:text-blue-100')
+                                        } whitespace-nowrap`}
+                                    >
+                                        {entry.entryPurpose === "Payment Record" ? (entry.type === 'sale' ? 'Payment Received' : 'Payment Sent') : entry.type.charAt(0).toUpperCase() + entry.type.slice(1)}
+                                    </Badge>
+                                    <span className="capitalize">{entry.paymentStatus} {entry.paymentMethod ? `(${entry.paymentMethod})` : ''}</span>
+                                </CardDescription>
+                            </div>
+                            <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0">
+                                    <MoreHorizontal className="h-4 w-4" /> <span className="sr-only">Actions</span>
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                    <DropdownMenuItem onClick={() => openEntryDetailsDialog(entry)}><Eye className="mr-2 h-4 w-4" /> View Details</DropdownMenuItem>
+                                    {currentUserRole === 'admin' && <DropdownMenuItem onClick={() => handleEditLedgerEntry(entry)}><Edit className="mr-2 h-4 w-4" /> Edit Entry</DropdownMenuItem>}
+                                    {currentUserRole === 'admin' && <DropdownMenuSeparator/>}
+                                    {currentUserRole === 'admin' && <DropdownMenuItem onClick={() => openDeleteConfirmation(entry)} className="text-destructive focus:text-destructive-foreground"><Trash2 className="mr-2 h-4 w-4" /> Delete Entry</DropdownMenuItem>}
+                                </DropdownMenuContent>
+                            </DropdownMenu>
+                        </CardHeader>
+                        <CardContent className="p-4 pt-0 text-sm">
+                             <div className="flex justify-between items-center font-semibold text-lg mb-2">
+                                <span className="text-muted-foreground text-sm">Total</span>
+                                <span>{formatCurrency(entry.grandTotal)}</span>
+                            </div>
+                            <p className="text-xs text-muted-foreground truncate">
+                                <strong className="font-medium text-foreground">Details:</strong> {entry.entryPurpose === "Ledger Record" ? (entry.items.map(i => i.productName).join(', ') || 'No items') : `Payment via ${entry.paymentMethod || 'N/A'}`}
+                            </p>
+                            <p className="text-xs text-muted-foreground mt-1">
+                                <strong className="font-medium text-foreground">User:</strong> {entry.createdByName}
+                            </p>
+                        </CardContent>
+                    </Card>
+                ))}
+            </div>
+            </>
           )}
         </CardContent>
       </Card>
     </>
   );
 }
+
 
 
 

@@ -1,4 +1,5 @@
 
+
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
@@ -229,7 +230,7 @@ export default function ViewProductsStockPage() {
       </Dialog>
 
       <Tabs defaultValue="price_list" className="w-full">
-        <TabsList className="grid w-full grid-cols-1 mb-4 sm:grid-cols-2 sm:w-auto max-w-md">
+        <TabsList className="grid w-full grid-cols-1 mb-4 sm:grid-cols-2 sm:w-auto max-w-md sm:flex-row h-auto flex-col items-stretch sm:h-10 sm:items-center">
           <TabsTrigger value="price_list">Product Price List</TabsTrigger>
           <TabsTrigger value="stock_list">Current Stock Levels</TabsTrigger>
         </TabsList>
@@ -276,7 +277,7 @@ export default function ViewProductsStockPage() {
                           <Button 
                             variant="outline"
                             size="icon"
-                            className="h-9 w-9 sm:h-auto sm:w-auto sm:px-3 sm:py-1.5 hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive"
+                            className="h-9 w-9 sm:h-auto sm:w-auto sm:px-3 sm:py-1.5 hover:bg-destructive hover:text-destructive-foreground focus-visible:bg-destructive/10 focus-visible:text-destructive"
                             onClick={() => openReportIssueDialog(product)} 
                             title={`Report issue with ${product.name}`}
                           >
@@ -309,7 +310,7 @@ export default function ViewProductsStockPage() {
                 <div className="overflow-x-auto">
                 <Table>
                   <TableHeader><TableRow>
-                      <TableHead className="w-[40px] sm:w-[60px]">Image</TableHead><TableHead>Product Name</TableHead>
+                      <TableHead className="w-[40px] hidden sm:table-cell sm:w-[60px]">Image</TableHead><TableHead>Product Name</TableHead>
                       <TableHead className="hidden md:table-cell">SKU</TableHead>
                       <TableHead className="hidden sm:table-cell">Unit</TableHead>
                       <TableHead className="text-right">Current Stock</TableHead><TableHead className="text-center">Status</TableHead>
@@ -318,7 +319,7 @@ export default function ViewProductsStockPage() {
                   <TableBody>
                     {productsList.map((item) => (
                       <TableRow key={item.id + "-stock"}>
-                        <TableCell>
+                        <TableCell className="hidden sm:table-cell">
                           <Image 
                               src={item.imageUrl} 
                               alt={item.name} 
@@ -347,7 +348,7 @@ export default function ViewProductsStockPage() {
                           <Button 
                             variant="outline"
                             size="icon"
-                            className="h-9 w-9 sm:h-auto sm:w-auto sm:px-3 sm:py-1.5 hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive"
+                            className="h-9 w-9 sm:h-auto sm:w-auto sm:px-3 sm:py-1.5 hover:bg-destructive hover:text-destructive-foreground focus-visible:bg-destructive/10 focus-visible:text-destructive"
                             onClick={() => openReportIssueDialog(item)} 
                             title={`Report issue with ${item.name}`}
                           >
@@ -368,3 +369,4 @@ export default function ViewProductsStockPage() {
     </>
   );
 }
+
