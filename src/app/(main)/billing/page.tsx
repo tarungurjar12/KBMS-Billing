@@ -413,94 +413,149 @@ export default function BillingPage() {
                 </Button>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Invoice #</TableHead>
-                  <TableHead>Customer</TableHead>
-                  <TableHead className="hidden sm:table-cell">Date</TableHead>
-                  <TableHead className="text-right">Total</TableHead>
-                  <TableHead className="hidden sm:table-cell text-center">Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+            <>
+              {/* Desktop Table View */}
+              <div className="hidden lg:block overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Invoice #</TableHead>
+                      <TableHead>Customer</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead className="text-right">Total</TableHead>
+                      <TableHead className="text-center">Status</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {invoices.map((invoice) => (
+                      <TableRow key={invoice.id} className={getStatusRowClass(invoice.status)}>
+                        <TableCell className="font-medium">{invoice.invoiceNumber}</TableCell>
+                        <TableCell>{invoice.customerName}</TableCell>
+                        <TableCell>{invoice.date}</TableCell>
+                        <TableCell className="text-right">{invoice.displayTotal}</TableCell>
+                        <TableCell className="text-center">
+                          <Badge 
+                              variant={getBadgeVariant(invoice.status)}
+                              className={
+                                  invoice.status === "Paid" ? "bg-accent text-accent-foreground" : 
+                                  invoice.status === "Partially Paid" ? "border-yellow-500 text-yellow-600 dark:border-yellow-400 dark:text-yellow-300 bg-transparent" : 
+                                  invoice.status === "Cancelled" ? "bg-muted text-muted-foreground border-muted-foreground/30" : ""
+                              }
+                          >
+                            {invoice.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                           <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon">
+                                <MoreHorizontal className="h-4 w-4" />
+                                 <span className="sr-only">Actions for {invoice.invoiceNumber}</span>
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => handleViewInvoice(invoice.id)}>
+                                  <Eye className="mr-2 h-4 w-4" /> View Details
+                              </DropdownMenuItem>
+                               <DropdownMenuItem onClick={() => {
+                                    const invoiceForAction = invoices.find(inv => inv.id === invoice.id);
+                                    if (invoiceForAction && companyDetails) {
+                                        handleDownloadPDF(invoiceForAction, companyDetails);
+                                    } else if (!companyDetails) {
+                                        toast({ title: "Info", description: "Company details still loading, please try again shortly.", variant: "default" });
+                                    } else {
+                                        toast({ title: "Error", description: "Invoice details not found for PDF generation.", variant: "destructive" });
+                                    }
+                               }}>
+                                  <Download className="mr-2 h-4 w-4" /> Download PDF
+                              </DropdownMenuItem>
+                               <DropdownMenuItem onClick={() => {
+                                    const invoiceForAction = invoices.find(inv => inv.id === invoice.id);
+                                    if (invoiceForAction) {
+                                        setSelectedInvoiceForView(invoiceForAction); 
+                                        setTimeout(() => handleActualPrint(), 0); 
+                                    }
+                               }}>
+                                  <Printer className="mr-2 h-4 w-4" /> Print Invoice
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem onClick={() => handleEditInvoice(invoice.id)}>
+                                  <Edit className="mr-2 h-4 w-4" /> Edit Invoice
+                              </DropdownMenuItem>
+                              {invoice.status !== "Paid" && <DropdownMenuItem onClick={() => handleUpdateStatus(invoice.id, "Paid")}>Mark as Paid</DropdownMenuItem>}
+                              {invoice.status !== "Pending" && <DropdownMenuItem onClick={() => handleUpdateStatus(invoice.id, "Pending")}>Mark as Pending</DropdownMenuItem>}
+                              {invoice.status !== "Overdue" && <DropdownMenuItem onClick={() => handleUpdateStatus(invoice.id, "Overdue")}>Mark as Overdue</DropdownMenuItem>}
+                              {invoice.status !== "Cancelled" && <DropdownMenuItem onClick={() => handleUpdateStatus(invoice.id, "Cancelled")}>Mark as Cancelled</DropdownMenuItem>}
+                              {currentUserRole === 'admin' && <DropdownMenuSeparator />}
+                              <DropdownMenuItem 
+                                onClick={() => handleDeleteInvoice(invoice.id, invoice.invoiceNumber)} 
+                                className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground"
+                                disabled={currentUserRole !== 'admin'}
+                              >
+                                  <Trash2 className="mr-2 h-4 w-4" /> Delete Invoice
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Mobile Card View */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 lg:hidden">
                 {invoices.map((invoice) => (
-                  <TableRow key={invoice.id} className={getStatusRowClass(invoice.status)}>
-                    <TableCell className="font-medium">{invoice.invoiceNumber}</TableCell>
-                    <TableCell>{invoice.customerName}</TableCell>
-                    <TableCell className="hidden sm:table-cell">{invoice.date}</TableCell>
-                    <TableCell className="text-right">{invoice.displayTotal}</TableCell>
-                    <TableCell className="hidden sm:table-cell text-center">
-                      <Badge 
-                          variant={getBadgeVariant(invoice.status)}
-                          className={
-                              invoice.status === "Paid" ? "bg-accent text-accent-foreground" : 
-                              invoice.status === "Partially Paid" ? "border-yellow-500 text-yellow-600 dark:border-yellow-400 dark:text-yellow-300 bg-transparent" : 
-                              invoice.status === "Cancelled" ? "bg-muted text-muted-foreground border-muted-foreground/30" : ""
-                          }
-                      >
-                        {invoice.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                       <DropdownMenu>
+                  <Card key={invoice.id + "-mobile"} className={`flex flex-col justify-between ${getStatusRowClass(invoice.status)}`}>
+                    <CardHeader className="flex flex-row items-start justify-between gap-2 p-4 pb-2">
+                      <div className="flex-1 space-y-1">
+                        <CardTitle className="text-base font-bold">{invoice.customerName}</CardTitle>
+                        <CardDescription className="text-xs">{invoice.invoiceNumber} | {invoice.date}</CardDescription>
+                      </div>
+                      <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon">
+                          <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0">
                             <MoreHorizontal className="h-4 w-4" />
-                             <span className="sr-only">Actions for {invoice.invoiceNumber}</span>
+                            <span className="sr-only">Actions for {invoice.invoiceNumber}</span>
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => handleViewInvoice(invoice.id)}>
-                              <Eye className="mr-2 h-4 w-4" /> View Details
-                          </DropdownMenuItem>
-                           <DropdownMenuItem onClick={() => {
-                                const invoiceForAction = invoices.find(inv => inv.id === invoice.id);
-                                if (invoiceForAction && companyDetails) {
-                                    handleDownloadPDF(invoiceForAction, companyDetails);
-                                } else if (!companyDetails) {
-                                    toast({ title: "Info", description: "Company details still loading, please try again shortly.", variant: "default" });
-                                } else {
-                                    toast({ title: "Error", description: "Invoice details not found for PDF generation.", variant: "destructive" });
-                                }
-                           }}>
-                              <Download className="mr-2 h-4 w-4" /> Download PDF
-                          </DropdownMenuItem>
-                           <DropdownMenuItem onClick={() => {
-                                const invoiceForAction = invoices.find(inv => inv.id === invoice.id);
-                                if (invoiceForAction) {
-                                    setSelectedInvoiceForView(invoiceForAction); 
-                                    setTimeout(() => handleActualPrint(), 0); 
-                                }
-                           }}>
-                              <Printer className="mr-2 h-4 w-4" /> Print Invoice
-                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleViewInvoice(invoice.id)}><Eye className="mr-2 h-4 w-4" /> View</DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => {
+                              const invoiceForAction = invoices.find(inv => inv.id === invoice.id);
+                              if (invoiceForAction && companyDetails) handleDownloadPDF(invoiceForAction, companyDetails);
+                          }}><Download className="mr-2 h-4 w-4" /> PDF</DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => {
+                              const invoiceForAction = invoices.find(inv => inv.id === invoice.id);
+                              if (invoiceForAction) { setSelectedInvoiceForView(invoiceForAction); setTimeout(() => handleActualPrint(), 0); }
+                          }}><Printer className="mr-2 h-4 w-4" /> Print</DropdownMenuItem>
                           <DropdownMenuSeparator />
-                          <DropdownMenuItem onClick={() => handleEditInvoice(invoice.id)}>
-                              <Edit className="mr-2 h-4 w-4" /> Edit Invoice
-                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleEditInvoice(invoice.id)}><Edit className="mr-2 h-4 w-4" /> Edit</DropdownMenuItem>
+                          <DropdownMenuSeparator />
                           {invoice.status !== "Paid" && <DropdownMenuItem onClick={() => handleUpdateStatus(invoice.id, "Paid")}>Mark as Paid</DropdownMenuItem>}
                           {invoice.status !== "Pending" && <DropdownMenuItem onClick={() => handleUpdateStatus(invoice.id, "Pending")}>Mark as Pending</DropdownMenuItem>}
                           {invoice.status !== "Overdue" && <DropdownMenuItem onClick={() => handleUpdateStatus(invoice.id, "Overdue")}>Mark as Overdue</DropdownMenuItem>}
                           {invoice.status !== "Cancelled" && <DropdownMenuItem onClick={() => handleUpdateStatus(invoice.id, "Cancelled")}>Mark as Cancelled</DropdownMenuItem>}
                           {currentUserRole === 'admin' && <DropdownMenuSeparator />}
-                          <DropdownMenuItem 
-                            onClick={() => handleDeleteInvoice(invoice.id, invoice.invoiceNumber)} 
-                            className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground"
-                            disabled={currentUserRole !== 'admin'}
-                          >
-                              <Trash2 className="mr-2 h-4 w-4" /> Delete Invoice
-                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleDeleteInvoice(invoice.id, invoice.invoiceNumber)} disabled={currentUserRole !== 'admin'} className="text-destructive focus:text-destructive"><Trash2 className="mr-2 h-4 w-4" /> Delete</DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
+                    </CardHeader>
+                    <CardContent className="p-4 pt-0">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xl font-bold">{invoice.displayTotal}</span>
+                        <Badge variant={getBadgeVariant(invoice.status)} className={
+                          invoice.status === "Paid" ? "bg-accent text-accent-foreground" : 
+                          invoice.status === "Partially Paid" ? "border-yellow-500 text-yellow-600 dark:border-yellow-400 dark:text-yellow-300 bg-transparent" : 
+                          invoice.status === "Cancelled" ? "bg-muted text-muted-foreground border-muted-foreground/30" : ""
+                        }>{invoice.status}</Badge>
+                      </div>
+                    </CardContent>
+                  </Card>
                 ))}
-              </TableBody>
-            </Table>
-            </div>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>
