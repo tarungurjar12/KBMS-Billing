@@ -2,6 +2,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -116,6 +117,8 @@ type StatusFilterType = 'all' | 'paid' | 'partial' | 'pending';
 const formatCurrency = (num: number): string => `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export default function PaymentsPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { toast } = useToast();
   const [allPayments, setAllPayments] = useState<PaymentRecord[]>([]);
   const [allInvoices, setAllInvoices] = useState<Invoice[]>([]);
@@ -306,6 +309,25 @@ export default function PaymentsPage() {
   }, [toast]);
 
   useEffect(() => { fetchPaymentsAndMetrics(); }, [fetchPaymentsAndMetrics]);
+
+  useEffect(() => {
+    const typeParam = searchParams.get('type');
+    const entityNameParam = searchParams.get('entityName');
+
+    if (entityNameParam) { // Only run if we are being redirected
+      if (typeParam === 'customer' || typeParam === 'supplier') {
+        setActiveMainTab(typeParam);
+      }
+      setSearchTerm(entityNameParam);
+      setSelectedDate(null); // Clear date filter to show all payments for this entity
+      toast({
+        title: "Filter Applied",
+        description: `Showing records for ${entityNameParam}.`,
+      });
+      // Clear the query params from URL so the filter isn't "stuck"
+      router.replace('/payments', { scroll: false });
+    }
+  }, [searchParams, router, toast]);
 
   useEffect(() => {
     if (isFormDialogOpen) {
