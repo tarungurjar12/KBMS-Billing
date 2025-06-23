@@ -260,9 +260,40 @@ export default function NotificationsPage() {
           if (requestType === 'update') {
               const batch = writeBatch(db);
               if (action === 'approve') {
+                  const newAssociatedPaymentRecordId = updatedData.associatedPaymentRecordId || null;
+                  
                   await runTransaction(db, async (transaction) => {
                       const ledgerRef = doc(db, 'ledgerEntries', originalLedgerEntryId);
                       const finalData = { ...updatedData, updatedAt: serverTimestamp(), updatedByUid: currentUser.uid, updatedByName: currentUser.displayName || currentUser.email };
+                      
+                      if (originalData.associatedPaymentRecordId) {
+                          const oldPaymentRef = doc(db, 'payments', originalData.associatedPaymentRecordId);
+                          transaction.delete(oldPaymentRef);
+                      }
+
+                      if (newAssociatedPaymentRecordId) {
+                          const newPaymentRef = doc(db, 'payments', newAssociatedPaymentRecordId);
+                           const paymentDataForSave = {
+                              type: finalData.type === 'sale' ? 'customer' : 'supplier',
+                              relatedEntityName: finalData.entityName,
+                              relatedEntityId: finalData.entityId || `unknown-${finalData.entityType}-${Date.now()}`,
+                              relatedInvoiceId: finalData.relatedInvoiceId || null,
+                              date: format(parseISO(finalData.date), "MMM dd, yyyy"),
+                              isoDate: finalData.date,
+                              amountPaid: finalData.amountPaidNow,
+                              originalInvoiceAmount: finalData.grandTotal,
+                              remainingBalanceOnInvoice: finalData.remainingAmount,
+                              method: finalData.paymentMethod,
+                              transactionId: null,
+                              status: finalData.paymentStatus === 'paid' ? (finalData.type === 'sale' ? 'Received' : 'Sent') : 'Partial',
+                              notes: `Payment from Ledger Entry. ${finalData.notes || ''}`.trim(),
+                              ledgerEntryId: ledgerRef.id,
+                              createdAt: serverTimestamp(),
+                              updatedAt: serverTimestamp(),
+                          };
+                          transaction.set(newPaymentRef, paymentDataForSave);
+                      }
+                      
                       transaction.set(ledgerRef, finalData, { merge: true });
                   });
                   batch.update(requestRef, { status: 'approved', reviewedByUid: currentUser.uid, reviewedAt: serverTimestamp() });
@@ -278,33 +309,51 @@ export default function NotificationsPage() {
                   toast({ title: "Update Declined", description: "Update request declined and manager notified." });
               }
           } else if (requestType === 'delete') {
-              const batch = writeBatch(db);
               if (action === 'approve') {
                   await runTransaction(db, async (transaction) => {
                       const ledgerDocRef = doc(db, "ledgerEntries", originalLedgerEntryId);
                       const entryData = originalData;
 
-                      if (entryData.entryPurpose === "Ledger Record") {
-                          for (const item of entryData.items) {
-                              const productRef = doc(db, "products", item.productId);
-                              const productSnap = await transaction.get(productRef);
-                              if (productSnap.exists()) {
-                                  const stockChange = entryData.type === 'sale' ? item.quantity : -item.quantity;
-                                  transaction.update(productRef, { stock: productSnap.data().stock + stockChange });
-                              }
+                      // === READ PHASE ===
+                      const productRefs = entryData.entryPurpose === "Ledger Record"
+                          ? entryData.items.map(item => doc(db, "products", item.productId))
+                          : [];
+                      
+                      const productSnaps = await Promise.all(
+                          productRefs.map(ref => transaction.get(ref))
+                      );
+
+                      for (const snap of productSnaps) {
+                          if (!snap.exists()) {
+                              throw new Error(`Product with ID ${snap.id} not found during deletion transaction.`);
                           }
                       }
+                      
+                      // === WRITE PHASE ===
+                      if (entryData.entryPurpose === "Ledger Record") {
+                          productSnaps.forEach((productSnap, index) => {
+                              const item = entryData.items[index];
+                              const stockChange = entryData.type === 'sale' ? item.quantity : -item.quantity;
+                              const newStock = productSnap.data()!.stock + stockChange;
+                              transaction.update(productSnap.ref, { stock: newStock });
+                          });
+                      }
+                      
                       if (entryData.associatedPaymentRecordId) {
                           transaction.delete(doc(db, "payments", entryData.associatedPaymentRecordId));
                       }
+                      
                       transaction.delete(ledgerDocRef);
                   });
+
+                  const batch = writeBatch(db);
                   batch.update(requestRef, { status: 'approved', reviewedByUid: currentUser.uid, reviewedAt: serverTimestamp() });
                   batch.set(managerNotifRef, { recipientUid: requestedByUid, title: `Deletion Request Approved`, message: `Your request to delete entry for "${originalData.entityName}" was approved.`, link: `/ledger`, isRead: false, createdAt: serverTimestamp(), type: 'delete_approved' });
                   batch.update(adminNotifRef, { isRead: true, title: `[Deleted] ${selectedNotificationForReview.title}` });
                   await batch.commit();
                   toast({ title: "Deletion Approved", description: "Ledger entry has been deleted." });
               } else { // Decline deletion
+                  const batch = writeBatch(db);
                   batch.update(requestRef, { status: 'declined', reviewedByUid: currentUser.uid, reviewedAt: serverTimestamp() });
                   batch.set(managerNotifRef, { recipientUid: requestedByUid, title: `Deletion Request Declined`, message: `Your request to delete entry for "${originalData.entityName}" was declined.`, link: `/ledger`, isRead: false, createdAt: serverTimestamp(), type: 'delete_declined' });
                   batch.update(adminNotifRef, { isRead: true, title: `[Declined] ${selectedNotificationForReview.title}` });
