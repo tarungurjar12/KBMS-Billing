@@ -187,7 +187,7 @@ export default function NotificationsPage() {
 
         await batch.commit();
         toast({ title: "Issue Resolved", description: "The issue has been marked as resolved and the manager has been notified." });
-    } catch (error) {
+    } catch (error: any) {
         console.error("Error resolving issue:", error);
         toast({ title: "Error", description: "Could not resolve the issue. Please try again.", variant: "destructive" });
     } finally {
@@ -235,6 +235,7 @@ export default function NotificationsPage() {
           const adminNotifRef = doc(db, 'notifications', selectedNotificationForReview.id);
           
           if (requestType === 'update') {
+              const batch = writeBatch(db); // FIX: Initialize batch here
               if (action === 'approve') {
                   await runTransaction(db, async (transaction) => {
                       const ledgerRef = doc(db, 'ledgerEntries', originalLedgerEntryId);
