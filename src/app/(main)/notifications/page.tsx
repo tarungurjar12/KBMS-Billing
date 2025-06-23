@@ -1,18 +1,23 @@
 
+
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Bell, FileWarning, CheckCheck, CheckSquare, Loader2 } from "lucide-react";
+import { Bell, FileWarning, CheckCheck, CheckSquare, Loader2, GitPullRequest, Eye, X, ThumbsUp, ThumbsDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, Timestamp, writeBatch, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, Timestamp, writeBatch, addDoc, serverTimestamp, getDoc, runTransaction } from 'firebase/firestore';
 import { db, auth } from '@/lib/firebase/firebaseConfig';
 import type { User as FirebaseUser } from "firebase/auth";
 import Link from "next/link";
 import { formatDistanceToNow } from 'date-fns';
 import { Button } from "@/components/ui/button";
 import { useAppContext } from '../layout';
+import type { LedgerEntry } from '../ledger/page';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose } from '@/components/ui/dialog';
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
 
 /**
  * @fileOverview Notifications center page.
@@ -29,11 +34,24 @@ export interface Notification {
   isRead: boolean;
   createdAt: Timestamp;
   // New fields for issue resolution workflow
-  type?: 'issue_report' | 'issue_resolved' | 'generic';
-  relatedDocId?: string; // e.g., the ID of the issueReport document
+  type?: 'issue_report' | 'issue_resolved' | 'generic' | 'update_request' | 'update_approved' | 'update_declined';
+  relatedDocId?: string; // e.g., the ID of the issueReport or updateRequest document
   originatorUid?: string;
   originatorName?: string;
   productName?: string;
+}
+
+interface UpdateRequest {
+    id: string;
+    originalLedgerEntryId: string;
+    originalData: LedgerEntry;
+    updatedData: any; // Form data from manager
+    requestedByUid: string;
+    requestedByName: string;
+    requestedAt: Timestamp;
+    status: 'pending' | 'approved' | 'declined';
+    reviewedByUid?: string;
+    reviewedAt?: Timestamp;
 }
 
 export default function NotificationsPage() {
@@ -43,6 +61,12 @@ export default function NotificationsPage() {
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const { userRole } = useAppContext();
+  
+  const [isReviewDialogOpen, setIsReviewDialogOpen] = useState(false);
+  const [selectedUpdateRequest, setSelectedUpdateRequest] = useState<UpdateRequest | null>(null);
+  const [isLoadingReviewData, setIsLoadingReviewData] = useState(false);
+  const [selectedNotificationForReview, setSelectedNotificationForReview] = useState<Notification | null>(null);
+
 
   useEffect(() => {
     const unsubscribeAuth = auth.onAuthStateChanged(user => {
@@ -86,7 +110,14 @@ export default function NotificationsPage() {
 
   }, [currentUser, toast]);
 
-  const handleNotificationClick = useCallback(async (notification: Notification) => {
+  const handleNotificationClick = async (notification: Notification, e: React.MouseEvent) => {
+    // If it's a reviewable notification, prevent default link navigation and open the dialog
+    if (userRole === 'admin' && notification.type === 'update_request') {
+        e.preventDefault();
+        await openReviewDialog(notification);
+        return;
+    }
+    
     if (!notification.isRead) {
       try {
         const notifRef = doc(db, "notifications", notification.id);
@@ -96,8 +127,7 @@ export default function NotificationsPage() {
         toast({ title: "Update Error", description: "Could not mark notification as read.", variant: "destructive" });
       }
     }
-    // Navigation will be handled by the Link component
-  }, [toast]);
+  };
 
   const handleMarkAllAsRead = async () => {
     if (!currentUser) return;
@@ -166,6 +196,106 @@ export default function NotificationsPage() {
     }
   };
 
+  const openReviewDialog = async (notification: Notification) => {
+      if (!notification.relatedDocId) {
+          toast({ title: "Error", description: "Notification is missing data for review.", variant: "destructive" });
+          return;
+      }
+      setIsLoadingReviewData(true);
+      setIsReviewDialogOpen(true);
+      setSelectedNotificationForReview(notification);
+      try {
+          const requestDocRef = doc(db, 'updateRequests', notification.relatedDocId);
+          const requestDocSnap = await getDoc(requestDocRef);
+          if (requestDocSnap.exists()) {
+              setSelectedUpdateRequest({ id: requestDocSnap.id, ...requestDocSnap.data() } as UpdateRequest);
+          } else {
+              throw new Error("Update request document not found.");
+          }
+      } catch (error) {
+          console.error("Error fetching update request:", error);
+          toast({ title: "Error", description: "Could not load the update request details.", variant: "destructive" });
+          setIsReviewDialogOpen(false);
+      } finally {
+          setIsLoadingReviewData(false);
+      }
+  };
+
+  const handleUpdateRequest = async (action: 'approve' | 'decline') => {
+      if (!selectedUpdateRequest || !selectedNotificationForReview || !currentUser) {
+          toast({ title: "Error", description: "Cannot process request due to missing data.", variant: "destructive" });
+          return;
+      }
+      setResolvingId(selectedUpdateRequest.id); // Use a different state if needed, but this works
+      try {
+          const batch = writeBatch(db);
+          const requestRef = doc(db, 'updateRequests', selectedUpdateRequest.id);
+          const managerNotifRef = doc(collection(db, 'notifications'));
+          const adminNotifRef = doc(db, 'notifications', selectedNotificationForReview.id);
+
+          if (action === 'approve') {
+              const ledgerRef = doc(db, 'ledgerEntries', selectedUpdateRequest.originalLedgerEntryId);
+              // Important: We need to re-calculate totals and derived fields from the manager's submission
+              const updatedData = { ...selectedUpdateRequest.updatedData };
+              const subTotal = (updatedData.items || []).reduce((sum: number, item: any) => sum + ((item.quantity || 0) * (item.unitPrice || 0)), 0);
+              const taxAmount = updatedData.applyGst ? subTotal * 0.18 : 0;
+              const grandTotal = subTotal + taxAmount;
+              const amountPaidNow = updatedData.paymentStatus === 'paid' ? grandTotal : (updatedData.paymentStatus === 'partial' ? updatedData.amountPaidNow || 0 : 0);
+              const remainingAmount = grandTotal - amountPaidNow;
+
+              const finalDataForLedger = {
+                  ...updatedData,
+                  subTotal,
+                  taxAmount,
+                  grandTotal,
+                  amountPaidNow,
+                  remainingAmount,
+                  updatedAt: serverTimestamp(),
+                  updatedByUid: currentUser.uid,
+                  updatedByName: currentUser.displayName || currentUser.email,
+              };
+
+              batch.update(ledgerRef, finalDataForLedger);
+              batch.update(requestRef, { status: 'approved', reviewedByUid: currentUser.uid, reviewedAt: serverTimestamp() });
+              batch.set(managerNotifRef, {
+                  recipientUid: selectedUpdateRequest.requestedByUid,
+                  title: `Ledger Update Approved`,
+                  message: `Your update request for entry "${selectedUpdateRequest.originalData.entityName}" was approved.`,
+                  link: `/ledger?highlight=${selectedUpdateRequest.originalLedgerEntryId}`,
+                  isRead: false,
+                  createdAt: serverTimestamp(),
+                  type: 'update_approved',
+              });
+              batch.update(adminNotifRef, { isRead: true, title: `[Approved] ${selectedNotificationForReview.title}` });
+              toast({ title: "Update Approved", description: "Ledger entry updated and manager notified." });
+
+          } else { // Decline
+              batch.update(requestRef, { status: 'declined', reviewedByUid: currentUser.uid, reviewedAt: serverTimestamp() });
+              batch.set(managerNotifRef, {
+                  recipientUid: selectedUpdateRequest.requestedByUid,
+                  title: `Ledger Update Declined`,
+                  message: `Your update request for entry "${selectedUpdateRequest.originalData.entityName}" was declined.`,
+                  link: `/ledger`,
+                  isRead: false,
+                  createdAt: serverTimestamp(),
+                  type: 'update_declined',
+              });
+              batch.update(adminNotifRef, { isRead: true, title: `[Declined] ${selectedNotificationForReview.title}` });
+              toast({ title: "Update Declined", description: "Update request declined and manager notified." });
+          }
+
+          await batch.commit();
+
+      } catch (error) {
+          console.error("Error handling update request:", error);
+          toast({ title: "Action Failed", description: "Could not process the request.", variant: "destructive" });
+      } finally {
+          setResolvingId(null);
+          setIsReviewDialogOpen(false);
+          setSelectedUpdateRequest(null);
+      }
+  };
+
 
   if (isLoading) {
     return <PageHeader title="Notifications" description="Loading your notifications..." icon={Bell} />;
@@ -201,7 +331,7 @@ export default function NotificationsPage() {
           ) : (
             <div className="space-y-3">
               {notifications.map((notification) => (
-                <Link href={notification.link} key={notification.id} onClick={() => handleNotificationClick(notification)} className="block">
+                <Link href={notification.link} key={notification.id} onClick={(e) => handleNotificationClick(notification, e)} className="block">
                   <div
                     className={`p-4 border rounded-lg transition-colors flex items-start gap-4 ${
                       !notification.isRead
@@ -241,6 +371,22 @@ export default function NotificationsPage() {
                             </Button>
                         </div>
                         )}
+                         {userRole === 'admin' && notification.type === 'update_request' && (
+                          <div className="mt-2">
+                            <Button
+                              size="sm"
+                              variant="default"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                openReviewDialog(notification);
+                              }}
+                              disabled={resolvingId === notification.relatedDocId}
+                            >
+                                <Eye className="mr-2 h-4 w-4" /> Review Changes
+                            </Button>
+                          </div>
+                        )}
                     </div>
                   </div>
                 </Link>
@@ -249,7 +395,52 @@ export default function NotificationsPage() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={isReviewDialogOpen} onOpenChange={setIsReviewDialogOpen}>
+          <DialogContent className="max-w-3xl">
+              <DialogHeader>
+                  <DialogTitle>Review Ledger Update Request</DialogTitle>
+                  <DialogDescription>
+                      From: {selectedUpdateRequest?.requestedByName} for entry: {selectedUpdateRequest?.originalData.entityName}
+                  </DialogDescription>
+              </DialogHeader>
+              <ScrollArea className="max-h-[60vh] p-1">
+                  {isLoadingReviewData && <div className="text-center p-8">Loading changes...</div>}
+                  {selectedUpdateRequest && (
+                      <div className="space-y-4 p-2 text-sm">
+                          {Object.keys(selectedUpdateRequest.updatedData).map(key => {
+                              const originalValue = (selectedUpdateRequest.originalData as any)[key];
+                              const updatedValue = selectedUpdateRequest.updatedData[key];
+                              
+                              // Simple comparison for primitives
+                              if (typeof originalValue !== 'object' && originalValue !== updatedValue) {
+                                  return (
+                                      <div key={key} className="p-2 border rounded">
+                                          <p className="font-semibold capitalize">{key.replace(/([A-Z])/g, ' $1')}</p>
+                                          <p className="text-red-500 bg-red-500/10 p-1 rounded-md line-through">Old: {String(originalValue)}</p>
+                                          <p className="text-green-600 bg-green-500/10 p-1 rounded-md">New: {String(updatedValue)}</p>
+                                      </div>
+                                  );
+                              }
+                              // TODO: Add more complex diffing for objects/arrays if needed
+                              return null;
+                          })}
+                      </div>
+                  )}
+              </ScrollArea>
+              <DialogFooter>
+                  <Button variant="outline" onClick={() => handleUpdateRequest('decline')} disabled={resolvingId === selectedUpdateRequest?.id}>
+                      <ThumbsDown className="mr-2 h-4 w-4" />Decline
+                  </Button>
+                  <Button onClick={() => handleUpdateRequest('approve')} disabled={resolvingId === selectedUpdateRequest?.id}>
+                       {resolvingId === selectedUpdateRequest?.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <ThumbsUp className="mr-2 h-4 w-4" />}
+                      Approve & Update
+                  </Button>
+              </DialogFooter>
+          </DialogContent>
+      </Dialog>
     </>
   );
 }
+
 

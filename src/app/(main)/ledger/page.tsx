@@ -372,13 +372,9 @@ export default function DailyLedgerPage() {
   }, [currentUserRole, fields, form, toast]);
 
   const handleEditLedgerEntry = useCallback((entry: LedgerEntry) => {
-    if (currentUserRole !== 'admin') {
-        toast({title: "Permission Denied", description: "Store managers cannot edit ledger entries directly.", variant: "destructive"});
-        return;
-    }
     setEditingLedgerEntry(entry);
     setIsLedgerFormOpen(true);
-  }, [currentUserRole, toast]);
+  }, []);
 
   const openDeleteConfirmation = useCallback((entry: LedgerEntry) => {
     if (currentUserRole !== 'admin') {
@@ -626,6 +622,52 @@ export default function DailyLedgerPage() {
 
     const currentUserName = currentUser.displayName || currentUser.email || "System User";
 
+    // Manager Edit Request Logic
+    if (currentUserRole === 'store_manager' && editingLedgerEntry) {
+        try {
+            const updatedData = { ...data }; // The proposed new data from the form
+            const requestRef = await addDoc(collection(db, 'updateRequests'), {
+                originalLedgerEntryId: editingLedgerEntry.id,
+                originalData: editingLedgerEntry, // Store the original state
+                updatedData: updatedData,
+                requestedByUid: currentUser.uid,
+                requestedByName: currentUserName,
+                requestedAt: serverTimestamp(),
+                status: 'pending', // 'pending', 'approved', 'declined'
+            });
+
+            // Notify admins
+            const adminQuery = query(collection(db, "users"), where("role", "==", "admin"));
+            const adminSnapshot = await getDocs(adminQuery);
+            const batch = writeBatch(db);
+            adminSnapshot.docs.forEach(adminDoc => {
+                const notifRef = doc(collection(db, 'notifications'));
+                batch.set(notifRef, {
+                    recipientUid: adminDoc.id,
+                    title: `Ledger Update Request from ${currentUserName}`,
+                    message: `Request to update entry for "${editingLedgerEntry.entityName}". Click to review.`,
+                    link: `/notifications?reviewRequest=${requestRef.id}`,
+                    isRead: false,
+                    createdAt: serverTimestamp(),
+                    type: 'update_request',
+                    relatedDocId: requestRef.id,
+                    originatorUid: currentUser.uid,
+                    originatorName: currentUserName,
+                });
+            });
+            await batch.commit();
+
+            toast({ title: "Update Request Sent", description: "Your request to update the ledger entry has been sent to an admin for approval." });
+            setIsLedgerFormOpen(false);
+            setEditingLedgerEntry(null);
+        } catch (error: any) {
+            console.error("Error sending update request:", error);
+            toast({ title: "Request Failed", description: "Could not send the update request.", variant: "destructive" });
+        }
+        return; // End execution for manager edit
+    }
+      
+    // Admin Edit / New Entry Logic
     try {
       await runTransaction(db, async (transaction) => {
         
@@ -756,7 +798,7 @@ export default function DailyLedgerPage() {
             relatedEntityName: data.entityName, relatedEntityId: data.entityId || `unknown-${data.entityType}-${Date.now()}`,
             relatedInvoiceId: data.relatedInvoiceId || null, date: format(parseISO(data.date), "MMM dd, yyyy"), isoDate: data.date, 
             amountPaid: amountPaidForLedgerSave, originalInvoiceAmount: grandTotalForSave, remainingBalanceOnInvoice: remainingAmountForLedgerSave, 
-            method: finalLedgerDataToCommit.paymentMethod || null,
+            method: finalLedgerDataToCommit.paymentMethod,
             transactionId: null, 
             status: data.paymentStatus === 'paid' ? (data.type === 'sale' ? 'Received' : 'Sent') : 'Partial',
             notes: `Payment from Ledger Entry. ${data.notes || ''}`.trim(), ledgerEntryId: ledgerDocRef.id, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
@@ -947,7 +989,12 @@ export default function DailyLedgerPage() {
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>{editingLedgerEntry ? "Edit Ledger Entry" : "New Ledger Entry"}</DialogTitle>
-            <DialogDescription>Fill in the details for the transaction. {editingLedgerEntry ? "Admins can modify existing entries." : ""}</DialogDescription>
+            <DialogDescription>
+                {editingLedgerEntry && currentUserRole === 'store_manager' 
+                    ? "Modify details and send an update request to an admin for approval."
+                    : (editingLedgerEntry ? "Admins can modify existing entries directly." : "Fill in the details for the transaction.")
+                }
+            </DialogDescription>
           </DialogHeader>
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onLedgerSubmit)} className="max-h-[75vh] overflow-y-auto pr-4">
@@ -1142,7 +1189,12 @@ export default function DailyLedgerPage() {
               <DialogFooter className="pt-4 sticky bottom-0 bg-background pb-2 border-t -mx-6 px-6">
                 <DialogClose asChild><Button type="button" variant="outline">Cancel</Button></DialogClose>
                 <Button type="submit" disabled={isLoading || (entryPurposeWatcher === "Ledger Record" && fields.length === 0) || form.formState.isSubmitting}>
-                  {form.formState.isSubmitting ? (editingLedgerEntry ? "Saving Changes..." : "Saving Ledger Entry...") : (editingLedgerEntry ? "Save Changes" : "Save Ledger Entry")}
+                    {form.formState.isSubmitting 
+                        ? (editingLedgerEntry ? "Submitting..." : "Saving...")
+                        : editingLedgerEntry 
+                            ? (currentUserRole === 'store_manager' ? "Send Update Request" : "Save Changes")
+                            : "Save Ledger Entry"
+                    }
                 </Button>
               </DialogFooter>
             </form>
@@ -1234,7 +1286,7 @@ export default function DailyLedgerPage() {
                         <div>
                              <h4 className="font-semibold mb-1">Payment Details:</h4>
                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1">
-                                <div><strong className="text-muted-foreground">Status:</strong> {selectedEntryForDetails.paymentStatus.charAt(0).toUpperCase() + selectedEntryForDetails.paymentStatus.slice(1)}</div>
+                                <div><strong className="text-muted-foreground">Status:</strong> <Badge variant="outline" className={cn("capitalize", getPaymentStatusBadgeClass(selectedEntryForDetails.paymentStatus))}>{selectedEntryForDetails.paymentStatus}</Badge></div>
                                 <div><strong className="text-muted-foreground">Method:</strong> {selectedEntryForDetails.paymentMethod || "N/A"}</div>
                              </div>
                         </div>
@@ -1272,7 +1324,7 @@ export default function DailyLedgerPage() {
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
               <CardTitle className="font-headline text-foreground">Ledger Entries for {format(parseISO(selectedDate), "MMMM dd, yyyy")}</CardTitle>
-              <CardDescription>Browse recorded transactions for the selected date. {currentUserRole === 'admin' && "Admins can edit/delete."}</CardDescription>
+              <CardDescription>Browse recorded transactions for the selected date. {currentUserRole === 'admin' ? "Admins can edit/delete." : "Managers can request updates."}</CardDescription>
             </div>
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
                  <Input type="date" value={selectedDate} onChange={e => {setSelectedDate(e.target.value); setSelectedUserFilterName(null);}} className="w-full sm:w-auto h-10"/>
@@ -1395,7 +1447,6 @@ export default function DailyLedgerPage() {
                             <Button variant="ghost" size="icon" onClick={() => openEntryDetailsDialog(entry)} title="View Full Details">
                                 <Eye className="h-4 w-4"/> <span className="sr-only">View Details</span>
                             </Button>
-                            {currentUserRole === 'admin' && (
                                <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
                                   <Button variant="ghost" size="icon">
@@ -1407,13 +1458,16 @@ export default function DailyLedgerPage() {
                                   <DropdownMenuItem onClick={() => handleEditLedgerEntry(entry)}>
                                       <Edit className="mr-2 h-4 w-4" /> Edit Entry
                                   </DropdownMenuItem>
-                                  <DropdownMenuSeparator/>
-                                  <DropdownMenuItem onClick={() => openDeleteConfirmation(entry)} className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground">
-                                      <Trash2 className="mr-2 h-4 w-4" /> Delete Entry
-                                  </DropdownMenuItem>
+                                  {currentUserRole === 'admin' && (
+                                    <>
+                                        <DropdownMenuSeparator/>
+                                        <DropdownMenuItem onClick={() => openDeleteConfirmation(entry)} className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground">
+                                            <Trash2 className="mr-2 h-4 w-4" /> Delete Entry
+                                        </DropdownMenuItem>
+                                    </>
+                                  )}
                                 </DropdownMenuContent>
                               </DropdownMenu>
-                            )}
                            </div>
                         </TableCell>
                     </TableRow>
@@ -1459,7 +1513,7 @@ export default function DailyLedgerPage() {
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="end">
                                     <DropdownMenuItem onClick={() => openEntryDetailsDialog(entry)}><Eye className="mr-2 h-4 w-4" /> View Details</DropdownMenuItem>
-                                    {currentUserRole === 'admin' && <DropdownMenuItem onClick={() => handleEditLedgerEntry(entry)}><Edit className="mr-2 h-4 w-4" /> Edit Entry</DropdownMenuItem>}
+                                    <DropdownMenuItem onClick={() => handleEditLedgerEntry(entry)}><Edit className="mr-2 h-4 w-4" /> Edit Entry</DropdownMenuItem>
                                     {currentUserRole === 'admin' && <DropdownMenuSeparator/>}
                                     {currentUserRole === 'admin' && <DropdownMenuItem onClick={() => openDeleteConfirmation(entry)} className="text-destructive focus:text-destructive focus:bg-destructive/10"><Trash2 className="mr-2 h-4 w-4" /> Delete Entry</DropdownMenuItem>}
                                 </DropdownMenuContent>
@@ -1488,6 +1542,7 @@ export default function DailyLedgerPage() {
     </>
   );
 }
+
 
 
 

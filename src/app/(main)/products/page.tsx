@@ -1,9 +1,10 @@
 
+
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PageHeader } from "@/components/page-header";
 import { Package, PlusCircle, MoreHorizontal, Edit, Trash2, PackageSearch, FileWarning } from "lucide-react"; 
@@ -292,57 +293,103 @@ export default function ProductsPage() {
                 <Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add New Product</Button>
             </div>
            ) : (
-            <div className="overflow-x-auto">
-            <Table>
-              <TableHeader><TableRow>
-                  <TableHead className="w-[40px] sm:w-[60px]">Image</TableHead>
-                  <TableHead>Name</TableHead>
-                  <TableHead className="hidden md:table-cell">SKU</TableHead>
-                  <TableHead className="hidden lg:table-cell">Category</TableHead>
-                  <TableHead className="hidden sm:table-cell">Unit</TableHead>
-                  <TableHead className="text-right">Price (₹)</TableHead>
-                  <TableHead className="text-right">Stock</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-              </TableRow></TableHeader>
-              <TableBody>
+            <>
+              {/* Desktop View */}
+              <div className="hidden lg:block">
+                <Table>
+                  <TableHeader><TableRow>
+                      <TableHead className="w-[40px] sm:w-[60px]">Image</TableHead>
+                      <TableHead>Name</TableHead>
+                      <TableHead>SKU</TableHead>
+                      <TableHead>Category</TableHead>
+                      <TableHead>Unit</TableHead>
+                      <TableHead className="text-right">Price (₹)</TableHead>
+                      <TableHead className="text-right">Stock</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                  </TableRow></TableHeader>
+                  <TableBody>
+                    {productList.map((product) => (
+                      <TableRow key={product.id}>
+                        <TableCell>
+                          <Image 
+                              src={product.imageUrl} 
+                              alt={product.name} 
+                              width={40} 
+                              height={40} 
+                              className="rounded-md object-cover border" 
+                              data-ai-hint={product.dataAiHint}
+                              onError={(e) => { e.currentTarget.src = `https://placehold.co/40x40.png?text=${encodeURIComponent(product.name.substring(0,2).toUpperCase())}`; }} 
+                          />
+                        </TableCell>
+                        <TableCell className="font-medium">{product.name}</TableCell>
+                        <TableCell>{product.sku}</TableCell>
+                        <TableCell>{product.category}</TableCell>
+                        <TableCell>{product.unitOfMeasure}</TableCell>
+                        <TableCell className="text-right font-semibold">{product.price}</TableCell>
+                        <TableCell className="text-right">{product.stock}</TableCell>
+                        <TableCell className="text-right">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /><span className="sr-only">Actions for {product.name}</span></Button></DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => openEditDialog(product)}><Edit className="mr-2 h-4 w-4" />Edit Product</DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => openDeleteDialog(product)} className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground">
+                                  <Trash2 className="mr-2 h-4 w-4" />Delete Product
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Mobile View */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 lg:hidden">
                 {productList.map((product) => (
-                  <TableRow key={product.id}>
-                    <TableCell>
-                      <Image 
-                          src={product.imageUrl} 
-                          alt={product.name} 
-                          width={40} 
-                          height={40} 
-                          className="rounded-md object-cover border" 
-                          data-ai-hint={product.dataAiHint}
-                          onError={(e) => { e.currentTarget.src = `https://placehold.co/40x40.png?text=${encodeURIComponent(product.name.substring(0,2).toUpperCase())}`; }} 
-                      />
-                    </TableCell>
-                    <TableCell className="font-medium">{product.name}</TableCell>
-                    <TableCell className="hidden md:table-cell">{product.sku}</TableCell>
-                    <TableCell className="hidden lg:table-cell">{product.category}</TableCell>
-                    <TableCell className="hidden sm:table-cell">{product.unitOfMeasure}</TableCell>
-                    <TableCell className="text-right font-semibold">{product.price}</TableCell>
-                    <TableCell className="text-right">{product.stock}</TableCell>
-                    <TableCell className="text-right">
+                  <Card key={product.id + '-mobile'} className="flex flex-col">
+                    <CardHeader className="flex flex-row items-start justify-between gap-4 pb-3">
+                      <div className="flex items-start gap-3">
+                        <Image 
+                            src={product.imageUrl} alt={product.name} width={48} height={48}
+                            className="rounded-md object-cover border mt-1" data-ai-hint={product.dataAiHint}
+                            onError={(e) => { e.currentTarget.src = `https://placehold.co/48x48.png?text=${encodeURIComponent(product.name.substring(0,2).toUpperCase())}`; }} 
+                        />
+                        <div>
+                          <CardTitle className="text-base leading-tight">{product.name}</CardTitle>
+                          <CardDescription className="text-xs">SKU: {product.sku}</CardDescription>
+                        </div>
+                      </div>
                       <DropdownMenu>
-                        <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /><span className="sr-only">Actions for {product.name}</span></Button></DropdownMenuTrigger>
+                        <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8 -mt-2 -mr-2"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => openEditDialog(product)}><Edit className="mr-2 h-4 w-4" />Edit Product</DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => openDeleteDialog(product)} className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground">
-                              <Trash2 className="mr-2 h-4 w-4" />Delete Product
-                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => openEditDialog(product)}><Edit className="mr-2 h-4 w-4" />Edit</DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => openDeleteDialog(product)} className="text-destructive focus:text-destructive focus:bg-destructive/10"><Trash2 className="mr-2 h-4 w-4" />Delete</DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
+                    </CardHeader>
+                    <CardContent className="flex-grow space-y-2 text-sm pt-0 pb-4">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Price:</span>
+                        <span className="font-semibold">{product.price}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Stock:</span>
+                        <span className="font-semibold">{product.stock} {product.unitOfMeasure}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Category:</span>
+                        <span>{product.category}</span>
+                      </div>
+                    </CardContent>
+                  </Card>
                 ))}
-              </TableBody>
-            </Table>
-            </div>
+              </div>
+            </>
            )}
         </CardContent>
       </Card>
     </>
   );
 }
+

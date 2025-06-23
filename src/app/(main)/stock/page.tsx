@@ -1,4 +1,5 @@
 
+
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
@@ -292,50 +293,88 @@ export default function StockPage() {
                 </p>
              </div>
            ) : (
-            <div className="overflow-x-auto">
-            <Table>
-              <TableHeader><TableRow>
-                  <TableHead className="w-[40px] sm:w-[60px]">Image</TableHead><TableHead>Product Name</TableHead>
-                  <TableHead className="hidden md:table-cell">SKU</TableHead><TableHead className="hidden lg:table-cell">Unit</TableHead>
-                  <TableHead className="text-right">Current Stock</TableHead><TableHead className="text-center">Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-              </TableRow></TableHeader>
-              <TableBody>
-                {filteredStockItems.map((item) => (
-                  <TableRow key={item.id}>
-                    <TableCell>
-                      <Image
-                          src={item.imageUrl} alt={item.name} width={40} height={40}
-                          className="rounded-md object-cover border" data-ai-hint={item.dataAiHint}
-                          onError={(e) => { e.currentTarget.src = `https://placehold.co/40x40.png?text=${encodeURIComponent(item.name.substring(0,2).toUpperCase())}`; }}
-                      />
-                    </TableCell>
-                    <TableCell className="font-medium">{item.name}</TableCell>
-                    <TableCell className="hidden md:table-cell">{item.sku}</TableCell>
-                    <TableCell className="hidden lg:table-cell">{item.unitOfMeasure || 'N/A'}</TableCell>
-                    <TableCell className="text-right font-semibold">{item.stock}</TableCell>
-                    <TableCell className="text-center">
-                      <Badge
-                        variant={item.status === "In Stock" ? "default" : item.status === "Low Stock" ? "secondary" : "destructive"}
-                        className={
-                          item.status === "In Stock" ? "bg-accent text-accent-foreground" :
-                          item.status === "Low Stock" ? "bg-yellow-400 text-yellow-900 dark:bg-yellow-600 dark:text-yellow-100 border-yellow-500" : ""
-                        }
-                      >{item.status}</Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button variant="outline" size="sm" onClick={() => openUpdateStockDialog(item)}>
-                          <Edit className="mr-2 h-3 w-3" />Update Stock
-                      </Button>
-                    </TableCell>
-                  </TableRow>
+            <>
+              {/* Desktop View */}
+              <div className="hidden lg:block">
+                <Table>
+                  <TableHeader><TableRow>
+                      <TableHead className="w-[40px] sm:w-[60px]">Image</TableHead><TableHead>Product Name</TableHead>
+                      <TableHead>SKU</TableHead><TableHead>Unit</TableHead>
+                      <TableHead className="text-right">Current Stock</TableHead><TableHead className="text-center">Status</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                  </TableRow></TableHeader>
+                  <TableBody>
+                    {filteredStockItems.map((item) => (
+                      <TableRow key={item.id}>
+                        <TableCell>
+                          <Image
+                              src={item.imageUrl} alt={item.name} width={40} height={40}
+                              className="rounded-md object-cover border" data-ai-hint={item.dataAiHint}
+                              onError={(e) => { e.currentTarget.src = `https://placehold.co/40x40.png?text=${encodeURIComponent(item.name.substring(0,2).toUpperCase())}`; }}
+                          />
+                        </TableCell>
+                        <TableCell className="font-medium">{item.name}</TableCell>
+                        <TableCell>{item.sku}</TableCell>
+                        <TableCell>{item.unitOfMeasure || 'N/A'}</TableCell>
+                        <TableCell className="text-right font-semibold">{item.stock}</TableCell>
+                        <TableCell className="text-center">
+                          <Badge
+                            variant={item.status === "In Stock" ? "default" : item.status === "Low Stock" ? "secondary" : "destructive"}
+                            className={
+                              item.status === "In Stock" ? "bg-accent text-accent-foreground" :
+                              item.status === "Low Stock" ? "bg-yellow-400 text-yellow-900 dark:bg-yellow-600 dark:text-yellow-100 border-yellow-500" : ""
+                            }
+                          >{item.status}</Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button variant="outline" size="sm" onClick={() => openUpdateStockDialog(item)}>
+                              <Edit className="mr-2 h-3 w-3" />Update Stock
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Mobile View */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 lg:hidden">
+                {filteredStockItems.map(item => (
+                  <Card key={item.id + "-mobile"} className="flex flex-col">
+                    <CardHeader className="flex flex-row items-start justify-between gap-4 pb-2">
+                        <div className="flex-1">
+                          <CardTitle className="text-base leading-tight">{item.name}</CardTitle>
+                          <CardDescription className="text-xs">SKU: {item.sku}</CardDescription>
+                        </div>
+                        <Button variant="outline" size="sm" className="shrink-0" onClick={() => openUpdateStockDialog(item)}>
+                          <Edit className="mr-0 sm:mr-2 h-3 w-3" /><span className="hidden sm:inline">Update</span>
+                        </Button>
+                    </CardHeader>
+                    <CardContent className="flex-grow space-y-2 text-sm pt-2 pb-4">
+                      <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground">Stock:</span>
+                        <span className="font-semibold">{item.stock} {item.unitOfMeasure}</span>
+                      </div>
+                       <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground">Status:</span>
+                        <Badge
+                          variant={item.status === "In Stock" ? "default" : item.status === "Low Stock" ? "secondary" : "destructive"}
+                          className={
+                            `text-xs px-2 py-0.5 ` +
+                            (item.status === "In Stock" ? "bg-accent text-accent-foreground" :
+                            item.status === "Low Stock" ? "bg-yellow-400 text-yellow-900 dark:bg-yellow-600 dark:text-yellow-100 border-yellow-500" : "")
+                          }
+                        >{item.status}</Badge>
+                      </div>
+                    </CardContent>
+                  </Card>
                 ))}
-              </TableBody>
-            </Table>
-            </div>
+              </div>
+            </>
            )}
         </CardContent>
       </Card>
     </>
   );
 }
+

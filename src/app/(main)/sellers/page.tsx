@@ -1,4 +1,5 @@
 
+
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
@@ -236,7 +237,7 @@ export default function ManageSellersPage() {
 
   return (
     <>
-      <PageHeader title="Manage Sellers/Suppliers" description="Administer seller accounts. (Admin Only)" icon={Truck} actions={<Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add New Seller</Button>} />
+      <PageHeader title="Manage Sellers/Suppliers" description="Administer seller accounts. (Admin Only)" icon={Truck} actions={<Button onClick={openAddDialog} className="mt-4 sm:mt-0"><PlusCircle className="mr-2 h-4 w-4" />Add New Seller</Button>} />
       <Dialog open={isFormDialogOpen} onOpenChange={(isOpen) => { if(!isOpen) { setIsFormDialogOpen(false); setEditingSeller(null); form.reset(); } else { setIsFormDialogOpen(isOpen); }}}>
         <DialogContent className="sm:max-w-lg"><DialogHeader><DialogTitle>{editingSeller ? `Edit Seller: ${editingSeller.name}` : "Add New Seller"}</DialogTitle><DialogDescription>{editingSeller ? "Update details." : "Enter details."}</DialogDescription></DialogHeader>
           <Form {...form}><form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-4 py-2 max-h-[75vh] overflow-y-auto pr-4">{renderSellerFormFields()}
@@ -273,9 +274,11 @@ export default function ManageSellersPage() {
                 <Card><CardHeader><CardTitle className="text-lg">Ledger Entries (Purchases) ({selectedSellerForDetails.ledgerEntries.length})</CardTitle></CardHeader>
                     <CardContent>
                         {selectedSellerForDetails.ledgerEntries.length > 0 ? (<>
+                        <div className="overflow-x-auto">
                         <Table className="text-xs"><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Items</TableHead><TableHead className="text-right">Total</TableHead><TableHead>Pymt Status</TableHead></TableRow></TableHeader>
                         <TableBody>{paginatedLedgerEntries.map(le => (<TableRow key={le.id}><TableCell>{le.date}</TableCell><TableCell>{le.items.map(i => i.productName).join(', ').substring(0,30)}...</TableCell><TableCell className="text-right">{formatCurrency(le.grandTotal)}</TableCell><TableCell><Badge variant={le.paymentStatus === 'paid' ? 'default' : (le.paymentStatus === 'partial' ? 'outline' : 'secondary')}>{le.paymentStatus}</Badge></TableCell></TableRow>))}
                         </TableBody></Table>
+                        </div>
                         {totalLedgerPages > 1 && (<div className="flex justify-center items-center gap-2 mt-4"><Button variant="outline" size="sm" onClick={() => setLedgerEntriesCurrentPage(p => Math.max(1, p-1))} disabled={ledgerEntriesCurrentPage === 1}>Prev</Button><span className="text-xs text-muted-foreground">Page {ledgerEntriesCurrentPage} of {totalLedgerPages}</span><Button variant="outline" size="sm" onClick={() => setLedgerEntriesCurrentPage(p => Math.min(totalLedgerPages, p+1))} disabled={ledgerEntriesCurrentPage === totalLedgerPages}>Next</Button></div>)}
                         </>) : (<p className="text-sm text-muted-foreground">No purchase ledger entries found.</p>)}
                     </CardContent>
@@ -290,16 +293,47 @@ export default function ManageSellersPage() {
         <CardContent>
           {isLoading && sellers.length === 0 ? (<div className="text-center py-10 text-muted-foreground">Loading sellers...</div>)
            : !isLoading && sellers.length === 0 ? (<div className="flex flex-col items-center justify-center py-10 text-center"><FileWarning className="h-16 w-16 text-muted-foreground mb-4" /><p className="text-xl font-semibold text-muted-foreground">No Sellers Found</p><p className="text-sm text-muted-foreground mb-6">Add your first seller.</p><Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add New Seller</Button></div>)
-           : (<div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>Name</TableHead><TableHead className="hidden sm:table-cell">Contact</TableHead><TableHead>Phone</TableHead><TableHead className="hidden md:table-cell">GSTIN</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
-              <TableBody>{sellers.map((seller) => (<TableRow key={seller.id}><TableCell className="font-medium">{seller.name}</TableCell><TableCell className="hidden sm:table-cell">{seller.contactPerson || "N/A"}</TableCell><TableCell>{seller.phone}</TableCell><TableCell className="hidden md:table-cell">{seller.gstin || "N/A"}</TableCell>
-                    <TableCell className="text-right"><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
+           : (
+            <>
+              {/* Desktop View */}
+              <div className="hidden lg:block">
+                <Table><TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Contact</TableHead><TableHead>Phone</TableHead><TableHead>GSTIN</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
+                  <TableBody>{sellers.map((seller) => (<TableRow key={seller.id}><TableCell className="font-medium">{seller.name}</TableCell><TableCell>{seller.contactPerson || "N/A"}</TableCell><TableCell>{seller.phone}</TableCell><TableCell>{seller.gstin || "N/A"}</TableCell>
+                        <TableCell className="text-right"><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => handleViewDetails(seller)}><Eye className="mr-2 h-4 w-4" />View Full Details</DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => openEditDialog(seller)}><Edit className="mr-2 h-4 w-4" />Edit Details</DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => handleRecordOutgoingPayment(seller)}><Banknote className="mr-2 h-4 w-4" />Record Payment</DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => openDeleteDialog(seller)} className="text-destructive focus:text-destructive focus:bg-destructive/10"><Trash2 className="mr-2 h-4 w-4" />Delete Seller</DropdownMenuItem>
+                            </DropdownMenuContent></DropdownMenu></TableCell></TableRow>))}
+                  </TableBody>
+                </Table>
+              </div>
+              {/* Mobile View */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 lg:hidden">
+                {sellers.map(seller => (
+                  <Card key={seller.id + '-mobile'}>
+                    <CardHeader className="flex flex-row items-center justify-between pb-2">
+                      <CardTitle className="text-base">{seller.name}</CardTitle>
+                      <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8 -mt-2 -mr-2"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => handleViewDetails(seller)}><Eye className="mr-2 h-4 w-4" />View Full Details</DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => openEditDialog(seller)}><Edit className="mr-2 h-4 w-4" />Edit Details</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleViewDetails(seller)}><Eye className="mr-2 h-4 w-4" />View Details</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => openEditDialog(seller)}><Edit className="mr-2 h-4 w-4" />Edit</DropdownMenuItem>
                             <DropdownMenuItem onClick={() => handleRecordOutgoingPayment(seller)}><Banknote className="mr-2 h-4 w-4" />Record Payment</DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => openDeleteDialog(seller)} className="text-destructive focus:text-destructive focus:bg-destructive/10"><Trash2 className="mr-2 h-4 w-4" />Delete Seller</DropdownMenuItem>
-                        </DropdownMenuContent></DropdownMenu></TableCell></TableRow>))}
-              </TableBody></Table></div>)}
+                            <DropdownMenuItem onClick={() => openDeleteDialog(seller)} className="text-destructive focus:text-destructive focus:bg-destructive/10"><Trash2 className="mr-2 h-4 w-4" />Delete</DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </CardHeader>
+                    <CardContent className="text-sm">
+                      <p className="text-muted-foreground">{seller.contactPerson || 'No contact person'}</p>
+                      <p className="font-medium">{seller.phone}</p>
+                      {seller.gstin && <p className="text-xs text-muted-foreground">GSTIN: {seller.gstin}</p>}
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
     </>
