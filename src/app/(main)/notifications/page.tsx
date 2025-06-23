@@ -7,11 +7,12 @@ import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Bell, FileWarning, CheckCheck, CheckSquare, Loader2, GitPullRequest, Eye, X, ThumbsUp, ThumbsDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, Timestamp, writeBatch, addDoc, serverTimestamp, getDoc, runTransaction } from 'firebase/firestore';
+import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, Timestamp, writeBatch, addDoc, serverTimestamp, getDoc, runTransaction, deleteDoc } from 'firebase/firestore';
+import type { DocumentSnapshot, DocumentData } from 'firebase/firestore';
 import { db, auth } from '@/lib/firebase/firebaseConfig';
 import type { User as FirebaseUser } from "firebase/auth";
 import Link from "next/link";
-import { formatDistanceToNow } from 'date-fns';
+import { format, formatDistanceToNow, parseISO } from 'date-fns';
 import { Button } from "@/components/ui/button";
 import { useAppContext } from '../layout';
 import type { LedgerEntry } from '../ledger/page';
@@ -33,9 +34,8 @@ export interface Notification {
   link: string;
   isRead: boolean;
   createdAt: Timestamp;
-  // New fields for issue resolution workflow
-  type?: 'issue_report' | 'issue_resolved' | 'generic' | 'update_request' | 'update_approved' | 'update_declined';
-  relatedDocId?: string; // e.g., the ID of the issueReport or updateRequest document
+  type?: 'issue_report' | 'issue_resolved' | 'generic' | 'update_request' | 'update_approved' | 'update_declined' | 'delete_request' | 'delete_approved' | 'delete_declined';
+  relatedDocId?: string; 
   originatorUid?: string;
   originatorName?: string;
   productName?: string;
@@ -43,9 +43,10 @@ export interface Notification {
 
 interface UpdateRequest {
     id: string;
+    requestType: 'update' | 'delete';
     originalLedgerEntryId: string;
     originalData: LedgerEntry;
-    updatedData: any; // Form data from manager
+    updatedData?: any; // Only for 'update' type
     requestedByUid: string;
     requestedByName: string;
     requestedAt: Timestamp;
@@ -53,6 +54,8 @@ interface UpdateRequest {
     reviewedByUid?: string;
     reviewedAt?: Timestamp;
 }
+
+const formatCurrency = (num: number): string => `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export default function NotificationsPage() {
   const { toast } = useToast();
@@ -111,8 +114,7 @@ export default function NotificationsPage() {
   }, [currentUser, toast]);
 
   const handleNotificationClick = async (notification: Notification, e: React.MouseEvent) => {
-    // If it's a reviewable notification, prevent default link navigation and open the dialog
-    if (userRole === 'admin' && notification.type === 'update_request') {
+    if (userRole === 'admin' && (notification.type === 'update_request' || notification.type === 'delete_request')) {
         e.preventDefault();
         await openReviewDialog(notification);
         return;
@@ -162,28 +164,25 @@ export default function NotificationsPage() {
     try {
         const batch = writeBatch(db);
 
-        // 1. Update the original issueReport document
         const issueReportRef = doc(db, "issueReports", notification.relatedDocId);
         batch.update(issueReportRef, { status: 'Resolved' });
 
-        // 2. Update the admin's notification to reflect it's handled
         const adminNotifRef = doc(db, "notifications", notification.id);
         batch.update(adminNotifRef, { 
             isRead: true, 
             title: `[Resolved] ${notification.title}` 
         });
 
-        // 3. Create a new notification for the manager who reported the issue
         const managerNotifRef = doc(collection(db, "notifications"));
         batch.set(managerNotifRef, {
             recipientUid: notification.originatorUid,
             title: `Issue Resolved: ${notification.productName || 'Product Issue'}`,
             message: `The issue you reported for "${notification.productName || 'a product'}" has been marked as resolved by an admin.`,
-            link: notification.link, // Link back to the same product page for confirmation
+            link: notification.link, 
             isRead: false,
             createdAt: serverTimestamp(),
             type: 'issue_resolved',
-            relatedDocId: notification.relatedDocId, // keep track of the original issue
+            relatedDocId: notification.relatedDocId,
         });
 
         await batch.commit();
@@ -221,74 +220,77 @@ export default function NotificationsPage() {
       }
   };
 
-  const handleUpdateRequest = async (action: 'approve' | 'decline') => {
+  const handleReviewRequest = async (action: 'approve' | 'decline') => {
       if (!selectedUpdateRequest || !selectedNotificationForReview || !currentUser) {
           toast({ title: "Error", description: "Cannot process request due to missing data.", variant: "destructive" });
           return;
       }
-      setResolvingId(selectedUpdateRequest.id); // Use a different state if needed, but this works
+      setResolvingId(selectedUpdateRequest.id);
+      
+      const { requestType, id: requestId, originalLedgerEntryId, originalData, updatedData, requestedByUid } = selectedUpdateRequest;
+
       try {
-          const batch = writeBatch(db);
-          const requestRef = doc(db, 'updateRequests', selectedUpdateRequest.id);
+          const requestRef = doc(db, 'updateRequests', requestId);
           const managerNotifRef = doc(collection(db, 'notifications'));
           const adminNotifRef = doc(db, 'notifications', selectedNotificationForReview.id);
+          
+          if (requestType === 'update') {
+              if (action === 'approve') {
+                  await runTransaction(db, async (transaction) => {
+                      const ledgerRef = doc(db, 'ledgerEntries', originalLedgerEntryId);
+                      const finalData = { ...updatedData, updatedAt: serverTimestamp(), updatedByUid: currentUser.uid, updatedByName: currentUser.displayName || currentUser.email };
+                      transaction.set(ledgerRef, finalData, { merge: true });
+                  });
+                  batch.update(requestRef, { status: 'approved', reviewedByUid: currentUser.uid, reviewedAt: serverTimestamp() });
+                  batch.set(managerNotifRef, { recipientUid: requestedByUid, title: `Ledger Update Approved`, message: `Your update for "${originalData.entityName}" was approved.`, link: `/ledger`, isRead: false, createdAt: serverTimestamp(), type: 'update_approved' });
+                  batch.update(adminNotifRef, { isRead: true, title: `[Approved] ${selectedNotificationForReview.title}` });
+                  await batch.commit();
+                  toast({ title: "Update Approved", description: "Ledger entry updated and manager notified." });
+              } else { // Decline update
+                  batch.update(requestRef, { status: 'declined', reviewedByUid: currentUser.uid, reviewedAt: serverTimestamp() });
+                  batch.set(managerNotifRef, { recipientUid: requestedByUid, title: `Ledger Update Declined`, message: `Your update for "${originalData.entityName}" was declined.`, link: `/ledger`, isRead: false, createdAt: serverTimestamp(), type: 'update_declined' });
+                  batch.update(adminNotifRef, { isRead: true, title: `[Declined] ${selectedNotificationForReview.title}` });
+                  await batch.commit();
+                  toast({ title: "Update Declined", description: "Update request declined and manager notified." });
+              }
+          } else if (requestType === 'delete') {
+              const batch = writeBatch(db);
+              if (action === 'approve') {
+                  await runTransaction(db, async (transaction) => {
+                      const ledgerDocRef = doc(db, "ledgerEntries", originalLedgerEntryId);
+                      const entryData = originalData;
 
-          if (action === 'approve') {
-              const ledgerRef = doc(db, 'ledgerEntries', selectedUpdateRequest.originalLedgerEntryId);
-              // Important: We need to re-calculate totals and derived fields from the manager's submission
-              const updatedData = { ...selectedUpdateRequest.updatedData };
-              const subTotal = (updatedData.items || []).reduce((sum: number, item: any) => sum + ((item.quantity || 0) * (item.unitPrice || 0)), 0);
-              const taxAmount = updatedData.applyGst ? subTotal * 0.18 : 0;
-              const grandTotal = subTotal + taxAmount;
-              const amountPaidNow = updatedData.paymentStatus === 'paid' ? grandTotal : (updatedData.paymentStatus === 'partial' ? updatedData.amountPaidNow || 0 : 0);
-              const remainingAmount = grandTotal - amountPaidNow;
-
-              const finalDataForLedger = {
-                  ...updatedData,
-                  subTotal,
-                  taxAmount,
-                  grandTotal,
-                  amountPaidNow,
-                  remainingAmount,
-                  updatedAt: serverTimestamp(),
-                  updatedByUid: currentUser.uid,
-                  updatedByName: currentUser.displayName || currentUser.email,
-              };
-
-              batch.update(ledgerRef, finalDataForLedger);
-              batch.update(requestRef, { status: 'approved', reviewedByUid: currentUser.uid, reviewedAt: serverTimestamp() });
-              batch.set(managerNotifRef, {
-                  recipientUid: selectedUpdateRequest.requestedByUid,
-                  title: `Ledger Update Approved`,
-                  message: `Your update request for entry "${selectedUpdateRequest.originalData.entityName}" was approved.`,
-                  link: `/ledger?highlight=${selectedUpdateRequest.originalLedgerEntryId}`,
-                  isRead: false,
-                  createdAt: serverTimestamp(),
-                  type: 'update_approved',
-              });
-              batch.update(adminNotifRef, { isRead: true, title: `[Approved] ${selectedNotificationForReview.title}` });
-              toast({ title: "Update Approved", description: "Ledger entry updated and manager notified." });
-
-          } else { // Decline
-              batch.update(requestRef, { status: 'declined', reviewedByUid: currentUser.uid, reviewedAt: serverTimestamp() });
-              batch.set(managerNotifRef, {
-                  recipientUid: selectedUpdateRequest.requestedByUid,
-                  title: `Ledger Update Declined`,
-                  message: `Your update request for entry "${selectedUpdateRequest.originalData.entityName}" was declined.`,
-                  link: `/ledger`,
-                  isRead: false,
-                  createdAt: serverTimestamp(),
-                  type: 'update_declined',
-              });
-              batch.update(adminNotifRef, { isRead: true, title: `[Declined] ${selectedNotificationForReview.title}` });
-              toast({ title: "Update Declined", description: "Update request declined and manager notified." });
+                      if (entryData.entryPurpose === "Ledger Record") {
+                          for (const item of entryData.items) {
+                              const productRef = doc(db, "products", item.productId);
+                              const productSnap = await transaction.get(productRef);
+                              if (productSnap.exists()) {
+                                  const stockChange = entryData.type === 'sale' ? item.quantity : -item.quantity;
+                                  transaction.update(productRef, { stock: productSnap.data().stock + stockChange });
+                              }
+                          }
+                      }
+                      if (entryData.associatedPaymentRecordId) {
+                          transaction.delete(doc(db, "payments", entryData.associatedPaymentRecordId));
+                      }
+                      transaction.delete(ledgerDocRef);
+                  });
+                  batch.update(requestRef, { status: 'approved', reviewedByUid: currentUser.uid, reviewedAt: serverTimestamp() });
+                  batch.set(managerNotifRef, { recipientUid: requestedByUid, title: `Deletion Request Approved`, message: `Your request to delete entry for "${originalData.entityName}" was approved.`, link: `/ledger`, isRead: false, createdAt: serverTimestamp(), type: 'delete_approved' });
+                  batch.update(adminNotifRef, { isRead: true, title: `[Deleted] ${selectedNotificationForReview.title}` });
+                  await batch.commit();
+                  toast({ title: "Deletion Approved", description: "Ledger entry has been deleted." });
+              } else { // Decline deletion
+                  batch.update(requestRef, { status: 'declined', reviewedByUid: currentUser.uid, reviewedAt: serverTimestamp() });
+                  batch.set(managerNotifRef, { recipientUid: requestedByUid, title: `Deletion Request Declined`, message: `Your request to delete entry for "${originalData.entityName}" was declined.`, link: `/ledger`, isRead: false, createdAt: serverTimestamp(), type: 'delete_declined' });
+                  batch.update(adminNotifRef, { isRead: true, title: `[Declined] ${selectedNotificationForReview.title}` });
+                  await batch.commit();
+                  toast({ title: "Deletion Declined", description: "Deletion request declined and manager notified." });
+              }
           }
-
-          await batch.commit();
-
-      } catch (error) {
-          console.error("Error handling update request:", error);
-          toast({ title: "Action Failed", description: "Could not process the request.", variant: "destructive" });
+      } catch (error: any) {
+          console.error("Error handling review request:", error);
+          toast({ title: "Action Failed", description: `Could not process the request: ${error.message}`, variant: "destructive" });
       } finally {
           setResolvingId(null);
           setIsReviewDialogOpen(false);
@@ -302,6 +304,48 @@ export default function NotificationsPage() {
   }
   
   const unreadCount = notifications.filter(n => !n.isRead).length;
+
+  const renderReviewDialogContent = () => {
+    if (isLoadingReviewData) return <div className="text-center p-8">Loading changes...</div>;
+    if (!selectedUpdateRequest) return <div className="text-center p-8">Could not load request details.</div>;
+
+    if (selectedUpdateRequest.requestType === 'delete') {
+        const entry = selectedUpdateRequest.originalData;
+        return (
+            <div className="space-y-4 p-2 text-sm">
+                <p className="font-semibold text-center">Are you sure you want to approve the deletion of this entry?</p>
+                <Card className="p-4 bg-muted/50">
+                    <p><strong>Date:</strong> {entry.date ? format(parseISO(entry.date), "MMM dd, yyyy") : 'N/A'}</p>
+                    <p><strong>Type:</strong> {entry.type}</p>
+                    <p><strong>Entity:</strong> {entry.entityName}</p>
+                    <p><strong>Total:</strong> {formatCurrency(entry.grandTotal)}</p>
+                    <p className="text-xs text-muted-foreground mt-2">This action is permanent and will revert any associated stock changes.</p>
+                </Card>
+            </div>
+        );
+    }
+    
+    // Default to update view
+    return (
+         <div className="space-y-4 p-2 text-sm">
+            {Object.keys(selectedUpdateRequest.updatedData).map(key => {
+                const originalValue = (selectedUpdateRequest.originalData as any)[key];
+                const updatedValue = selectedUpdateRequest.updatedData[key];
+                
+                if (typeof originalValue !== 'object' && String(originalValue) !== String(updatedValue)) {
+                    return (
+                        <div key={key} className="p-2 border rounded">
+                            <p className="font-semibold capitalize">{key.replace(/([A-Z])/g, ' $1')}</p>
+                            <p className="text-red-500 bg-red-500/10 p-1 rounded-md line-through">Old: {String(originalValue ?? 'Not set')}</p>
+                            <p className="text-green-600 bg-green-500/10 p-1 rounded-md">New: {String(updatedValue ?? 'Not set')}</p>
+                        </div>
+                    );
+                }
+                return null;
+            })}
+        </div>
+    )
+  }
 
   return (
     <>
@@ -371,7 +415,7 @@ export default function NotificationsPage() {
                             </Button>
                         </div>
                         )}
-                         {userRole === 'admin' && notification.type === 'update_request' && (
+                         {userRole === 'admin' && (notification.type === 'update_request' || notification.type === 'delete_request') && (
                           <div className="mt-2">
                             <Button
                               size="sm"
@@ -383,7 +427,7 @@ export default function NotificationsPage() {
                               }}
                               disabled={resolvingId === notification.relatedDocId}
                             >
-                                <Eye className="mr-2 h-4 w-4" /> Review Changes
+                                <Eye className="mr-2 h-4 w-4" /> Review Request
                             </Button>
                           </div>
                         )}
@@ -399,42 +443,21 @@ export default function NotificationsPage() {
       <Dialog open={isReviewDialogOpen} onOpenChange={setIsReviewDialogOpen}>
           <DialogContent className="max-w-3xl">
               <DialogHeader>
-                  <DialogTitle>Review Ledger Update Request</DialogTitle>
+                  <DialogTitle>Review Request</DialogTitle>
                   <DialogDescription>
-                      From: {selectedUpdateRequest?.requestedByName} for entry: {selectedUpdateRequest?.originalData.entityName}
+                      From: {selectedUpdateRequest?.requestedByName} | Type: {selectedUpdateRequest?.requestType?.toUpperCase()}
                   </DialogDescription>
               </DialogHeader>
               <ScrollArea className="max-h-[60vh] p-1">
-                  {isLoadingReviewData && <div className="text-center p-8">Loading changes...</div>}
-                  {selectedUpdateRequest && (
-                      <div className="space-y-4 p-2 text-sm">
-                          {Object.keys(selectedUpdateRequest.updatedData).map(key => {
-                              const originalValue = (selectedUpdateRequest.originalData as any)[key];
-                              const updatedValue = selectedUpdateRequest.updatedData[key];
-                              
-                              // Simple comparison for primitives
-                              if (typeof originalValue !== 'object' && originalValue !== updatedValue) {
-                                  return (
-                                      <div key={key} className="p-2 border rounded">
-                                          <p className="font-semibold capitalize">{key.replace(/([A-Z])/g, ' $1')}</p>
-                                          <p className="text-red-500 bg-red-500/10 p-1 rounded-md line-through">Old: {String(originalValue)}</p>
-                                          <p className="text-green-600 bg-green-500/10 p-1 rounded-md">New: {String(updatedValue)}</p>
-                                      </div>
-                                  );
-                              }
-                              // TODO: Add more complex diffing for objects/arrays if needed
-                              return null;
-                          })}
-                      </div>
-                  )}
+                 {renderReviewDialogContent()}
               </ScrollArea>
               <DialogFooter>
-                  <Button variant="outline" onClick={() => handleUpdateRequest('decline')} disabled={resolvingId === selectedUpdateRequest?.id}>
+                  <Button variant="outline" onClick={() => handleReviewRequest('decline')} disabled={resolvingId === selectedUpdateRequest?.id}>
                       <ThumbsDown className="mr-2 h-4 w-4" />Decline
                   </Button>
-                  <Button onClick={() => handleUpdateRequest('approve')} disabled={resolvingId === selectedUpdateRequest?.id}>
+                  <Button onClick={() => handleReviewRequest('approve')} disabled={resolvingId === selectedUpdateRequest?.id}>
                        {resolvingId === selectedUpdateRequest?.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <ThumbsUp className="mr-2 h-4 w-4" />}
-                      Approve & Update
+                      Approve
                   </Button>
               </DialogFooter>
           </DialogContent>
@@ -442,5 +465,3 @@ export default function NotificationsPage() {
     </>
   );
 }
-
-

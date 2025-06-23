@@ -212,6 +212,7 @@ export default function DailyLedgerPage() {
   const [isLedgerFormOpen, setIsLedgerFormOpen] = useState(false);
   const [editingLedgerEntry, setEditingLedgerEntry] = useState<LedgerEntry | null>(null);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+  const [isDeleteRequestConfirmOpen, setIsDeleteRequestConfirmOpen] = useState(false);
   const [ledgerEntryToDelete, setLedgerEntryToDelete] = useState<LedgerEntry | null>(null);
 
   const [isNewEntityDialogOpen, setIsNewEntityDialogOpen] = useState(false);
@@ -247,30 +248,49 @@ export default function DailyLedgerPage() {
   
   const fetchData = useCallback(async (date: string) => {
     setIsLoading(true);
-    try {
-      const [custSnap, sellSnap, prodSnap, entrySnap, invoiceSnap] = await Promise.all([
-        getDocs(query(collection(db, "customers"), orderBy("name"))),
-        getDocs(query(collection(db, "sellers"), orderBy("name"))),
-        getDocs(query(collection(db, "products"), orderBy("name"))),
-        getDocs(query(collection(db, "ledgerEntries"), where("date", "==", date), orderBy("createdAt", "desc"))),
-        getDocs(query(collection(db, "invoices"), orderBy("createdAt", "desc"))) 
-      ]);
+    const currentUser = auth.currentUser;
+    const role = getCookie('userRole');
 
-      setCustomers(custSnap.docs.map(d => ({ id: d.id, ...d.data() } as Customer)));
-      setSellers(sellSnap.docs.map(d => ({ id: d.id, ...d.data() } as Seller)));
-      setProducts(prodSnap.docs.map(d => {
-        const data = d.data();
-        return { id: d.id, ...data, displayPrice: formatCurrency(data.numericPrice || 0) } as Product;
-      }));
-       setAllInvoices(invoiceSnap.docs.map(d => ({id: d.id, ...d.data()} as Invoice)));
-      setLedgerEntries(entrySnap.docs.map(d => {
-        const data = d.data();
-        return {
-            id: d.id, 
+    try {
+        const [custSnap, sellSnap, prodSnap, invoiceSnap] = await Promise.all([
+            getDocs(query(collection(db, "customers"), orderBy("name"))),
+            getDocs(query(collection(db, "sellers"), orderBy("name"))),
+            getDocs(query(collection(db, "products"), orderBy("name"))),
+            getDocs(query(collection(db, "invoices"), orderBy("createdAt", "desc")))
+        ]);
+
+        setCustomers(custSnap.docs.map(d => ({ id: d.id, ...d.data() } as Customer)));
+        setSellers(sellSnap.docs.map(d => ({ id: d.id, ...d.data() } as Seller)));
+        setProducts(prodSnap.docs.map(d => {
+            const data = d.data();
+            return { id: d.id, ...data, displayPrice: formatCurrency(data.numericPrice || 0) } as Product;
+        }));
+        setAllInvoices(invoiceSnap.docs.map(d => ({id: d.id, ...d.data()} as Invoice)));
+
+        let fetchedEntries: LedgerEntry[] = [];
+        if (role === 'store_manager' && currentUser) {
+            const salesQuery = query(collection(db, "ledgerEntries"), where("date", "==", date), where("type", "==", "sale"));
+            const purchasesQuery = query(collection(db, "ledgerEntries"), where("date", "==", date), where("type", "==", "purchase"), where("createdByUid", "==", currentUser.uid));
+            
+            const [salesSnapshot, purchasesSnapshot] = await Promise.all([
+                getDocs(salesQuery),
+                getDocs(purchasesQuery)
+            ]);
+            
+            const salesEntries = salesSnapshot.docs.map(d => ({ id: d.id, ...d.data() } as LedgerEntry));
+            const purchaseEntries = purchasesSnapshot.docs.map(d => ({ id: d.id, ...d.data() } as LedgerEntry));
+            fetchedEntries = [...salesEntries, ...purchaseEntries].sort((a, b) => b.createdAt.toMillis() - a.createdAt.toMillis());
+
+        } else { // Admin or unauthenticated (latter should not happen on this page)
+            const entrySnap = await getDocs(query(collection(db, "ledgerEntries"), where("date", "==", date), orderBy("createdAt", "desc")));
+            fetchedEntries = entrySnap.docs.map(d => ({ id: d.id, ...d.data() } as LedgerEntry));
+        }
+
+        const processedEntries = fetchedEntries.map(data => ({
             ...data,
             entryPurpose: data.entryPurpose || ENTRY_PURPOSES[0],
             paymentAmount: data.paymentAmount, 
-            createdByUid: data.createdByUid || data.createdBy, 
+            createdByUid: data.createdByUid || (data as any).createdBy, 
             createdByName: data.createdByName || "Unknown User",
             updatedByUid: data.updatedByUid || null,
             updatedByName: data.updatedByName || null,
@@ -283,15 +303,16 @@ export default function DailyLedgerPage() {
             remainingAmount: typeof data.remainingAmount === 'number' ? data.remainingAmount : (data.grandTotal - (typeof data.amountPaidNow === 'number' ? data.amountPaidNow : (data.paymentStatus === 'paid' ? data.grandTotal : 0))),
             associatedPaymentRecordId: data.associatedPaymentRecordId || null,
             relatedInvoiceId: data.relatedInvoiceId || null,
-        } as LedgerEntry;
-      }));
+        } as LedgerEntry));
+      
+        setLedgerEntries(processedEntries);
 
     } catch (error: any) {
       console.error("Error fetching data for ledger:", error);
       if (error.code === 'failed-precondition') {
         toast({
             title: "Database Index Required",
-            description: `A query for ledger data failed. Firestore index 'ledgerEntries' (date ASC, createdAt DESC) or other collection index likely needed. Check console for exact link.`,
+            description: `A query for ledger data failed. Firestore index is likely needed (e.g., for 'ledgerEntries' with fields 'date', 'type', and 'createdByUid'). Check browser console for the exact link.`,
             variant: "destructive", duration: 15000,
         });
       } else {
@@ -377,13 +398,16 @@ export default function DailyLedgerPage() {
   }, []);
 
   const openDeleteConfirmation = useCallback((entry: LedgerEntry) => {
-    if (currentUserRole !== 'admin') {
-        toast({title: "Permission Denied", description: "Only admins can delete ledger entries.", variant: "destructive"});
-        return;
-    }
     setLedgerEntryToDelete(entry);
-    setIsDeleteConfirmOpen(true);
+    if (currentUserRole === 'admin') {
+      setIsDeleteConfirmOpen(true);
+    } else if (currentUserRole === 'store_manager') {
+      setIsDeleteRequestConfirmOpen(true);
+    } else {
+      toast({ title: "Permission Denied", description: "You do not have permission to delete entries.", variant: "destructive" });
+    }
   }, [currentUserRole, toast]);
+  
 
   const handleUserFilterClick = useCallback((userName: string) => {
     if (selectedUserFilterName === userName) {
@@ -625,10 +649,9 @@ export default function DailyLedgerPage() {
     // Manager Edit Request Logic
     if (currentUserRole === 'store_manager' && editingLedgerEntry) {
         try {
-            const updatedData = { ...data }; // The proposed new data from the form
+            const updatedData = { ...data };
             
-            // Sanitize the original data to ensure no `undefined` values are sent to Firestore.
-            const sanitizedOriginalData = {
+            const sanitizedOriginalData: LedgerEntry = {
                 ...editingLedgerEntry,
                 paymentAmount: editingLedgerEntry.paymentAmount ?? null,
                 updatedAt: editingLedgerEntry.updatedAt ?? null,
@@ -642,8 +665,9 @@ export default function DailyLedgerPage() {
             };
 
             const requestRef = await addDoc(collection(db, 'updateRequests'), {
+                requestType: 'update',
                 originalLedgerEntryId: editingLedgerEntry.id,
-                originalData: sanitizedOriginalData, // Store the sanitized state
+                originalData: sanitizedOriginalData, 
                 updatedData: updatedData,
                 requestedByUid: currentUser.uid,
                 requestedByName: currentUserName,
@@ -651,7 +675,6 @@ export default function DailyLedgerPage() {
                 status: 'pending',
             });
 
-            // Notify admins
             const adminQuery = query(collection(db, "users"), where("role", "==", "admin"));
             const adminSnapshot = await getDocs(adminQuery);
             const batch = writeBatch(db);
@@ -679,14 +702,13 @@ export default function DailyLedgerPage() {
             console.error("Error sending update request:", error);
             toast({ title: "Request Failed", description: "Could not send the update request.", variant: "destructive" });
         }
-        return; // End execution for manager edit
+        return; 
     }
       
     // Admin Edit / New Entry Logic
     try {
       await runTransaction(db, async (transaction) => {
         
-        // --- Phase 1: Reads ---
         const ledgerDocRef = editingLedgerEntry ? doc(db, "ledgerEntries", editingLedgerEntry.id) : doc(collection(db, "ledgerEntries"));
         const oldPaymentDocRef = editingLedgerEntry?.associatedPaymentRecordId ? doc(db, "payments", editingLedgerEntry.associatedPaymentRecordId) : null;
         
@@ -697,7 +719,7 @@ export default function DailyLedgerPage() {
           originalLedgerEntryData = originalLedgerSnap.data() as LedgerEntry;
         }
         if (oldPaymentDocRef) {
-          await transaction.get(oldPaymentDocRef); // Read to ensure it exists if we need to delete it.
+          await transaction.get(oldPaymentDocRef); 
         }
         
         const productIdsInvolved = new Set<string>();
@@ -724,7 +746,6 @@ export default function DailyLedgerPage() {
             }
         }
         
-        // --- Phase 2: Logic & Calculations ---
         let subTotalForSave: number, taxAmountForSave: number, grandTotalForSave: number;
         let itemsForSave: LedgerItem[], amountPaidForLedgerSave: number, remainingAmountForLedgerSave: number;
         
@@ -813,7 +834,7 @@ export default function DailyLedgerPage() {
             relatedEntityName: data.entityName, relatedEntityId: data.entityId || `unknown-${data.entityType}-${Date.now()}`,
             relatedInvoiceId: data.relatedInvoiceId || null, date: format(parseISO(data.date), "MMM dd, yyyy"), isoDate: data.date, 
             amountPaid: amountPaidForLedgerSave, originalInvoiceAmount: grandTotalForSave, remainingBalanceOnInvoice: remainingAmountForLedgerSave, 
-            method: finalLedgerDataToCommit.paymentMethod,
+            method: finalLedgerDataToCommit.paymentMethod as any,
             transactionId: null, 
             status: data.paymentStatus === 'paid' ? (data.type === 'sale' ? 'Received' : 'Sent') : 'Partial',
             notes: `Payment from Ledger Entry. ${data.notes || ''}`.trim(), ledgerEntryId: ledgerDocRef.id, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
@@ -823,7 +844,6 @@ export default function DailyLedgerPage() {
            finalLedgerDataToCommit.associatedPaymentRecordId = null;
         }
 
-        // --- Phase 3: Writes ---
         if (oldPaymentDocRef) {
             transaction.delete(oldPaymentDocRef);
         }
@@ -928,6 +948,58 @@ export default function DailyLedgerPage() {
     } finally {
         setIsDeleteConfirmOpen(false);
         setLedgerEntryToDelete(null);
+    }
+  };
+  
+  const handleSendDeleteRequest = async () => {
+    if (!ledgerEntryToDelete) {
+      toast({ title: "Error", description: "No entry selected for deletion request.", variant: "destructive" });
+      return;
+    }
+    const currentUser = auth.currentUser;
+    if (!currentUser || currentUserRole !== 'store_manager') {
+      toast({ title: "Permission Error", description: "Only managers can send delete requests.", variant: "destructive" });
+      return;
+    }
+
+    try {
+      const requestRef = await addDoc(collection(db, 'updateRequests'), {
+        requestType: 'delete',
+        originalLedgerEntryId: ledgerEntryToDelete.id,
+        originalData: ledgerEntryToDelete,
+        requestedByUid: currentUser.uid,
+        requestedByName: currentUser.displayName || currentUser.email,
+        requestedAt: serverTimestamp(),
+        status: 'pending',
+      });
+      
+      const adminQuery = query(collection(db, "users"), where("role", "==", "admin"));
+      const adminSnapshot = await getDocs(adminQuery);
+      const batch = writeBatch(db);
+      adminSnapshot.docs.forEach(adminDoc => {
+          const notifRef = doc(collection(db, 'notifications'));
+          batch.set(notifRef, {
+              recipientUid: adminDoc.id,
+              title: `Ledger Deletion Request`,
+              message: `Manager ${currentUser.displayName || currentUser.email} requested to delete an entry for "${ledgerEntryToDelete.entityName}".`,
+              link: `/notifications?reviewRequest=${requestRef.id}`,
+              isRead: false,
+              createdAt: serverTimestamp(),
+              type: 'delete_request',
+              relatedDocId: requestRef.id,
+              originatorUid: currentUser.uid,
+              originatorName: currentUser.displayName || currentUser.email,
+          });
+      });
+      await batch.commit();
+
+      toast({ title: "Delete Request Sent", description: "Your request to delete the ledger entry has been sent to an admin for approval." });
+    } catch (error: any) {
+      console.error("Error sending delete request:", error);
+      toast({ title: "Request Failed", description: `Could not send delete request: ${error.message}`, variant: "destructive" });
+    } finally {
+      setIsDeleteRequestConfirmOpen(false);
+      setLedgerEntryToDelete(null);
     }
   };
 
@@ -1231,7 +1303,7 @@ export default function DailyLedgerPage() {
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={isDeleteConfirmOpen} onOpenChange={(isOpen) => { if(!isOpen) setLedgerEntryToDelete(null); setIsDeleteConfirmOpen(isOpen);}}>
+      <AlertDialog open={isDeleteConfirmOpen} onOpenChange={setIsDeleteConfirmOpen}>
         <AlertDialogContent>
             <AlertDialogHeader>
                 <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
@@ -1241,11 +1313,27 @@ export default function DailyLedgerPage() {
                 </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-                <AlertDialogCancel onClick={() => {setIsDeleteConfirmOpen(false); setLedgerEntryToDelete(null);}}>Cancel</AlertDialogCancel>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
                 <AlertDialogAction onClick={confirmDeleteLedgerEntry} className="bg-destructive hover:bg-destructive/90" disabled={currentUserRole !== 'admin'}>
                     Delete Entry
                 </AlertDialogAction>
             </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={isDeleteRequestConfirmOpen} onOpenChange={setIsDeleteRequestConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm Deletion Request</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to request the deletion of the entry for &quot;{ledgerEntryToDelete?.entityName}&quot;? 
+              This will send a request to an administrator for approval.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleSendDeleteRequest}>Send Delete Request</AlertDialogAction>
+          </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
@@ -1360,10 +1448,10 @@ export default function DailyLedgerPage() {
         </CardHeader>
         <CardContent>
           <Tabs value={activeLedgerTab} onValueChange={(value) => setActiveLedgerTab(value as any)} className="w-full mb-4">
-            <TabsList className="flex flex-col items-stretch h-auto sm:h-10 sm:flex-row sm:items-center sm:justify-start gap-1">
-                <TabsTrigger value="all" className="w-full sm:w-auto">All Entries</TabsTrigger>
-                <TabsTrigger value="customer" className="w-full sm:w-auto">Customer</TabsTrigger>
-                <TabsTrigger value="seller" className="w-full sm:w-auto">Seller</TabsTrigger>
+            <TabsList className="inline-flex h-auto items-center justify-center rounded-md bg-muted p-1 text-muted-foreground flex-wrap">
+                <TabsTrigger value="all" className="inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium">All Entries</TabsTrigger>
+                <TabsTrigger value="customer" className="inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium">Customer</TabsTrigger>
+                <TabsTrigger value="seller" className="inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium">Seller</TabsTrigger>
             </TabsList>
           </Tabs>
 
@@ -1473,14 +1561,10 @@ export default function DailyLedgerPage() {
                                   <DropdownMenuItem onClick={() => handleEditLedgerEntry(entry)}>
                                       <Edit className="mr-2 h-4 w-4" /> Edit Entry
                                   </DropdownMenuItem>
-                                  {currentUserRole === 'admin' && (
-                                    <>
-                                        <DropdownMenuSeparator/>
-                                        <DropdownMenuItem onClick={() => openDeleteConfirmation(entry)} className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground">
-                                            <Trash2 className="mr-2 h-4 w-4" /> Delete Entry
-                                        </DropdownMenuItem>
-                                    </>
-                                  )}
+                                    <DropdownMenuSeparator/>
+                                    <DropdownMenuItem onClick={() => openDeleteConfirmation(entry)} className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground">
+                                        <Trash2 className="mr-2 h-4 w-4" /> Delete Entry
+                                    </DropdownMenuItem>
                                 </DropdownMenuContent>
                               </DropdownMenu>
                            </div>
@@ -1529,8 +1613,8 @@ export default function DailyLedgerPage() {
                                 <DropdownMenuContent align="end">
                                     <DropdownMenuItem onClick={() => openEntryDetailsDialog(entry)}><Eye className="mr-2 h-4 w-4" /> View Details</DropdownMenuItem>
                                     <DropdownMenuItem onClick={() => handleEditLedgerEntry(entry)}><Edit className="mr-2 h-4 w-4" /> Edit Entry</DropdownMenuItem>
-                                    {currentUserRole === 'admin' && <DropdownMenuSeparator/>}
-                                    {currentUserRole === 'admin' && <DropdownMenuItem onClick={() => openDeleteConfirmation(entry)} className="text-destructive focus:text-destructive focus:bg-destructive/10"><Trash2 className="mr-2 h-4 w-4" /> Delete Entry</DropdownMenuItem>}
+                                    <DropdownMenuSeparator/>
+                                    <DropdownMenuItem onClick={() => openDeleteConfirmation(entry)} className="text-destructive focus:text-destructive focus:bg-destructive/10"><Trash2 className="mr-2 h-4 w-4" /> Delete Entry</DropdownMenuItem>
                                 </DropdownMenuContent>
                             </DropdownMenu>
                         </CardHeader>
@@ -1557,12 +1641,3 @@ export default function DailyLedgerPage() {
     </>
   );
 }
-
-
-
-
-
-
-
-
-
