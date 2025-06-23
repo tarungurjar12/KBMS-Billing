@@ -229,7 +229,7 @@ export default function ViewProductsStockPage() {
       </Dialog>
 
       <Tabs defaultValue="price_list" className="w-full">
-        <TabsList className="grid w-full grid-cols-2 mb-4 sm:w-auto max-w-md">
+        <TabsList className="grid w-full grid-cols-1 mb-4 sm:grid-cols-2 sm:w-auto max-w-md">
           <TabsTrigger value="price_list">Product Price List</TabsTrigger>
           <TabsTrigger value="stock_list">Current Stock Levels</TabsTrigger>
         </TabsList>
@@ -273,8 +273,15 @@ export default function ViewProductsStockPage() {
                         <TableCell className="hidden sm:table-cell">{product.unitOfMeasure}</TableCell>
                         <TableCell className="text-right font-semibold">{product.price}</TableCell>
                         <TableCell className="text-right">
-                          <Button variant="outline" size="sm" onClick={() => openReportIssueDialog(product)} title={`Report issue with ${product.name}`}>
-                              <AlertTriangle className="mr-1.5 h-3.5 w-3.5" /> Report Issue
+                          <Button 
+                            variant="outline"
+                            size="icon"
+                            className="h-9 w-9 sm:h-auto sm:w-auto sm:px-3 sm:py-1.5 hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive"
+                            onClick={() => openReportIssueDialog(product)} 
+                            title={`Report issue with ${product.name}`}
+                          >
+                            <AlertTriangle className="h-4 w-4" />
+                            <span className="hidden sm:inline sm:ml-1.5">Report Issue</span>
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -337,8 +344,15 @@ export default function ViewProductsStockPage() {
                           </Badge>
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button variant="outline" size="sm" onClick={() => openReportIssueDialog(item)} title={`Report issue with ${item.name}`}>
-                             <AlertTriangle className="mr-1.5 h-3.5 w-3.5" /> Report Issue
+                          <Button 
+                            variant="outline"
+                            size="icon"
+                            className="h-9 w-9 sm:h-auto sm:w-auto sm:px-3 sm:py-1.5 hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive"
+                            onClick={() => openReportIssueDialog(item)} 
+                            title={`Report issue with ${item.name}`}
+                          >
+                             <AlertTriangle className="h-4 w-4" />
+                             <span className="hidden sm:inline sm:ml-1.5">Report Issue</span>
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -354,4 +368,3 @@ export default function ViewProductsStockPage() {
     </>
   );
 }
-

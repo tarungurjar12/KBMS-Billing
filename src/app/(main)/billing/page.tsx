@@ -75,6 +75,18 @@ const getCookie = (name: string): string | undefined => {
   return undefined;
 };
 
+const getStatusRowClass = (status: Invoice['status']): string => {
+    switch (status) {
+      case "Paid": return "bg-green-50/50 dark:bg-green-500/10";
+      case "Pending": return "bg-yellow-50/50 dark:bg-yellow-500/10";
+      case "Overdue": return "bg-red-50/50 dark:bg-red-500/10";
+      case "Partially Paid": return "bg-blue-50/50 dark:bg-blue-500/10";
+      case "Cancelled": return "bg-gray-100/50 dark:bg-gray-800/10";
+      default: return "";
+    }
+};
+
+
 export default function BillingPage() {
   const router = useRouter();
   const { toast } = useToast();
@@ -379,6 +391,14 @@ export default function BillingPage() {
         <CardHeader>
           <CardTitle className="font-headline text-foreground">Invoice List</CardTitle>
           <CardDescription>A list of all generated invoices, fetched from Firestore. Most recent first.</CardDescription>
+            <div className="sm:hidden flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground pt-2">
+                <span className="font-semibold">Status:</span>
+                <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-green-500"></div>Paid</div>
+                <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-yellow-500"></div>Pending</div>
+                <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-red-500"></div>Overdue</div>
+                <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-blue-500"></div>Partial</div>
+                <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-gray-400"></div>Cancelled</div>
+            </div>
         </CardHeader>
         <CardContent>
           {isLoading && invoices.length === 0 ? (
@@ -401,18 +421,18 @@ export default function BillingPage() {
                   <TableHead>Customer</TableHead>
                   <TableHead className="hidden sm:table-cell">Date</TableHead>
                   <TableHead className="text-right">Total</TableHead>
-                  <TableHead className="text-center">Status</TableHead>
+                  <TableHead className="hidden sm:table-cell text-center">Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {invoices.map((invoice) => (
-                  <TableRow key={invoice.id}>
+                  <TableRow key={invoice.id} className={getStatusRowClass(invoice.status)}>
                     <TableCell className="font-medium">{invoice.invoiceNumber}</TableCell>
                     <TableCell>{invoice.customerName}</TableCell>
                     <TableCell className="hidden sm:table-cell">{invoice.date}</TableCell>
                     <TableCell className="text-right">{invoice.displayTotal}</TableCell>
-                    <TableCell className="text-center">
+                    <TableCell className="hidden sm:table-cell text-center">
                       <Badge 
                           variant={getBadgeVariant(invoice.status)}
                           className={
