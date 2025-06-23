@@ -377,4 +377,3 @@ export default function StockPage() {
     </>
   );
 }
-

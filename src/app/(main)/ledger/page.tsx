@@ -1,5 +1,4 @@
 
-
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
@@ -16,7 +15,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDes
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { BookOpen, PlusCircle, Trash2, Search, Users, Truck, XCircle, Filter, FileWarning, Calculator, Edit, MoreHorizontal, UserCircle2, Eye, UserX, Landmark } from 'lucide-react';
+import { BookOpen, PlusCircle, Trash2, Search, Users, Truck, XCircle, Filter, FileWarning, Calculator, Edit, MoreHorizontal, UserCircle2, Eye, UserX, Landmark, GitPullRequest } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { collection, getDocs, addDoc, serverTimestamp, query, orderBy, where, doc, runTransaction, Timestamp, deleteDoc, getDoc, writeBatch } from 'firebase/firestore';
@@ -208,6 +207,7 @@ export default function DailyLedgerPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [ledgerEntries, setLedgerEntries] = useState<LedgerEntry[]>([]);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [pendingRequestIds, setPendingRequestIds] = useState<Set<string>>(new Set());
 
   const [isLedgerFormOpen, setIsLedgerFormOpen] = useState(false);
   const [editingLedgerEntry, setEditingLedgerEntry] = useState<LedgerEntry | null>(null);
@@ -252,12 +252,16 @@ export default function DailyLedgerPage() {
     const role = getCookie('userRole');
 
     try {
-        const [custSnap, sellSnap, prodSnap, invoiceSnap] = await Promise.all([
+        const [custSnap, sellSnap, prodSnap, invoiceSnap, pendingRequestsSnap] = await Promise.all([
             getDocs(query(collection(db, "customers"), orderBy("name"))),
             getDocs(query(collection(db, "sellers"), orderBy("name"))),
             getDocs(query(collection(db, "products"), orderBy("name"))),
-            getDocs(query(collection(db, "invoices"), orderBy("createdAt", "desc")))
+            getDocs(query(collection(db, "invoices"), orderBy("createdAt", "desc"))),
+            getDocs(query(collection(db, "updateRequests"), where("status", "==", "pending")))
         ]);
+        
+        const pendingIds = new Set(pendingRequestsSnap.docs.map(doc => doc.data().originalLedgerEntryId));
+        setPendingRequestIds(pendingIds);
 
         setCustomers(custSnap.docs.map(d => ({ id: d.id, ...d.data() } as Customer)));
         setSellers(sellSnap.docs.map(d => ({ id: d.id, ...d.data() } as Seller)));
@@ -270,12 +274,10 @@ export default function DailyLedgerPage() {
         let fetchedEntries: LedgerEntry[] = [];
         if (role === 'store_manager' && currentUser) {
             const salesQuery = query(collection(db, "ledgerEntries"), where("date", "==", date), where("type", "==", "sale"));
-            const purchasesQuery = query(collection(db, "ledgerEntries"), where("date", "==", date), where("type", "==", "purchase"), where("createdByUid", "==", currentUser.uid));
+            const salesSnapshot = await getDocs(salesQuery);
             
-            const [salesSnapshot, purchasesSnapshot] = await Promise.all([
-                getDocs(salesQuery),
-                getDocs(purchasesQuery)
-            ]);
+            const purchasesQuery = query(collection(db, "ledgerEntries"), where("date", "==", date), where("type", "==", "purchase"), where("createdByUid", "==", currentUser.uid));
+            const purchasesSnapshot = await getDocs(purchasesQuery);
             
             const salesEntries = salesSnapshot.docs.map(d => ({ id: d.id, ...d.data() } as LedgerEntry));
             const purchaseEntries = purchasesSnapshot.docs.map(d => ({ id: d.id, ...d.data() } as LedgerEntry));
@@ -976,14 +978,14 @@ export default function DailyLedgerPage() {
           ...ledgerEntryToDelete,
           paymentAmount: ledgerEntryToDelete.paymentAmount ?? null,
           amountPaidNow: ledgerEntryToDelete.amountPaidNow ?? null,
-          updatedAt: ledgerEntryToDelete.updatedAt ?? null,
-          updatedByUid: ledgerEntryToDelete.updatedByUid ?? null,
-          updatedByName: ledgerEntryToDelete.updatedByName ?? null,
-          originalTransactionAmount: ledgerEntryToDelete.originalTransactionAmount ?? null,
-          remainingAmount: ledgerEntryToDelete.remainingAmount ?? null,
-          associatedPaymentRecordId: ledgerEntryToDelete.associatedPaymentRecordId ?? null,
-          relatedInvoiceId: ledgerEntryToDelete.relatedInvoiceId ?? null,
-          notes: ledgerEntryToDelete.notes ?? null,
+          updatedAt: editingLedgerEntry?.updatedAt ?? null,
+          updatedByUid: editingLedgerEntry?.updatedByUid ?? null,
+          updatedByName: editingLedgerEntry?.updatedByName ?? null,
+          originalTransactionAmount: editingLedgerEntry?.originalTransactionAmount ?? null,
+          remainingAmount: editingLedgerEntry?.remainingAmount ?? null,
+          associatedPaymentRecordId: editingLedgerEntry?.associatedPaymentRecordId ?? null,
+          relatedInvoiceId: editingLedgerEntry?.relatedInvoiceId ?? null,
+          notes: editingLedgerEntry?.notes ?? null,
       };
 
       const requestRef = await addDoc(collection(db, 'updateRequests'), {
@@ -1471,7 +1473,7 @@ export default function DailyLedgerPage() {
         </CardHeader>
         <CardContent>
           <Tabs value={activeLedgerTab} onValueChange={(value) => setActiveLedgerTab(value as any)} className="w-full mb-4">
-            <TabsList className="inline-flex h-auto items-center justify-center rounded-md bg-muted p-1 text-muted-foreground flex-wrap sm:flex-nowrap">
+            <TabsList className="grid w-full grid-cols-3 sm:w-auto sm:inline-flex h-auto items-center justify-center rounded-md bg-muted p-1 text-muted-foreground">
                 <TabsTrigger value="all" className="inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium">All Entries</TabsTrigger>
                 <TabsTrigger value="customer" className="inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium">Customer</TabsTrigger>
                 <TabsTrigger value="seller" className="inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium">Seller</TabsTrigger>
@@ -1516,18 +1518,21 @@ export default function DailyLedgerPage() {
                   {displayedLedgerEntries.map(entry => (
                     <TableRow key={entry.id}>
                       <TableCell>
-                        <Badge 
-                            variant={entry.type === 'sale' ? 'default' : 'secondary'} 
-                            className={`${
-                                entry.entryPurpose === "Payment Record" ? (entry.type === 'sale' ? "bg-teal-100 text-teal-700 dark:bg-teal-700/80 dark:text-teal-100" : "bg-purple-100 text-purple-700 dark:bg-purple-700/80 dark:text-purple-100") :
-                                (entry.type === 'sale' ? 'bg-green-100 text-green-700 dark:bg-green-700/80 dark:text-green-100' : 'bg-blue-100 text-blue-700 dark:bg-blue-700/80 dark:text-blue-100')
-                            } whitespace-nowrap`}
-                        >
-                            {entry.entryPurpose === "Payment Record" ? 
-                                (entry.type === 'sale' ? 'Payment Received' : 'Payment Sent') :
-                                entry.type.charAt(0).toUpperCase() + entry.type.slice(1)
-                            }
-                        </Badge>
+                        <div className="flex items-center gap-2">
+                           <Badge 
+                              variant={entry.type === 'sale' ? 'default' : 'secondary'} 
+                              className={`${
+                                  entry.entryPurpose === "Payment Record" ? (entry.type === 'sale' ? "bg-teal-100 text-teal-700 dark:bg-teal-700/80 dark:text-teal-100" : "bg-purple-100 text-purple-700 dark:bg-purple-700/80 dark:text-purple-100") :
+                                  (entry.type === 'sale' ? 'bg-green-100 text-green-700 dark:bg-green-700/80 dark:text-green-100' : 'bg-blue-100 text-blue-700 dark:bg-blue-700/80 dark:text-blue-100')
+                              } whitespace-nowrap`}
+                          >
+                              {entry.entryPurpose === "Payment Record" ? 
+                                  (entry.type === 'sale' ? 'Payment Received' : 'Payment Sent') :
+                                  entry.type.charAt(0).toUpperCase() + entry.type.slice(1)
+                              }
+                          </Badge>
+                          {pendingRequestIds.has(entry.id) && <GitPullRequest className="h-4 w-4 text-orange-500" title="Update/Delete Request Pending" />}
+                        </div>
                       </TableCell>
                       <TableCell>{entry.entityName}</TableCell>
                       <TableCell className="text-xs">
@@ -1575,7 +1580,7 @@ export default function DailyLedgerPage() {
                             </Button>
                                <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
-                                  <Button variant="ghost" size="icon">
+                                  <Button variant="ghost" size="icon" disabled={pendingRequestIds.has(entry.id)}>
                                     <MoreHorizontal className="h-4 w-4" />
                                     <span className="sr-only">More actions</span>
                                   </Button>
@@ -1604,7 +1609,7 @@ export default function DailyLedgerPage() {
                     <Card key={entry.id + "-mobile"} className="w-full">
                         <CardHeader className="flex flex-row items-start justify-between gap-2 p-4">
                             <div className="flex-1 space-y-1">
-                                <CardTitle className="text-base font-bold">{entry.entityName}</CardTitle>
+                                <CardTitle className="text-base font-bold flex items-center gap-2">{entry.entityName} {pendingRequestIds.has(entry.id) && <GitPullRequest className="h-4 w-4 text-orange-500" title="Request Pending"/>}</CardTitle>
                                 <CardDescription className="text-xs flex flex-wrap items-center gap-2">
                                      <Badge 
                                         variant={entry.type === 'sale' ? 'default' : 'secondary'} 
@@ -1629,7 +1634,7 @@ export default function DailyLedgerPage() {
                             </div>
                             <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
-                                  <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0">
+                                  <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" disabled={pendingRequestIds.has(entry.id)}>
                                     <MoreHorizontal className="h-4 w-4" /> <span className="sr-only">Actions</span>
                                   </Button>
                                 </DropdownMenuTrigger>

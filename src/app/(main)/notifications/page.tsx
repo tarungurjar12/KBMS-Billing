@@ -5,17 +5,17 @@
 import { useState, useEffect, useCallback } from "react";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Bell, FileWarning, CheckCheck, CheckSquare, Loader2, GitPullRequest, Eye, X, ThumbsUp, ThumbsDown } from "lucide-react";
+import { Bell, FileWarning, CheckCheck, CheckSquare, Loader2, GitPullRequest, Eye, X, ThumbsUp, ThumbsDown, ArrowRight } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { collection, query, where, orderBy, onSnapshot, doc, updateDoc, Timestamp, writeBatch, addDoc, serverTimestamp, getDoc, runTransaction, deleteDoc } from 'firebase/firestore';
-import type { DocumentSnapshot, DocumentData } from 'firebase/firestore';
+import type { DocumentSnapshot, DocumentData, DocumentReference } from 'firebase/firestore';
 import { db, auth } from '@/lib/firebase/firebaseConfig';
 import type { User as FirebaseUser } from "firebase/auth";
 import Link from "next/link";
 import { format, formatDistanceToNow, parseISO } from 'date-fns';
 import { Button } from "@/components/ui/button";
 import { useAppContext } from '../layout';
-import type { LedgerEntry } from '../ledger/page';
+import type { LedgerEntry, LedgerItem } from '../ledger/page';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose } from '@/components/ui/dialog';
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
@@ -56,6 +56,29 @@ interface UpdateRequest {
 }
 
 const formatCurrency = (num: number): string => `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const getChangedFields = (original: any, updated: any) => {
+    const changes: { key: string; oldValue: any; newValue: any }[] = [];
+    if (!original || !updated) return changes;
+    const allKeys = new Set([...Object.keys(original), ...Object.keys(updated)]);
+
+    allKeys.forEach(key => {
+        if (key === 'items' || key === 'createdAt' || key === 'updatedAt' || key === 'id') return;
+
+        const originalValue = original[key];
+        const updatedValue = updated[key];
+
+        if (JSON.stringify(originalValue) !== JSON.stringify(updatedValue)) {
+            changes.push({
+                key: key,
+                oldValue: originalValue,
+                newValue: updatedValue,
+            });
+        }
+    });
+
+    return changes;
+};
 
 export default function NotificationsPage() {
   const { toast } = useToast();
@@ -114,7 +137,7 @@ export default function NotificationsPage() {
   }, [currentUser, toast]);
 
   const handleNotificationClick = async (notification: Notification, e: React.MouseEvent) => {
-    if (userRole === 'admin' && (notification.type === 'update_request' || notification.type === 'delete_request')) {
+    if (userRole === 'admin' && (notification.type === 'update_request' || notification.type === 'delete_request') && !notification.title.startsWith('[')) {
         e.preventDefault();
         await openReviewDialog(notification);
         return;
@@ -227,7 +250,7 @@ export default function NotificationsPage() {
       }
       setResolvingId(selectedUpdateRequest.id);
       
-      const { requestType, id: requestId, originalLedgerEntryId, originalData, updatedData, requestedByUid } = selectedUpdateRequest;
+      const { requestType, id: requestId, originalLedgerEntryId, originalData, updatedData, requestedByUid, requestedByName } = selectedUpdateRequest;
 
       try {
           const requestRef = doc(db, 'updateRequests', requestId);
@@ -235,7 +258,7 @@ export default function NotificationsPage() {
           const adminNotifRef = doc(db, 'notifications', selectedNotificationForReview.id);
           
           if (requestType === 'update') {
-              const batch = writeBatch(db); // FIX: Initialize batch here
+              const batch = writeBatch(db);
               if (action === 'approve') {
                   await runTransaction(db, async (transaction) => {
                       const ledgerRef = doc(db, 'ledgerEntries', originalLedgerEntryId);
@@ -307,46 +330,78 @@ export default function NotificationsPage() {
   const unreadCount = notifications.filter(n => !n.isRead).length;
 
   const renderReviewDialogContent = () => {
-    if (isLoadingReviewData) return <div className="text-center p-8">Loading changes...</div>;
-    if (!selectedUpdateRequest) return <div className="text-center p-8">Could not load request details.</div>;
+    if (isLoadingReviewData) return <div className="flex justify-center items-center p-8"><Loader2 className="h-8 w-8 animate-spin" /></div>;
+    if (!selectedUpdateRequest) return <div className="text-center p-8 text-muted-foreground">Could not load request details.</div>;
 
-    if (selectedUpdateRequest.requestType === 'delete') {
-        const entry = selectedUpdateRequest.originalData;
+    const { requestType, originalData, updatedData, requestedByName, requestedAt } = selectedUpdateRequest;
+
+    if (requestType === 'delete') {
         return (
             <div className="space-y-4 p-2 text-sm">
-                <p className="font-semibold text-center">Are you sure you want to approve the deletion of this entry?</p>
-                <Card className="p-4 bg-muted/50">
-                    <p><strong>Date:</strong> {entry.date ? format(parseISO(entry.date), "MMM dd, yyyy") : 'N/A'}</p>
-                    <p><strong>Type:</strong> {entry.type}</p>
-                    <p><strong>Entity:</strong> {entry.entityName}</p>
-                    <p><strong>Total:</strong> {formatCurrency(entry.grandTotal)}</p>
+                <p className="text-lg font-semibold text-center text-destructive">Confirm Deletion Request</p>
+                <Card className="p-4 bg-muted/50 border-destructive/50">
+                    <p><strong>Date:</strong> {originalData.date ? format(parseISO(originalData.date), "MMM dd, yyyy") : 'N/A'}</p>
+                    <p><strong>Entity:</strong> {originalData.entityName}</p>
+                    <p><strong>Total:</strong> {formatCurrency(originalData.grandTotal)}</p>
                     <p className="text-xs text-muted-foreground mt-2">This action is permanent and will revert any associated stock changes.</p>
                 </Card>
+                <p className="text-xs text-muted-foreground text-center">Requested by {requestedByName} on {requestedAt ? format(requestedAt.toDate(), "MMM dd, yyyy 'at' HH:mm") : 'a moment ago'}</p>
             </div>
         );
     }
     
-    // Default to update view
+    // UPDATE REQUEST VIEW
+    const simpleChanges = getChangedFields(originalData, updatedData);
+    const originalItems = originalData.items || [];
+    const newItems = updatedData?.items || [];
+    // Basic item diff (more complex diff can be added later if needed)
+    const itemChangeDetected = JSON.stringify(originalItems) !== JSON.stringify(newItems);
+
     return (
-         <div className="space-y-4 p-2 text-sm">
-            {Object.keys(selectedUpdateRequest.updatedData).map(key => {
-                const originalValue = (selectedUpdateRequest.originalData as any)[key];
-                const updatedValue = selectedUpdateRequest.updatedData[key];
-                
-                if (typeof originalValue !== 'object' && String(originalValue) !== String(updatedValue)) {
-                    return (
-                        <div key={key} className="p-2 border rounded">
-                            <p className="font-semibold capitalize">{key.replace(/([A-Z])/g, ' $1')}</p>
-                            <p className="text-red-500 bg-red-500/10 p-1 rounded-md line-through">Old: {String(originalValue ?? 'Not set')}</p>
-                            <p className="text-green-600 bg-green-500/10 p-1 rounded-md">New: {String(updatedValue ?? 'Not set')}</p>
+        <div className="space-y-4 text-sm">
+            <p className="text-xs text-muted-foreground text-center">Requested by {requestedByName} on {requestedAt ? format(requestedAt.toDate(), "MMM dd, yyyy 'at' HH:mm") : 'a moment ago'}</p>
+            
+            {simpleChanges.length === 0 && !itemChangeDetected && <p className="text-center text-muted-foreground p-4">No changes detected in main fields or items.</p>}
+
+            {simpleChanges.map(({ key, oldValue, newValue }) => (
+                <div key={key} className="p-3 border rounded-lg bg-background shadow-sm">
+                    <p className="font-semibold capitalize text-foreground mb-2">{key.replace(/([A-Z])/g, ' $1')}</p>
+                    <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] items-center gap-2">
+                        <div className="p-2 rounded-md bg-red-500/10 text-red-700 dark:text-red-300">
+                           <span className="font-medium text-xs block text-red-900 dark:text-red-200">FROM</span>
+                           <span className="line-through">{String(oldValue ?? 'Not set')}</span>
                         </div>
-                    );
-                }
-                return null;
-            })}
+                        <ArrowRight className="h-5 w-5 text-muted-foreground mx-auto hidden md:block" />
+                        <div className="p-2 rounded-md bg-green-500/10 text-green-700 dark:text-green-300">
+                           <span className="font-medium text-xs block text-green-900 dark:text-green-200">TO</span>
+                           {String(newValue ?? 'Not set')}
+                        </div>
+                    </div>
+                </div>
+            ))}
+            
+            {itemChangeDetected && (
+               <div className="p-3 border rounded-lg bg-background shadow-sm">
+                    <p className="font-semibold text-foreground mb-2">Items Changed</p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <p className="font-medium text-xs text-red-900 dark:text-red-200 mb-1">Original Items</p>
+                            <div className="p-2 rounded-md bg-red-500/10 text-red-700 dark:text-red-300 text-xs space-y-1">
+                                {originalItems.length > 0 ? originalItems.map((item, i) => <p key={`old-${i}`}>{item.quantity} x {item.productName} @ {formatCurrency(item.unitPrice)}</p>) : <p>No items.</p>}
+                            </div>
+                        </div>
+                        <div>
+                             <p className="font-medium text-xs text-green-900 dark:text-green-200 mb-1">Updated Items</p>
+                            <div className="p-2 rounded-md bg-green-500/10 text-green-700 dark:text-green-300 text-xs space-y-1">
+                                {newItems.length > 0 ? newItems.map((item, i) => <p key={`new-${i}`}>{item.quantity} x {item.productName} @ {formatCurrency(item.unitPrice)}</p>) : <p>No items.</p>}
+                            </div>
+                        </div>
+                    </div>
+               </div>
+            )}
         </div>
-    )
-  }
+    );
+  };
 
   return (
     <>
@@ -416,7 +471,7 @@ export default function NotificationsPage() {
                             </Button>
                         </div>
                         )}
-                         {userRole === 'admin' && (notification.type === 'update_request' || notification.type === 'delete_request') && (
+                         {userRole === 'admin' && (notification.type === 'update_request' || notification.type === 'delete_request') && !notification.title.startsWith('[') && (
                           <div className="mt-2">
                             <Button
                               size="sm"
@@ -452,15 +507,17 @@ export default function NotificationsPage() {
               <ScrollArea className="max-h-[60vh] p-1">
                  {renderReviewDialogContent()}
               </ScrollArea>
-              <DialogFooter>
-                  <Button variant="outline" onClick={() => handleReviewRequest('decline')} disabled={resolvingId === selectedUpdateRequest?.id}>
-                      <ThumbsDown className="mr-2 h-4 w-4" />Decline
-                  </Button>
-                  <Button onClick={() => handleReviewRequest('approve')} disabled={resolvingId === selectedUpdateRequest?.id}>
-                       {resolvingId === selectedUpdateRequest?.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <ThumbsUp className="mr-2 h-4 w-4" />}
-                      Approve
-                  </Button>
-              </DialogFooter>
+              {selectedUpdateRequest?.status === 'pending' && (
+                <DialogFooter>
+                    <Button variant="outline" onClick={() => handleReviewRequest('decline')} disabled={resolvingId === selectedUpdateRequest?.id}>
+                        <ThumbsDown className="mr-2 h-4 w-4" />Decline
+                    </Button>
+                    <Button onClick={() => handleReviewRequest('approve')} disabled={resolvingId === selectedUpdateRequest?.id}>
+                         {resolvingId === selectedUpdateRequest?.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <ThumbsUp className="mr-2 h-4 w-4" />}
+                        Approve
+                    </Button>
+                </DialogFooter>
+              )}
           </DialogContent>
       </Dialog>
     </>

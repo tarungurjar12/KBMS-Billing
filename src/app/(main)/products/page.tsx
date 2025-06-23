@@ -392,4 +392,3 @@ export default function ProductsPage() {
     </>
   );
 }
-
