@@ -626,14 +626,29 @@ export default function DailyLedgerPage() {
     if (currentUserRole === 'store_manager' && editingLedgerEntry) {
         try {
             const updatedData = { ...data }; // The proposed new data from the form
+            
+            // Sanitize the original data to ensure no `undefined` values are sent to Firestore.
+            const sanitizedOriginalData = {
+                ...editingLedgerEntry,
+                paymentAmount: editingLedgerEntry.paymentAmount ?? null,
+                updatedAt: editingLedgerEntry.updatedAt ?? null,
+                updatedByUid: editingLedgerEntry.updatedByUid ?? null,
+                updatedByName: editingLedgerEntry.updatedByName ?? null,
+                originalTransactionAmount: editingLedgerEntry.originalTransactionAmount ?? null,
+                amountPaidNow: editingLedgerEntry.amountPaidNow ?? null,
+                remainingAmount: editingLedgerEntry.remainingAmount ?? null,
+                associatedPaymentRecordId: editingLedgerEntry.associatedPaymentRecordId ?? null,
+                relatedInvoiceId: editingLedgerEntry.relatedInvoiceId ?? null,
+            };
+
             const requestRef = await addDoc(collection(db, 'updateRequests'), {
                 originalLedgerEntryId: editingLedgerEntry.id,
-                originalData: editingLedgerEntry, // Store the original state
+                originalData: sanitizedOriginalData, // Store the sanitized state
                 updatedData: updatedData,
                 requestedByUid: currentUser.uid,
                 requestedByName: currentUserName,
                 requestedAt: serverTimestamp(),
-                status: 'pending', // 'pending', 'approved', 'declined'
+                status: 'pending',
             });
 
             // Notify admins
@@ -1374,7 +1389,7 @@ export default function DailyLedgerPage() {
             </div>
           ) : (
             <>
-            {/* Desktop View: Table */}
+            {/* Desktop View */}
             <div className="hidden lg:block overflow-x-auto">
               <Table>
                 <TableHeader><TableRow>
@@ -1542,6 +1557,7 @@ export default function DailyLedgerPage() {
     </>
   );
 }
+
 
 
 
