@@ -33,6 +33,7 @@ import { Badge } from '@/components/ui/badge';
 import type { PaymentRecord, PAYMENT_METHODS as PAYMENT_METHODS_PAYMENT_PAGE, PAYMENT_STATUSES as PAYMENT_STATUSES_PAYMENT_PAGE } from './../payments/page';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
+import { cn } from "@/lib/utils";
 
 
 /**
@@ -400,6 +401,15 @@ export default function DailyLedgerPage() {
     setSelectedEntryForDetails(entry);
     setIsEntryDetailsDialogOpen(true);
   }, []);
+
+  const getPaymentStatusBadgeClass = (status: LedgerEntry['paymentStatus']) => {
+    switch(status) {
+        case 'paid': return 'bg-green-100 text-green-800 border-green-200 dark:bg-green-900/50 dark:text-green-200 dark:border-green-700';
+        case 'pending': return 'bg-yellow-100 text-yellow-800 border-yellow-200 dark:bg-yellow-900/50 dark:text-yellow-200 dark:border-yellow-700';
+        case 'partial': return 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900/50 dark:text-blue-200 dark:border-blue-700';
+        default: return 'bg-gray-100 text-gray-800 border-gray-200 dark:bg-gray-900/50 dark:text-gray-200 dark:border-gray-700';
+    }
+  };
 
 
   useEffect(() => {
@@ -1350,9 +1360,19 @@ export default function DailyLedgerPage() {
                          {entry.relatedInvoiceId && entry.entryPurpose === "Payment Record" && <span className="block text-muted-foreground text-[10px]">Inv: {allInvoices.find(i => i.id === entry.relatedInvoiceId)?.invoiceNumber || `Ref: ${entry.relatedInvoiceId.substring(0,6)}...`}</span>}
                       </TableCell>
                       <TableCell className="text-right font-semibold">{formatCurrency(entry.grandTotal)}</TableCell>
-                      <TableCell className="capitalize">
-                        {entry.paymentStatus ? entry.paymentStatus.charAt(0).toUpperCase() + entry.paymentStatus.slice(1) : "N/A"}
-                        {entry.paymentMethod ? ` (${entry.paymentMethod})` : ''}
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                            <Badge 
+                                variant={"outline"}
+                                className={cn(
+                                    "capitalize whitespace-nowrap border text-xs",
+                                    getPaymentStatusBadgeClass(entry.paymentStatus)
+                                )}
+                            >
+                                {entry.paymentStatus}
+                            </Badge>
+                            {entry.paymentMethod && <span className="text-xs text-muted-foreground hidden xl:inline">({entry.paymentMethod})</span>}
+                        </div>
                       </TableCell>
                       <TableCell className="text-xs">
                         <Button variant="link" size="sm" className="p-0 h-auto text-xs font-normal text-current hover:text-primary" onClick={() => handleUserFilterClick(entry.createdByName || 'Unknown User')}>
@@ -1409,17 +1429,26 @@ export default function DailyLedgerPage() {
                         <CardHeader className="flex flex-row items-start justify-between gap-2 p-4">
                             <div className="flex-1 space-y-1">
                                 <CardTitle className="text-base font-bold">{entry.entityName}</CardTitle>
-                                <CardDescription className="text-xs">
-                                    <Badge 
+                                <CardDescription className="text-xs flex flex-wrap items-center gap-2">
+                                     <Badge 
                                         variant={entry.type === 'sale' ? 'default' : 'secondary'} 
-                                        className={`mr-2 ${
+                                        className={cn(
+                                            "whitespace-nowrap",
                                             entry.entryPurpose === "Payment Record" ? (entry.type === 'sale' ? "bg-teal-100 text-teal-700 dark:bg-teal-700/80 dark:text-teal-100" : "bg-purple-100 text-purple-700 dark:bg-purple-700/80 dark:text-purple-100") :
                                             (entry.type === 'sale' ? 'bg-green-100 text-green-700 dark:bg-green-700/80 dark:text-green-100' : 'bg-blue-100 text-blue-700 dark:bg-blue-700/80 dark:text-blue-100')
-                                        } whitespace-nowrap`}
+                                        )}
                                     >
-                                        {entry.entryPurpose === "Payment Record" ? (entry.type === 'sale' ? 'Payment Received' : 'Payment Sent') : entry.type.charAt(0).toUpperCase() + entry.type.slice(1)}
+                                        {entry.entryPurpose === "Payment Record" ? (entry.type === 'sale' ? 'Pymt Rcvd' : 'Pymt Sent') : (entry.type.charAt(0).toUpperCase() + entry.type.slice(1))}
                                     </Badge>
-                                    <span className="capitalize">{entry.paymentStatus} {entry.paymentMethod ? `(${entry.paymentMethod})` : ''}</span>
+                                    <Badge 
+                                        variant={"outline"}
+                                        className={cn(
+                                            "capitalize whitespace-nowrap border",
+                                            getPaymentStatusBadgeClass(entry.paymentStatus)
+                                        )}
+                                    >
+                                        {entry.paymentStatus}
+                                    </Badge>
                                 </CardDescription>
                             </div>
                             <DropdownMenu>
@@ -1432,7 +1461,7 @@ export default function DailyLedgerPage() {
                                     <DropdownMenuItem onClick={() => openEntryDetailsDialog(entry)}><Eye className="mr-2 h-4 w-4" /> View Details</DropdownMenuItem>
                                     {currentUserRole === 'admin' && <DropdownMenuItem onClick={() => handleEditLedgerEntry(entry)}><Edit className="mr-2 h-4 w-4" /> Edit Entry</DropdownMenuItem>}
                                     {currentUserRole === 'admin' && <DropdownMenuSeparator/>}
-                                    {currentUserRole === 'admin' && <DropdownMenuItem onClick={() => openDeleteConfirmation(entry)} className="text-destructive focus:text-destructive-foreground"><Trash2 className="mr-2 h-4 w-4" /> Delete Entry</DropdownMenuItem>}
+                                    {currentUserRole === 'admin' && <DropdownMenuItem onClick={() => openDeleteConfirmation(entry)} className="text-destructive focus:text-destructive focus:bg-destructive/10"><Trash2 className="mr-2 h-4 w-4" /> Delete Entry</DropdownMenuItem>}
                                 </DropdownMenuContent>
                             </DropdownMenu>
                         </CardHeader>
@@ -1444,9 +1473,10 @@ export default function DailyLedgerPage() {
                             <p className="text-xs text-muted-foreground truncate">
                                 <strong className="font-medium text-foreground">Details:</strong> {entry.entryPurpose === "Ledger Record" ? (entry.items.map(i => i.productName).join(', ') || 'No items') : `Payment via ${entry.paymentMethod || 'N/A'}`}
                             </p>
-                            <p className="text-xs text-muted-foreground mt-1">
-                                <strong className="font-medium text-foreground">User:</strong> {entry.createdByName}
-                            </p>
+                            <div className="flex justify-between text-xs text-muted-foreground mt-1">
+                                <span><strong className="font-medium text-foreground">User:</strong> {entry.createdByName}</span>
+                                {entry.paymentMethod && <span className="text-right">{entry.paymentMethod}</span>}
+                            </div>
                         </CardContent>
                     </Card>
                 ))}
@@ -1458,6 +1488,7 @@ export default function DailyLedgerPage() {
     </>
   );
 }
+
 
 
 
