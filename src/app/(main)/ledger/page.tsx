@@ -274,7 +274,7 @@ export default function DailyLedgerPage() {
             
             const [salesSnapshot, purchasesSnapshot] = await Promise.all([
                 getDocs(salesQuery),
-                getDocs(purchasesQuery)
+                getDocs(purchasesSnapshot)
             ]);
             
             const salesEntries = salesSnapshot.docs.map(d => ({ id: d.id, ...d.data() } as LedgerEntry));
@@ -649,7 +649,15 @@ export default function DailyLedgerPage() {
     // Manager Edit Request Logic
     if (currentUserRole === 'store_manager' && editingLedgerEntry) {
         try {
-            const updatedData = { ...data };
+            const sanitizedUpdatedData = {
+                ...data,
+                paymentAmount: data.paymentAmount ?? null,
+                amountPaidNow: data.amountPaidNow ?? null,
+                items: data.items ?? [],
+                notes: data.notes ?? null,
+                relatedInvoiceId: data.relatedInvoiceId ?? null,
+                paymentMethod: data.paymentMethod ?? null,
+            };
             
             const sanitizedOriginalData: LedgerEntry = {
                 ...editingLedgerEntry,
@@ -668,7 +676,7 @@ export default function DailyLedgerPage() {
                 requestType: 'update',
                 originalLedgerEntryId: editingLedgerEntry.id,
                 originalData: sanitizedOriginalData, 
-                updatedData: updatedData,
+                updatedData: sanitizedUpdatedData,
                 requestedByUid: currentUser.uid,
                 requestedByName: currentUserName,
                 requestedAt: serverTimestamp(),
@@ -963,10 +971,24 @@ export default function DailyLedgerPage() {
     }
 
     try {
+      const sanitizedOriginalData = {
+          ...ledgerEntryToDelete,
+          paymentAmount: ledgerEntryToDelete.paymentAmount ?? null,
+          updatedAt: ledgerEntryToDelete.updatedAt ?? null,
+          updatedByUid: ledgerEntryToDelete.updatedByUid ?? null,
+          updatedByName: ledgerEntryToDelete.updatedByName ?? null,
+          originalTransactionAmount: ledgerEntryToDelete.originalTransactionAmount ?? null,
+          amountPaidNow: ledgerEntryToDelete.amountPaidNow ?? null,
+          remainingAmount: ledgerEntryToDelete.remainingAmount ?? null,
+          associatedPaymentRecordId: ledgerEntryToDelete.associatedPaymentRecordId ?? null,
+          relatedInvoiceId: ledgerEntryToDelete.relatedInvoiceId ?? null,
+          notes: ledgerEntryToDelete.notes ?? null,
+      };
+
       const requestRef = await addDoc(collection(db, 'updateRequests'), {
         requestType: 'delete',
         originalLedgerEntryId: ledgerEntryToDelete.id,
-        originalData: ledgerEntryToDelete,
+        originalData: sanitizedOriginalData,
         requestedByUid: currentUser.uid,
         requestedByName: currentUser.displayName || currentUser.email,
         requestedAt: serverTimestamp(),
