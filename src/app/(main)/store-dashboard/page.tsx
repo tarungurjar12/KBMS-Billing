@@ -215,7 +215,7 @@ export default function StoreManagerDashboardPage() {
   return (
     <>
       <PageHeader title="Store Manager Dashboard" description="Your daily operations hub for sales, customers, and inventory management." icon={LayoutDashboard} />
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
         {metrics.map((metric) => (
           <Card key={metric.title} className="shadow-lg rounded-xl hover:shadow-primary/20 transition-shadow">
             <Link href={metric.link || "#"} className={metric.link ? "" : "pointer-events-none"}>
@@ -287,4 +287,3 @@ export default function StoreManagerDashboardPage() {
     </>
   );
 }
-

@@ -335,17 +335,17 @@ export default function MyProfilePage() {
                 <CardContent className="space-y-4">
                     <div className="space-y-1.5">
                         <Label htmlFor="email" className="flex items-center text-sm"><Mail className="mr-2 h-4 w-4 text-muted-foreground"/>Email (Login ID)</Label>
-                        <Input id="email" value={userProfile.email} disabled readOnly className="bg-muted/50 text-sm"/>
+                        <Input id="email" value={userProfile.email} disabled readOnly className="bg-muted/50"/>
                         {userProfile.role && <p className="text-xs text-muted-foreground pt-1">Role: <span className="font-semibold capitalize">{userProfile.role.replace('_', ' ')}</span></p>}
                         {userProfile.companyId && <p className="text-xs text-muted-foreground pt-1">Company ID: <span className="font-semibold">{userProfile.companyId}</span></p>}
                     </div>
                     <div className="space-y-1.5">
                         <Label htmlFor="name" className="flex items-center text-sm"><UserCircle className="mr-2 h-4 w-4 text-muted-foreground"/>Display Name</Label>
-                        <Input id="name" placeholder="Your display name" value={name} onChange={(e) => setName(e.target.value)} disabled={isUpdating} autoComplete="name" className="text-sm"/>
+                        <Input id="name" placeholder="Your display name" value={name} onChange={(e) => setName(e.target.value)} disabled={isUpdating} autoComplete="name"/>
                     </div>
                     <div className="space-y-1.5">
                         <Label htmlFor="contactNumber" className="flex items-center text-sm"><Phone className="mr-2 h-4 w-4 text-muted-foreground"/>Personal Contact Number</Label>
-                        <Input id="contactNumber" placeholder="Your contact number" value={contactNumber} onChange={(e) => setContactNumber(e.target.value)} disabled={isUpdating} autoComplete="tel" className="text-sm"/>
+                        <Input id="contactNumber" placeholder="Your contact number" value={contactNumber} onChange={(e) => setContactNumber(e.target.value)} disabled={isUpdating} autoComplete="tel"/>
                     </div>
                 </CardContent>
             </Card>
@@ -367,7 +367,7 @@ export default function MyProfilePage() {
                                 placeholder="Your Company Name" 
                                 value={isEffectivelyAdmin ? companyName : (companyDetailsForDisplay.companyName || "")} 
                                 onChange={(e) => isEffectivelyAdmin && setCompanyName(e.target.value)} 
-                                disabled={isUpdating || !isEffectivelyAdmin} className="text-sm"
+                                disabled={isUpdating || !isEffectivelyAdmin}
                             />
                         </div>
                         <div className="space-y-1.5">
@@ -377,7 +377,7 @@ export default function MyProfilePage() {
                                 placeholder="Company Phone" 
                                 value={isEffectivelyAdmin ? companyContact : (companyDetailsForDisplay.companyContact || "")} 
                                 onChange={(e) => isEffectivelyAdmin && setCompanyContact(e.target.value)} 
-                                disabled={isUpdating || !isEffectivelyAdmin} className="text-sm"
+                                disabled={isUpdating || !isEffectivelyAdmin}
                             />
                         </div>
                     </div>
@@ -388,7 +388,7 @@ export default function MyProfilePage() {
                             placeholder="Full Company Address" 
                             value={isEffectivelyAdmin ? companyAddress : (companyDetailsForDisplay.companyAddress || "")} 
                             onChange={(e) => isEffectivelyAdmin && setCompanyAddress(e.target.value)} 
-                            disabled={isUpdating || !isEffectivelyAdmin} rows={2} className="text-sm"
+                            disabled={isUpdating || !isEffectivelyAdmin} rows={2}
                         />
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -399,7 +399,7 @@ export default function MyProfilePage() {
                                 placeholder="Company GSTIN" 
                                 value={isEffectivelyAdmin ? companyGstin : (companyDetailsForDisplay.companyGstin || "")} 
                                 onChange={(e) => isEffectivelyAdmin && setCompanyGstin(e.target.value)} 
-                                disabled={isUpdating || !isEffectivelyAdmin} className="text-sm"
+                                disabled={isUpdating || !isEffectivelyAdmin}
                             />
                         </div>
                         <div className="space-y-1.5">
@@ -409,7 +409,7 @@ export default function MyProfilePage() {
                                 placeholder="https://example.com/logo.png" 
                                 value={isEffectivelyAdmin ? companyLogoUrl : (companyDetailsForDisplay.companyLogoUrl || "")} 
                                 onChange={(e) => isEffectivelyAdmin && setCompanyLogoUrl(e.target.value)} 
-                                disabled={isUpdating || !isEffectivelyAdmin} className="text-sm"
+                                disabled={isUpdating || !isEffectivelyAdmin}
                             />
                         </div>
                     </div>
@@ -429,15 +429,15 @@ export default function MyProfilePage() {
                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div className="space-y-1.5">
                         <Label htmlFor="currentPassword">Current Password</Label>
-                        <Input id="currentPassword" type="password" placeholder="Required to change" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} disabled={isUpdating} autoComplete="current-password" className="text-sm"/>
+                        <Input id="currentPassword" type="password" placeholder="Required to change" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} disabled={isUpdating} autoComplete="current-password"/>
                     </div>
                     <div className="space-y-1.5">
                         <Label htmlFor="newPassword">New Password</Label>
-                        <Input id="newPassword" type="password" placeholder="Min. 6 characters" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} disabled={isUpdating} autoComplete="new-password" className="text-sm"/>
+                        <Input id="newPassword" type="password" placeholder="Min. 6 characters" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} disabled={isUpdating} autoComplete="new-password"/>
                     </div>
                     <div className="space-y-1.5">
                         <Label htmlFor="confirmNewPassword">Confirm New Password</Label>
-                        <Input id="confirmNewPassword" type="password" placeholder="Re-enter new password" value={confirmNewPassword} onChange={(e) => setConfirmNewPassword(e.target.value)} disabled={isUpdating} autoComplete="new-password" className="text-sm"/>
+                        <Input id="confirmNewPassword" type="password" placeholder="Re-enter new password" value={confirmNewPassword} onChange={(e) => setConfirmNewPassword(e.target.value)} disabled={isUpdating} autoComplete="new-password"/>
                     </div>
                 </div>
             </CardContent>
@@ -452,4 +452,3 @@ export default function MyProfilePage() {
     </>
   );
 }
-    

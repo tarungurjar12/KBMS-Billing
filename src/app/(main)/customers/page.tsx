@@ -315,9 +315,9 @@ export default function CustomersPage() {
                     <Card>
                         <CardHeader><CardTitle className="text-lg">Financial Summary</CardTitle></CardHeader>
                         <CardContent className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
-                            <div><p className="text-muted-foreground">Total Paid (from Payments):</p><p className="font-semibold text-green-600">{formatCurrency(selectedCustomerForDetails.totalAmountPaid)}</p></div>
-                            <div><p className="text-muted-foreground">Total Balance Due (from Ledger):</p><p className="font-semibold text-red-600">{formatCurrency(selectedCustomerForDetails.totalBalanceDue)}</p></div>
-                            <Button variant="link" size="sm" className="p-0 h-auto justify-start text-left" onClick={() => handleGoToLedgerForPending(selectedCustomerForDetails.name)}>
+                            <div className="sm:col-span-1"><p className="text-muted-foreground">Total Paid (from Payments):</p><p className="font-semibold text-green-600">{formatCurrency(selectedCustomerForDetails.totalAmountPaid)}</p></div>
+                            <div className="sm:col-span-1"><p className="text-muted-foreground">Total Balance Due (from Ledger):</p><p className="font-semibold text-red-600">{formatCurrency(selectedCustomerForDetails.totalBalanceDue)}</p></div>
+                            <Button variant="link" size="sm" className="p-0 h-auto justify-start text-left sm:col-span-1" onClick={() => handleGoToLedgerForPending(selectedCustomerForDetails.name)}>
                                 <div><p className="text-muted-foreground">Pending/Partial Ledger Entries:</p><p className="font-semibold text-blue-600">{selectedCustomerForDetails.pendingLedgerEntriesCount} (View in Ledger)</p></div>
                             </Button>
                         </CardContent>
@@ -327,8 +327,8 @@ export default function CustomersPage() {
                         <CardHeader><CardTitle className="text-lg">Payment History ({selectedCustomerForDetails.payments.length})</CardTitle></CardHeader>
                         <CardContent>
                             {selectedCustomerForDetails.payments.length > 0 ? (
-                                <Table className="text-xs"><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Amount</TableHead><TableHead>Method</TableHead><TableHead>Status</TableHead><TableHead>Ref ID</TableHead></TableRow></TableHeader>
-                                <TableBody>{selectedCustomerForDetails.payments.slice(0, 5).map(p => (<TableRow key={p.id}><TableCell>{p.date}</TableCell><TableCell>{p.displayAmountPaid}</TableCell><TableCell>{p.method || 'N/A'}</TableCell><TableCell><Badge variant={p.status === "Completed" || p.status === "Received" ? "default" : "secondary"}>{p.status}</Badge></TableCell><TableCell>{p.relatedInvoiceId || p.ledgerEntryId || 'N/A'}</TableCell></TableRow>))}
+                                <Table className="text-xs"><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Amount</TableHead><TableHead className="hidden sm:table-cell">Method</TableHead><TableHead className="hidden sm:table-cell">Status</TableHead><TableHead>Ref ID</TableHead></TableRow></TableHeader>
+                                <TableBody>{selectedCustomerForDetails.payments.slice(0, 5).map(p => (<TableRow key={p.id}><TableCell>{p.date}</TableCell><TableCell>{p.displayAmountPaid}</TableCell><TableCell className="hidden sm:table-cell">{p.method || 'N/A'}</TableCell><TableCell className="hidden sm:table-cell"><Badge variant={p.status === "Completed" || p.status === "Received" ? "default" : "secondary"}>{p.status}</Badge></TableCell><TableCell>{p.relatedInvoiceId || p.ledgerEntryId || 'N/A'}</TableCell></TableRow>))}
                                 </TableBody></Table>
                             ) : (<p className="text-sm text-muted-foreground">No payment records found for this customer.</p>)}
                             {selectedCustomerForDetails.payments.length > 5 && <p className="text-xs text-muted-foreground mt-2 text-center">Showing last 5 payments. Full history in Payments section.</p>}

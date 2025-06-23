@@ -524,5 +524,3 @@ export default function BillingPage() {
     </>
   );
 }
-
-    

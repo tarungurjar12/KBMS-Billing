@@ -267,4 +267,3 @@ export default function MainAppLayout({
 function AppContextProvider({ children, value }: { children: React.ReactNode, value: AppContextType }) {
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }
-    
