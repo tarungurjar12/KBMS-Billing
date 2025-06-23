@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/page-header";
 import { CreditCard, PlusCircle, MoreHorizontal, Edit, Trash2, DollarSign, FileWarning, TrendingUp, AlertCircle, Activity, Search, Filter, XCircle } from "lucide-react";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -25,6 +25,7 @@ import { collection, getDocs, doc, updateDoc, deleteDoc, query, orderBy, serverT
 import { db } from '@/lib/firebase/firebaseConfig';
 import { format, parseISO } from 'date-fns';
 import type { Invoice } from './../billing/page';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 /**
  * @fileOverview Page for Admin to manage Payment Records in Firestore.
@@ -475,7 +476,7 @@ export default function PaymentsPage() {
       />
       
       <div className="space-y-4 mb-6">
-        <div className="grid gap-4 md:grid-cols-3 sm:grid-cols-2 grid-cols-1">
+        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3">
           {paymentMetrics.slice(0, 3).map((metric) => (
             <Card key={metric.title} className="shadow-md rounded-lg">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -488,7 +489,7 @@ export default function PaymentsPage() {
             </Card>
           ))}
         </div>
-        <div className="grid gap-4 md:grid-cols-3 sm:grid-cols-2 grid-cols-1">
+        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3">
           {paymentMetrics.slice(3, 6).map((metric) => (
             <Card key={metric.title} className="shadow-md rounded-lg">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -661,11 +662,20 @@ export default function PaymentsPage() {
                                 <DropdownMenu>
                                   <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /><span className="sr-only">Actions for payment</span></Button></DropdownMenuTrigger>
                                   <DropdownMenuContent align="end">
-                                    <DropdownMenuItem onClick={() => openEditDialog(payment)}><Edit className="mr-2 h-4 w-4" /> Edit Record</DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => openEditDialog(payment)} disabled={!!payment.ledgerEntryId}><Edit className="mr-2 h-4 w-4" /> Edit Record</DropdownMenuItem>
                                     <DropdownMenuItem onClick={() => handleDeletePayment(payment.id, `${payment.relatedEntityName} - ${payment.displayAmountPaid}`)} className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground" disabled={!!payment.ledgerEntryId}>
                                       <Trash2 className="mr-2 h-4 w-4" /> Delete Record
                                     </DropdownMenuItem>
-                                    {!!payment.ledgerEntryId && <DropdownMenuItem disabled><span className="text-xs text-muted-foreground">Linked to ledger</span></DropdownMenuItem>}
+                                    {!!payment.ledgerEntryId && 
+                                    <TooltipProvider>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                           <DropdownMenuSeparator />
+                                        </TooltipTrigger>
+                                        <TooltipContent><p>Manage from Ledger page</p></TooltipContent>
+                                      </Tooltip>
+                                    </TooltipProvider>
+                                    }
                                   </DropdownMenuContent>
                                 </DropdownMenu>
                               </TableCell>
@@ -689,9 +699,18 @@ export default function PaymentsPage() {
                                 <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0"><MoreHorizontal className="h-4 w-4" /><span className="sr-only">Actions</span></Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
-                                <DropdownMenuItem onClick={() => openEditDialog(payment)}><Edit className="mr-2 h-4 w-4" /> Edit</DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => openEditDialog(payment)} disabled={!!payment.ledgerEntryId}><Edit className="mr-2 h-4 w-4" /> Edit</DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => handleDeletePayment(payment.id, `${payment.relatedEntityName} - ${payment.displayAmountPaid}`)} className="text-destructive focus:text-destructive focus:bg-destructive/10" disabled={!!payment.ledgerEntryId}><Trash2 className="mr-2 h-4 w-4" /> Delete</DropdownMenuItem>
-                                 {!!payment.ledgerEntryId && <DropdownMenuItem disabled><span className="text-xs text-muted-foreground">Linked to ledger</span></DropdownMenuItem>}
+                                 {!!payment.ledgerEntryId && 
+                                   <TooltipProvider>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                           <DropdownMenuSeparator />
+                                        </TooltipTrigger>
+                                        <TooltipContent><p>Manage from Ledger page</p></TooltipContent>
+                                      </Tooltip>
+                                    </TooltipProvider>
+                                }
                               </DropdownMenuContent>
                             </DropdownMenu>
                           </CardHeader>
@@ -771,11 +790,20 @@ export default function PaymentsPage() {
                                 <DropdownMenu>
                                   <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /><span className="sr-only">Actions for payment</span></Button></DropdownMenuTrigger>
                                   <DropdownMenuContent align="end">
-                                    <DropdownMenuItem onClick={() => openEditDialog(payment)}><Edit className="mr-2 h-4 w-4" /> Edit Record</DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => openEditDialog(payment)} disabled={!!payment.ledgerEntryId}><Edit className="mr-2 h-4 w-4" /> Edit Record</DropdownMenuItem>
                                     <DropdownMenuItem onClick={() => handleDeletePayment(payment.id, `${payment.relatedEntityName} - ${payment.displayAmountPaid}`)} className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground" disabled={!!payment.ledgerEntryId}>
                                       <Trash2 className="mr-2 h-4 w-4" /> Delete Record
                                     </DropdownMenuItem>
-                                    {!!payment.ledgerEntryId && <DropdownMenuItem disabled><span className="text-xs text-muted-foreground">Linked to ledger</span></DropdownMenuItem>}
+                                    {!!payment.ledgerEntryId && 
+                                      <TooltipProvider>
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <DropdownMenuSeparator />
+                                          </TooltipTrigger>
+                                          <TooltipContent><p>Manage from Ledger page</p></TooltipContent>
+                                        </Tooltip>
+                                      </TooltipProvider>
+                                    }
                                   </DropdownMenuContent>
                                 </DropdownMenu>
                               </TableCell>
@@ -799,9 +827,18 @@ export default function PaymentsPage() {
                                 <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0"><MoreHorizontal className="h-4 w-4" /><span className="sr-only">Actions</span></Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
-                                <DropdownMenuItem onClick={() => openEditDialog(payment)}><Edit className="mr-2 h-4 w-4" /> Edit</DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => openEditDialog(payment)} disabled={!!payment.ledgerEntryId}><Edit className="mr-2 h-4 w-4" /> Edit</DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => handleDeletePayment(payment.id, `${payment.relatedEntityName} - ${payment.displayAmountPaid}`)} className="text-destructive focus:text-destructive focus:bg-destructive/10" disabled={!!payment.ledgerEntryId}><Trash2 className="mr-2 h-4 w-4" /> Delete</DropdownMenuItem>
-                                 {!!payment.ledgerEntryId && <DropdownMenuItem disabled><span className="text-xs text-muted-foreground">Linked to ledger</span></DropdownMenuItem>}
+                                 {!!payment.ledgerEntryId && 
+                                   <TooltipProvider>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <DropdownMenuSeparator />
+                                        </TooltipTrigger>
+                                        <TooltipContent><p>Manage from Ledger page</p></TooltipContent>
+                                      </Tooltip>
+                                    </TooltipProvider>
+                                 }
                               </DropdownMenuContent>
                             </DropdownMenu>
                           </CardHeader>

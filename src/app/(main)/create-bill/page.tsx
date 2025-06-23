@@ -227,8 +227,11 @@ export default function CreateBillPage() {
     try {
       await runTransaction(db, async (transaction) => {
         let existingInvoiceNumber: string | undefined;
+        let newInvoiceRef: any = doc(collection(db, "invoices")); // Prepare new invoice ref
+
         if (editInvoiceId && billCreationMode === 'standard') {
             const invoiceToEditRef = doc(db, "invoices", editInvoiceId);
+            newInvoiceRef = invoiceToEditRef; // Use existing ref if editing
             const invoiceToEditSnap = await transaction.get(invoiceToEditRef);
             if (invoiceToEditSnap.exists()) existingInvoiceNumber = invoiceToEditSnap.data().invoiceNumber;
             else throw new Error(`Invoice with ID ${editInvoiceId} not found.`);
@@ -264,6 +267,18 @@ export default function CreateBillPage() {
         } else { // from_pending_ledger
             const selectedLedgerItems = pendingLedgerItems.filter(i => i.isSelected);
             consolidatedLedgerEntryIds = selectedLedgerItems.map(li => li.id);
+            
+            // Critical Fix: Update the original ledger entries
+            for (const ledgerId of consolidatedLedgerEntryIds) {
+                const ledgerRef = doc(db, "ledgerEntries", ledgerId);
+                transaction.update(ledgerRef, {
+                    paymentStatus: 'paid',
+                    remainingAmount: 0,
+                    notes: `Consolidated into Invoice.`,
+                    relatedInvoiceId: newInvoiceRef.id, // Link back to the new invoice
+                    updatedAt: serverTimestamp()
+                });
+            }
 
             invoiceItemsForSave = selectedLedgerItems.map(li => {
                 const formattedDate = format(parseISO(li.date), "dd/MM/yy");
@@ -275,7 +290,7 @@ export default function CreateBillPage() {
                     itemNamesSummaryForDisplay = itemNamesArray.join(', ');
                 }
                 const fullItemDetails = li.items.map(item => `${item.productName} (x${item.quantity})`).join(', ');
-                const descriptionForInvoice = `Date: ${formattedDate}\nItems: ${itemNamesSummaryForDisplay}\nFull Details: ${fullItemDetails}`;
+                const descriptionForInvoice = `Consolidated Ledger Entry from ${formattedDate}. Items: ${itemNamesSummaryForDisplay}.`;
                 
                 return {
                     productId: `PENDING_LEDGER_REF:${li.id}`, 
@@ -299,9 +314,9 @@ export default function CreateBillPage() {
         }
         
         if (editInvoiceId && billCreationMode === 'standard') {
-            transaction.update(doc(db, "invoices", editInvoiceId), {...billData, updatedAt: serverTimestamp()});
+            transaction.update(newInvoiceRef, {...billData, updatedAt: serverTimestamp()});
         } else {
-            transaction.set(doc(collection(db, "invoices")), {...billData, createdAt: serverTimestamp(), updatedAt: serverTimestamp()});
+            transaction.set(newInvoiceRef, {...billData, createdAt: serverTimestamp(), updatedAt: serverTimestamp()});
         }
       });
 
