@@ -274,7 +274,7 @@ export default function DailyLedgerPage() {
             
             const [salesSnapshot, purchasesSnapshot] = await Promise.all([
                 getDocs(salesQuery),
-                getDocs(purchasesSnapshot)
+                getDocs(purchasesQuery)
             ]);
             
             const salesEntries = salesSnapshot.docs.map(d => ({ id: d.id, ...d.data() } as LedgerEntry));
@@ -659,17 +659,18 @@ export default function DailyLedgerPage() {
                 paymentMethod: data.paymentMethod ?? null,
             };
             
-            const sanitizedOriginalData: LedgerEntry = {
+            const sanitizedOriginalData: Partial<LedgerEntry> = {
                 ...editingLedgerEntry,
                 paymentAmount: editingLedgerEntry.paymentAmount ?? null,
+                amountPaidNow: editingLedgerEntry.amountPaidNow ?? null,
                 updatedAt: editingLedgerEntry.updatedAt ?? null,
                 updatedByUid: editingLedgerEntry.updatedByUid ?? null,
                 updatedByName: editingLedgerEntry.updatedByName ?? null,
                 originalTransactionAmount: editingLedgerEntry.originalTransactionAmount ?? null,
-                amountPaidNow: editingLedgerEntry.amountPaidNow ?? null,
                 remainingAmount: editingLedgerEntry.remainingAmount ?? null,
                 associatedPaymentRecordId: editingLedgerEntry.associatedPaymentRecordId ?? null,
                 relatedInvoiceId: editingLedgerEntry.relatedInvoiceId ?? null,
+                notes: editingLedgerEntry.notes ?? null,
             };
 
             const requestRef = await addDoc(collection(db, 'updateRequests'), {
@@ -842,7 +843,7 @@ export default function DailyLedgerPage() {
             relatedEntityName: data.entityName, relatedEntityId: data.entityId || `unknown-${data.entityType}-${Date.now()}`,
             relatedInvoiceId: data.relatedInvoiceId || null, date: format(parseISO(data.date), "MMM dd, yyyy"), isoDate: data.date, 
             amountPaid: amountPaidForLedgerSave, originalInvoiceAmount: grandTotalForSave, remainingBalanceOnInvoice: remainingAmountForLedgerSave, 
-            method: finalLedgerDataToCommit.paymentMethod as any,
+            method: data.paymentMethod as any,
             transactionId: null, 
             status: data.paymentStatus === 'paid' ? (data.type === 'sale' ? 'Received' : 'Sent') : 'Partial',
             notes: `Payment from Ledger Entry. ${data.notes || ''}`.trim(), ledgerEntryId: ledgerDocRef.id, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
@@ -974,11 +975,11 @@ export default function DailyLedgerPage() {
       const sanitizedOriginalData = {
           ...ledgerEntryToDelete,
           paymentAmount: ledgerEntryToDelete.paymentAmount ?? null,
+          amountPaidNow: ledgerEntryToDelete.amountPaidNow ?? null,
           updatedAt: ledgerEntryToDelete.updatedAt ?? null,
           updatedByUid: ledgerEntryToDelete.updatedByUid ?? null,
           updatedByName: ledgerEntryToDelete.updatedByName ?? null,
           originalTransactionAmount: ledgerEntryToDelete.originalTransactionAmount ?? null,
-          amountPaidNow: ledgerEntryToDelete.amountPaidNow ?? null,
           remainingAmount: ledgerEntryToDelete.remainingAmount ?? null,
           associatedPaymentRecordId: ledgerEntryToDelete.associatedPaymentRecordId ?? null,
           relatedInvoiceId: ledgerEntryToDelete.relatedInvoiceId ?? null,
@@ -1470,7 +1471,7 @@ export default function DailyLedgerPage() {
         </CardHeader>
         <CardContent>
           <Tabs value={activeLedgerTab} onValueChange={(value) => setActiveLedgerTab(value as any)} className="w-full mb-4">
-            <TabsList className="inline-flex h-auto items-center justify-center rounded-md bg-muted p-1 text-muted-foreground flex-wrap">
+            <TabsList className="inline-flex h-auto items-center justify-center rounded-md bg-muted p-1 text-muted-foreground flex-wrap sm:flex-nowrap">
                 <TabsTrigger value="all" className="inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium">All Entries</TabsTrigger>
                 <TabsTrigger value="customer" className="inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium">Customer</TabsTrigger>
                 <TabsTrigger value="seller" className="inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium">Seller</TabsTrigger>
