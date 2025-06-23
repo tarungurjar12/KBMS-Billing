@@ -924,57 +924,77 @@ export default function DailyLedgerPage() {
   const confirmDeleteLedgerEntry = async () => {
     if (!ledgerEntryToDelete || currentUserRole !== 'admin') return;
     const currentUser = auth.currentUser;
-     if (!currentUser) { toast({ title: "Authentication Error", description: "You must be logged in.", variant: "destructive" }); return; }
+    if (!currentUser) { toast({ title: "Authentication Error", description: "You must be logged in.", variant: "destructive" }); return; }
 
     try {
         await runTransaction(db, async (transaction) => {
             const ledgerDocRef = doc(db, "ledgerEntries", ledgerEntryToDelete.id);
+            
+            // --- READ PHASE ---
             const ledgerSnap = await transaction.get(ledgerDocRef);
             if (!ledgerSnap.exists()) throw new Error("Ledger entry not found for deletion.");
             const entryData = ledgerSnap.data() as LedgerEntry;
 
-            if (entryData.entryPurpose === "Ledger Record") {
-                const productIdsInvolved = new Set<string>();
-                entryData.items.forEach(item => productIdsInvolved.add(item.productId));
-                const productSnapshots = new Map<string, DocumentSnapshot<DocumentData>>();
-                for (const productId of productIdsInvolved) {
-                    const productRefFromDb = doc(db, "products", productId); 
-                    const productSnap = await transaction.get(productRefFromDb);
-                    if (!productSnap.exists()) throw new Error(`Product from entry not found (ID: ${productId}).`);
-                    productSnapshots.set(productId, productSnap);
-                }
-                for (const item of entryData.items) {
-                    const productSnap = productSnapshots.get(item.productId)!;
-                    if (!productSnap.ref || !productSnap.ref.firestore) throw new Error(`Invalid product reference for ${item.productName}`);
-                    const currentDbStock = productSnap.data()!.stock as number;
-                    const stockChange = entryData.type === 'sale' ? item.quantity : -item.quantity; 
-                    const revertedStock = currentDbStock + stockChange;
-                    transaction.update(productSnap.ref, { stock: revertedStock, updatedAt: serverTimestamp() });
-                    const stockMovementLogRef = doc(collection(db, "stockMovements"));
-                    transaction.set(stockMovementLogRef, {
-                        productId: item.productId, productName: item.productName, sku: productSnap.data()!.sku,
-                        previousStock: currentDbStock, newStock: revertedStock,
-                        adjustmentType: 'revert_ledger_delete', adjustmentValue: stockChange,
-                        notes: `Stock reverted due to deletion of ledger entry ${ledgerEntryToDelete.id}`,
-                        timestamp: serverTimestamp(), adjustedByUid: currentUser.uid, adjustedByEmail: currentUser.email || "N/A",
-                        ledgerEntryId: ledgerEntryToDelete.id,
-                    });
+            const productRefs = entryData.entryPurpose === "Ledger Record"
+                ? entryData.items.map(item => doc(db, "products", item.productId))
+                : [];
+
+            const productSnaps = await Promise.all(
+                productRefs.map(ref => transaction.get(ref))
+            );
+
+            for (const snap of productSnaps) {
+                if (!snap.exists()) {
+                    throw new Error(`Product with ID ${snap.id} not found during deletion transaction.`);
                 }
             }
-
+            
+            let paymentSnap: DocumentSnapshot<DocumentData> | null = null;
             if (entryData.associatedPaymentRecordId) {
                 const paymentRef = doc(db, "payments", entryData.associatedPaymentRecordId);
-                const paymentSnap = await transaction.get(paymentRef);
-                if (paymentSnap.exists()) {
-                    transaction.delete(paymentRef);
-                } else {
-                   console.warn(`Tried to delete non-existent associated payment record ID: ${entryData.associatedPaymentRecordId}`);
-                }
+                paymentSnap = await transaction.get(paymentRef);
             }
+            // --- END READ PHASE ---
+
+
+            // --- WRITE PHASE ---
+            if (entryData.entryPurpose === "Ledger Record") {
+                productSnaps.forEach((productSnap, index) => {
+                    const item = entryData.items[index];
+                    const currentDbStock = productSnap.data()!.stock as number;
+                    const stockChange = entryData.type === 'sale' ? item.quantity : -item.quantity;
+                    const revertedStock = currentDbStock + stockChange;
+                    transaction.update(productSnap.ref, { stock: revertedStock, updatedAt: serverTimestamp() });
+                    
+                    const stockMovementLogRef = doc(collection(db, "stockMovements"));
+                    transaction.set(stockMovementLogRef, {
+                        productId: item.productId,
+                        productName: item.productName,
+                        sku: productSnap.data()!.sku,
+                        previousStock: currentDbStock,
+                        newStock: revertedStock,
+                        adjustmentType: 'revert_ledger_delete',
+                        adjustmentValue: stockChange,
+                        notes: `Stock reverted due to deletion of ledger entry ${ledgerEntryToDelete.id}`,
+                        timestamp: serverTimestamp(),
+                        adjustedByUid: currentUser.uid,
+                        adjustedByEmail: currentUser.email || "N/A",
+                        ledgerEntryId: ledgerEntryToDelete.id,
+                    });
+                });
+            }
+
+            if (paymentSnap && paymentSnap.exists()) {
+                transaction.delete(paymentSnap.ref);
+            } else if (entryData.associatedPaymentRecordId) {
+                console.warn(`Tried to delete non-existent associated payment record ID: ${entryData.associatedPaymentRecordId}`);
+            }
+            
             transaction.delete(ledgerDocRef);
         });
+
         toast({ title: "Ledger Entry Deleted", description: `Entry for "${ledgerEntryToDelete.entityName}" deleted and records reverted.` });
-        fetchData(selectedDate); 
+        fetchData(selectedDate);
     } catch (error: any) {
         console.error("Error deleting ledger entry:", error);
         toast({ title: "Deletion Error", description: error.message || "Failed to delete ledger entry.", variant: "destructive" });
@@ -982,7 +1002,7 @@ export default function DailyLedgerPage() {
         setIsDeleteConfirmOpen(false);
         setLedgerEntryToDelete(null);
     }
-  };
+};
   
   const handleSendDeleteRequest = async () => {
     if (!ledgerEntryToDelete) {
