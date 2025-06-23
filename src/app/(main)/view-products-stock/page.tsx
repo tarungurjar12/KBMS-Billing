@@ -1,5 +1,4 @@
 
-
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
@@ -230,7 +229,7 @@ export default function ViewProductsStockPage() {
       </Dialog>
 
       <Tabs defaultValue="price_list" className="w-full">
-        <TabsList className="grid w-full grid-cols-1 mb-4 sm:grid-cols-2 sm:w-auto max-w-md sm:flex-row h-auto flex-col items-stretch sm:h-10 sm:items-center">
+        <TabsList className="grid w-full grid-cols-1 mb-4 sm:flex sm:h-10 sm:flex-row flex-col items-stretch h-auto sm:w-auto max-w-md">
           <TabsTrigger value="price_list">Product Price List</TabsTrigger>
           <TabsTrigger value="stock_list">Current Stock Levels</TabsTrigger>
         </TabsList>
@@ -247,49 +246,62 @@ export default function ViewProductsStockPage() {
                     <p className="text-xs sm:text-sm text-muted-foreground">The product database appears to be empty.</p>
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader><TableRow>
-                      <TableHead className="w-[40px] sm:w-[60px]">Image</TableHead><TableHead>Product Name</TableHead>
-                      <TableHead className="hidden md:table-cell">SKU</TableHead><TableHead className="hidden lg:table-cell">Category</TableHead>
-                      <TableHead className="hidden sm:table-cell">Unit</TableHead><TableHead className="text-right">Price (₹)</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                  </TableRow></TableHeader>
-                  <TableBody>
-                    {productsList.map((product) => (
-                      <TableRow key={product.id + "-price"}>
-                        <TableCell>
-                          <Image 
-                              src={product.imageUrl} 
-                              alt={product.name} 
-                              width={40} height={40} 
-                              className="rounded-md object-cover border" 
-                              data-ai-hint={product.dataAiHint}
-                              onError={(e) => { e.currentTarget.src = `https://placehold.co/40x40.png?text=${encodeURIComponent(product.name.substring(0,2).toUpperCase())}`; }} 
-                          />
-                        </TableCell>
-                        <TableCell className="font-medium">{product.name}</TableCell>
-                        <TableCell className="hidden md:table-cell">{product.sku}</TableCell>
-                        <TableCell className="hidden lg:table-cell">{product.category}</TableCell>
-                        <TableCell className="hidden sm:table-cell">{product.unitOfMeasure}</TableCell>
-                        <TableCell className="text-right font-semibold">{product.price}</TableCell>
-                        <TableCell className="text-right">
-                          <Button 
-                            variant="outline"
-                            size="icon"
-                            className="h-9 w-9 sm:h-auto sm:w-auto sm:px-3 sm:py-1.5 hover:bg-destructive hover:text-destructive-foreground focus-visible:bg-destructive/10 focus-visible:text-destructive"
-                            onClick={() => openReportIssueDialog(product)} 
-                            title={`Report issue with ${product.name}`}
-                          >
-                            <AlertTriangle className="h-4 w-4" />
-                            <span className="hidden sm:inline sm:ml-1.5">Report Issue</span>
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <>
+                {/* Desktop View */}
+                <div className="hidden lg:block overflow-x-auto">
+                  <Table>
+                    <TableHeader><TableRow>
+                        <TableHead className="w-[40px] sm:w-[60px]">Image</TableHead><TableHead>Product Name</TableHead>
+                        <TableHead className="hidden md:table-cell">SKU</TableHead><TableHead className="hidden lg:table-cell">Category</TableHead>
+                        <TableHead className="hidden sm:table-cell">Unit</TableHead><TableHead className="text-right">Price (₹)</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                    </TableRow></TableHeader>
+                    <TableBody>
+                      {productsList.map((product) => (
+                        <TableRow key={product.id + "-price"}>
+                          <TableCell>
+                            <Image src={product.imageUrl} alt={product.name} width={40} height={40} className="rounded-md object-cover border" data-ai-hint={product.dataAiHint} onError={(e) => { e.currentTarget.src = `https://placehold.co/40x40.png?text=${encodeURIComponent(product.name.substring(0,2).toUpperCase())}`; }} />
+                          </TableCell>
+                          <TableCell className="font-medium">{product.name}</TableCell>
+                          <TableCell className="hidden md:table-cell">{product.sku}</TableCell>
+                          <TableCell className="hidden lg:table-cell">{product.category}</TableCell>
+                          <TableCell className="hidden sm:table-cell">{product.unitOfMeasure}</TableCell>
+                          <TableCell className="text-right font-semibold">{product.price}</TableCell>
+                          <TableCell className="text-right">
+                            <Button variant="outline" size="sm" className="hover:bg-destructive hover:text-destructive-foreground focus-visible:bg-destructive/10 focus-visible:text-destructive" onClick={() => openReportIssueDialog(product)} title={`Report issue with ${product.name}`}>
+                              <AlertTriangle className="h-4 w-4 lg:mr-2" /><span className="hidden lg:inline">Report Issue</span>
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
                 </div>
+                {/* Mobile View */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 lg:hidden">
+                    {productsList.map((product) => (
+                        <Card key={product.id + "-price-mobile"}>
+                            <CardHeader className="flex flex-row items-start justify-between gap-4 pb-2">
+                                <div className="flex-1 space-y-1">
+                                    <CardTitle className="text-base leading-tight">{product.name}</CardTitle>
+                                    <CardDescription className="text-xs">SKU: {product.sku}</CardDescription>
+                                </div>
+                                <Button variant="outline" size="icon" className="h-9 w-9 shrink-0 hover:bg-destructive hover:text-destructive-foreground" onClick={() => openReportIssueDialog(product)} title={`Report issue with ${product.name}`}>
+                                    <AlertTriangle className="h-4 w-4" />
+                                    <span className="sr-only">Report Issue</span>
+                                </Button>
+                            </CardHeader>
+                            <CardContent className="text-sm pt-2">
+                               <div className="flex justify-between items-center text-lg font-semibold">
+                                   <span>Price:</span>
+                                   <span>{product.price}</span>
+                               </div>
+                                <p className="text-xs text-muted-foreground">per {product.unitOfMeasure}</p>
+                            </CardContent>
+                        </Card>
+                    ))}
+                </div>
+                </>
               )}
             </CardContent>
           </Card>
@@ -307,60 +319,68 @@ export default function ViewProductsStockPage() {
                     <p className="text-xs sm:text-sm text-muted-foreground">The product database appears to be empty.</p>
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader><TableRow>
-                      <TableHead className="w-[40px] hidden sm:table-cell sm:w-[60px]">Image</TableHead><TableHead>Product Name</TableHead>
-                      <TableHead className="hidden md:table-cell">SKU</TableHead>
-                      <TableHead className="hidden sm:table-cell">Unit</TableHead>
-                      <TableHead className="text-right">Current Stock</TableHead><TableHead className="text-center">Status</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                  </TableRow></TableHeader>
-                  <TableBody>
-                    {productsList.map((item) => (
-                      <TableRow key={item.id + "-stock"}>
-                        <TableCell className="hidden sm:table-cell">
-                          <Image 
-                              src={item.imageUrl} 
-                              alt={item.name} 
-                              width={40} height={40} 
-                              className="rounded-md object-cover border" 
-                              data-ai-hint={item.dataAiHint}
-                              onError={(e) => { e.currentTarget.src = `https://placehold.co/40x40.png?text=${encodeURIComponent(item.name.substring(0,2).toUpperCase())}`; }} 
-                          />
-                        </TableCell>
-                        <TableCell className="font-medium">{item.name}</TableCell>
-                        <TableCell className="hidden md:table-cell">{item.sku}</TableCell>
-                        <TableCell className="hidden sm:table-cell">{item.unitOfMeasure}</TableCell>
-                        <TableCell className="text-right font-semibold">{item.stock}</TableCell>
-                        <TableCell className="text-center">
-                          <Badge 
-                             variant={item.status === "In Stock" ? "default" : item.status === "Low Stock" ? "secondary" : "destructive"}
-                             className={
-                                 item.status === "In Stock" ? "bg-accent text-accent-foreground" : 
-                                 item.status === "Low Stock" ? "bg-yellow-400 text-yellow-900 dark:bg-yellow-600 dark:text-yellow-100 border-yellow-500" : ""
-                             } 
-                          >
-                            {item.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button 
-                            variant="outline"
-                            size="icon"
-                            className="h-9 w-9 sm:h-auto sm:w-auto sm:px-3 sm:py-1.5 hover:bg-destructive hover:text-destructive-foreground focus-visible:bg-destructive/10 focus-visible:text-destructive"
-                            onClick={() => openReportIssueDialog(item)} 
-                            title={`Report issue with ${item.name}`}
-                          >
-                             <AlertTriangle className="h-4 w-4" />
-                             <span className="hidden sm:inline sm:ml-1.5">Report Issue</span>
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <>
+                {/* Desktop View */}
+                <div className="hidden lg:block overflow-x-auto">
+                  <Table>
+                    <TableHeader><TableRow>
+                        <TableHead className="w-[40px] sm:w-[60px]">Image</TableHead><TableHead>Product Name</TableHead>
+                        <TableHead className="hidden md:table-cell">SKU</TableHead>
+                        <TableHead className="hidden sm:table-cell">Unit</TableHead>
+                        <TableHead className="text-right">Current Stock</TableHead><TableHead className="text-center">Status</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                    </TableRow></TableHeader>
+                    <TableBody>
+                      {productsList.map((item) => (
+                        <TableRow key={item.id + "-stock"}>
+                          <TableCell>
+                            <Image src={item.imageUrl} alt={item.name} width={40} height={40} className="rounded-md object-cover border" data-ai-hint={item.dataAiHint} onError={(e) => { e.currentTarget.src = `https://placehold.co/40x40.png?text=${encodeURIComponent(item.name.substring(0,2).toUpperCase())}`; }} />
+                          </TableCell>
+                          <TableCell className="font-medium">{item.name}</TableCell>
+                          <TableCell className="hidden md:table-cell">{item.sku}</TableCell>
+                          <TableCell className="hidden sm:table-cell">{item.unitOfMeasure}</TableCell>
+                          <TableCell className="text-right font-semibold">{item.stock}</TableCell>
+                          <TableCell className="text-center">
+                            <Badge variant={item.status === "In Stock" ? "default" : item.status === "Low Stock" ? "secondary" : "destructive"}>{item.status}</Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                             <Button variant="outline" size="sm" className="hover:bg-destructive hover:text-destructive-foreground focus-visible:bg-destructive/10 focus-visible:text-destructive" onClick={() => openReportIssueDialog(item)} title={`Report issue with ${item.name}`}>
+                                <AlertTriangle className="h-4 w-4 lg:mr-2" /><span className="hidden lg:inline">Report Issue</span>
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
                 </div>
+                {/* Mobile View */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 lg:hidden">
+                  {productsList.map((item) => (
+                    <Card key={item.id + "-stock-mobile"}>
+                      <CardHeader className="flex flex-row items-start justify-between gap-4 pb-2">
+                          <div className="flex-1 space-y-1">
+                              <CardTitle className="text-base leading-tight">{item.name}</CardTitle>
+                              <CardDescription className="text-xs">SKU: {item.sku}</CardDescription>
+                          </div>
+                          <Button variant="outline" size="icon" className="h-9 w-9 shrink-0 hover:bg-destructive hover:text-destructive-foreground" onClick={() => openReportIssueDialog(item)} title={`Report issue with ${item.name}`}>
+                              <AlertTriangle className="h-4 w-4" />
+                              <span className="sr-only">Report Issue</span>
+                          </Button>
+                      </CardHeader>
+                      <CardContent className="text-sm pt-2">
+                          <div className="flex justify-between items-center font-semibold text-lg">
+                              <span>Stock:</span>
+                              <span>{item.stock} {item.unitOfMeasure}</span>
+                          </div>
+                          <div className="flex justify-between items-center text-xs">
+                              <span className="text-muted-foreground">Status:</span>
+                              <Badge variant={item.status === "In Stock" ? "default" : item.status === "Low Stock" ? "secondary" : "destructive"}>{item.status}</Badge>
+                          </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+                </>
               )}
             </CardContent>
           </Card>
@@ -369,5 +389,3 @@ export default function ViewProductsStockPage() {
     </>
   );
 }
-
-

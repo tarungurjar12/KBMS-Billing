@@ -1,5 +1,4 @@
 
-
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
@@ -265,9 +264,13 @@ export default function ManageSellersPage() {
                 </Card>
                 <Card><CardHeader><CardTitle className="text-lg">Payment History ({selectedSellerForDetails.payments.length})</CardTitle></CardHeader>
                     <CardContent>
-                        {selectedSellerForDetails.payments.length > 0 ? (<Table className="text-xs"><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Amount</TableHead><TableHead>Method</TableHead><TableHead>Status</TableHead><TableHead>Ref ID</TableHead></TableRow></TableHeader>
-                        <TableBody>{selectedSellerForDetails.payments.slice(0,5).map(p => (<TableRow key={p.id}><TableCell>{p.date}</TableCell><TableCell>{p.displayAmountPaid}</TableCell><TableCell>{p.method || 'N/A'}</TableCell><TableCell><Badge variant={p.status === "Completed" || p.status === "Sent" ? "default" : "secondary"}>{p.status}</Badge></TableCell><TableCell>{p.relatedInvoiceId || p.ledgerEntryId || 'N/A'}</TableCell></TableRow>))}
-                        </TableBody></Table>) : (<p className="text-sm text-muted-foreground">No payment records found.</p>)}
+                        {selectedSellerForDetails.payments.length > 0 ? (
+                        <div className="overflow-x-auto">
+                            <Table className="text-xs"><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Amount</TableHead><TableHead>Method</TableHead><TableHead>Status</TableHead><TableHead>Ref ID</TableHead></TableRow></TableHeader>
+                            <TableBody>{selectedSellerForDetails.payments.slice(0,5).map(p => (<TableRow key={p.id}><TableCell>{p.date}</TableCell><TableCell>{p.displayAmountPaid}</TableCell><TableCell>{p.method || 'N/A'}</TableCell><TableCell><Badge variant={p.status === "Completed" || p.status === "Sent" ? "default" : "secondary"}>{p.status}</Badge></TableCell><TableCell>{p.relatedInvoiceId || p.ledgerEntryId || 'N/A'}</TableCell></TableRow>))}
+                            </TableBody></Table>
+                        </div>
+                        ) : (<p className="text-sm text-muted-foreground">No payment records found.</p>)}
                         {selectedSellerForDetails.payments.length > 5 && <p className="text-xs text-muted-foreground mt-2 text-center">Showing last 5 payments. Full history in Payments section.</p>}
                     </CardContent>
                 </Card>
@@ -295,7 +298,6 @@ export default function ManageSellersPage() {
            : !isLoading && sellers.length === 0 ? (<div className="flex flex-col items-center justify-center py-10 text-center"><FileWarning className="h-16 w-16 text-muted-foreground mb-4" /><p className="text-xl font-semibold text-muted-foreground">No Sellers Found</p><p className="text-sm text-muted-foreground mb-6">Add your first seller.</p><Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Add New Seller</Button></div>)
            : (
             <>
-              {/* Desktop View */}
               <div className="hidden lg:block">
                 <Table><TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Contact</TableHead><TableHead>Phone</TableHead><TableHead>GSTIN</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
                   <TableBody>{sellers.map((seller) => (<TableRow key={seller.id}><TableCell className="font-medium">{seller.name}</TableCell><TableCell>{seller.contactPerson || "N/A"}</TableCell><TableCell>{seller.phone}</TableCell><TableCell>{seller.gstin || "N/A"}</TableCell>
@@ -309,7 +311,6 @@ export default function ManageSellersPage() {
                   </TableBody>
                 </Table>
               </div>
-              {/* Mobile View */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 lg:hidden">
                 {sellers.map(seller => (
                   <Card key={seller.id + '-mobile'}>

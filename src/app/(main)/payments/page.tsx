@@ -4,7 +4,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -443,74 +443,14 @@ export default function PaymentsPage() {
   }, [allPayments, activeMainTab, activeStatusFilter, selectedDate, searchTerm, allInvoices]);
 
 
-  const renderPaymentTable = (paymentsToRender: PaymentRecord[], type: "customer" | "supplier") => {
-    const getRefDisplay = (payment: PaymentRecord) => {
-        if (payment.relatedInvoiceId) {
-            const invoice = allInvoices.find(inv => inv.id === payment.relatedInvoiceId);
-            if (invoice) return invoice.invoiceNumber;
-            return `Inv Ref: ${payment.relatedInvoiceId}`;
-        }
-        if (payment.ledgerEntryId) return `Ledger Ref: ${payment.ledgerEntryId}`;
-        return "N/A";
-    };
-
-    return (
-        <div className="overflow-x-auto">
-        <Table>
-          <TableHeader><TableRow>
-              <TableHead>Date</TableHead>
-              <TableHead>{type === "customer" ? "Customer" : "Supplier"} Name</TableHead>
-              <TableHead>Ref ID</TableHead>
-              <TableHead>Method</TableHead>
-              <TableHead className="text-right">Amount Paid (₹)</TableHead>
-              <TableHead className="text-right">Original Amt (₹)</TableHead>
-              <TableHead className="text-right">Balance Due (₹)</TableHead>
-              <TableHead className="text-center">Status</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-          </TableRow></TableHeader>
-          <TableBody>
-            {paymentsToRender.map((payment) => (
-              <TableRow key={payment.id}>
-                <TableCell>{payment.date}</TableCell>
-                <TableCell>{payment.relatedEntityName}</TableCell>
-                <TableCell>{getRefDisplay(payment)}</TableCell>
-                <TableCell>{payment.method || "N/A"}</TableCell>
-                <TableCell className="text-right">{payment.displayAmountPaid}</TableCell>
-                <TableCell className="text-right">{payment.originalInvoiceAmount ? formatCurrency(payment.originalInvoiceAmount) : "N/A"}</TableCell>
-                <TableCell className="text-right">{payment.remainingBalanceOnInvoice !== null ? formatCurrency(payment.remainingBalanceOnInvoice) : "N/A"}</TableCell>
-                <TableCell className="text-center">
-                  <Badge
-                    variant={getBadgeVariant(payment.status)}
-                    className={
-                        (payment.status === "Completed" || payment.status === "Received" || payment.status === "Sent") ? "bg-accent text-accent-foreground" :
-                        payment.status === "Partial" ? "border-yellow-500 text-yellow-600 dark:border-yellow-400 dark:text-yellow-300 bg-transparent" :
-                        (payment.status === "Pending" || payment.status === "Failed") ? "border-blue-500 text-blue-600 dark:border-blue-400 dark:text-blue-300 bg-transparent" : 
-                        ""
-                    }
-                  >{payment.status}</Badge>
-                </TableCell>
-                 <TableCell className="text-right">
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /><span className="sr-only">Actions for payment</span></Button></DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => openEditDialog(payment)}><Edit className="mr-2 h-4 w-4" /> Edit Record</DropdownMenuItem>
-                      <DropdownMenuItem 
-                        onClick={() => handleDeletePayment(payment.id, `${payment.relatedEntityName} - ${payment.displayAmountPaid}`)} 
-                        className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground"
-                        disabled={!!payment.ledgerEntryId} 
-                      >
-                        <Trash2 className="mr-2 h-4 w-4" /> Delete Record
-                      </DropdownMenuItem>
-                      {!!payment.ledgerEntryId && <DropdownMenuItem disabled><span className="text-xs text-muted-foreground">Linked to ledger</span></DropdownMenuItem>}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-        </div>
-      );
+  const getRefDisplay = (payment: PaymentRecord) => {
+    if (payment.relatedInvoiceId) {
+        const invoice = allInvoices.find(inv => inv.id === payment.relatedInvoiceId);
+        if (invoice) return invoice.invoiceNumber;
+        return `Inv Ref: ${payment.relatedInvoiceId.substring(0,6)}...`;
+    }
+    if (payment.ledgerEntryId) return `Ledger Ref: ${payment.ledgerEntryId.substring(0,6)}...`;
+    return "N/A";
   };
   
   const getEmptyStateMessage = () => {
@@ -533,23 +473,34 @@ export default function PaymentsPage() {
         icon={CreditCard}
         actions={<Button onClick={openAddDialog}><PlusCircle className="mr-2 h-4 w-4" />Record New Payment</Button>}
       />
-
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 mb-6">
-        {paymentMetrics.map((metric) => (
-          <Card key={metric.title} className="shadow-md rounded-lg">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">{metric.title}</CardTitle>
-              <metric.icon className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              {metric.isLoading ? (
-                <div className="text-2xl font-bold animate-pulse">Loading...</div>
-              ) : (
-                <div className="text-2xl font-bold">{metric.value}</div>
-              )}
-            </CardContent>
-          </Card>
-        ))}
+      
+      <div className="space-y-4 mb-6">
+        <div className="grid gap-4 md:grid-cols-3 sm:grid-cols-2 grid-cols-1">
+          {paymentMetrics.slice(0, 3).map((metric) => (
+            <Card key={metric.title} className="shadow-md rounded-lg">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">{metric.title}</CardTitle>
+                <metric.icon className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                {metric.isLoading ? <div className="text-2xl font-bold animate-pulse">Loading...</div> : <div className="text-2xl font-bold">{metric.value}</div>}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+        <div className="grid gap-4 md:grid-cols-3 sm:grid-cols-2 grid-cols-1">
+          {paymentMetrics.slice(3, 6).map((metric) => (
+            <Card key={metric.title} className="shadow-md rounded-lg">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">{metric.title}</CardTitle>
+                <metric.icon className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                {metric.isLoading ? <div className="text-2xl font-bold animate-pulse">Loading...</div> : <div className="text-2xl font-bold">{metric.value}</div>}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
       </div>
       
       <Card className="shadow-lg rounded-xl mb-6">
@@ -669,7 +620,7 @@ export default function PaymentsPage() {
             <CardHeader><CardTitle className="font-headline text-foreground">Customer Payment History</CardTitle><CardDescription>Records of payments received from customers, filtered by status.</CardDescription></CardHeader>
             <CardContent>
                 <Tabs defaultValue="all" onValueChange={(val) => setActiveStatusFilter(val as StatusFilterType)} className="mb-4" key={`${activeMainTab}-filter`}>
-                    <TabsList className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:grid-cols-4">
+                    <TabsList className="inline-flex h-auto min-h-10 items-center justify-center rounded-md bg-muted p-1 text-muted-foreground flex-wrap">
                         <TabsTrigger value="all">All</TabsTrigger>
                         <TabsTrigger value="paid">Paid</TabsTrigger>
                         <TabsTrigger value="partial">Partial</TabsTrigger>
@@ -678,7 +629,91 @@ export default function PaymentsPage() {
                 </Tabs>
                 {isLoading && displayedPayments.length === 0 ? (
                      <div className="text-center py-10 text-muted-foreground"><Activity className="mx-auto h-12 w-12 mb-4 animate-spin" />Loading...</div>
-                ) : displayedPayments.length > 0 ? renderPaymentTable(displayedPayments, "customer") : (
+                ) : displayedPayments.length > 0 ? (
+                  <>
+                    <div className="hidden lg:block overflow-x-auto">
+                      <Table>
+                        <TableHeader><TableRow>
+                            <TableHead>Date</TableHead>
+                            <TableHead>Customer Name</TableHead>
+                            <TableHead>Ref ID</TableHead>
+                            <TableHead>Method</TableHead>
+                            <TableHead className="text-right">Amount Paid (₹)</TableHead>
+                            <TableHead className="text-right">Original Amt (₹)</TableHead>
+                            <TableHead className="text-right">Balance Due (₹)</TableHead>
+                            <TableHead className="text-center">Status</TableHead>
+                            <TableHead className="text-right">Actions</TableHead>
+                        </TableRow></TableHeader>
+                        <TableBody>
+                          {displayedPayments.map((payment) => (
+                            <TableRow key={payment.id}>
+                              <TableCell>{payment.date}</TableCell>
+                              <TableCell>{payment.relatedEntityName}</TableCell>
+                              <TableCell>{getRefDisplay(payment)}</TableCell>
+                              <TableCell>{payment.method || "N/A"}</TableCell>
+                              <TableCell className="text-right">{payment.displayAmountPaid}</TableCell>
+                              <TableCell className="text-right">{payment.originalInvoiceAmount ? formatCurrency(payment.originalInvoiceAmount) : "N/A"}</TableCell>
+                              <TableCell className="text-right">{payment.remainingBalanceOnInvoice !== null ? formatCurrency(payment.remainingBalanceOnInvoice) : "N/A"}</TableCell>
+                              <TableCell className="text-center">
+                                <Badge variant={getBadgeVariant(payment.status)}>{payment.status}</Badge>
+                              </TableCell>
+                              <TableCell className="text-right">
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /><span className="sr-only">Actions for payment</span></Button></DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    <DropdownMenuItem onClick={() => openEditDialog(payment)}><Edit className="mr-2 h-4 w-4" /> Edit Record</DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => handleDeletePayment(payment.id, `${payment.relatedEntityName} - ${payment.displayAmountPaid}`)} className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground" disabled={!!payment.ledgerEntryId}>
+                                      <Trash2 className="mr-2 h-4 w-4" /> Delete Record
+                                    </DropdownMenuItem>
+                                    {!!payment.ledgerEntryId && <DropdownMenuItem disabled><span className="text-xs text-muted-foreground">Linked to ledger</span></DropdownMenuItem>}
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 lg:hidden">
+                      {displayedPayments.map((payment) => (
+                        <Card key={payment.id + "-mobile"}>
+                          <CardHeader className="flex flex-row items-start justify-between gap-2 p-4">
+                            <div className="flex-1 space-y-1">
+                              <CardTitle className="text-base font-bold">{payment.relatedEntityName}</CardTitle>
+                              <CardDescription className="text-xs">
+                                {payment.date} | Ref: {getRefDisplay(payment)}
+                              </CardDescription>
+                            </div>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0"><MoreHorizontal className="h-4 w-4" /><span className="sr-only">Actions</span></Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => openEditDialog(payment)}><Edit className="mr-2 h-4 w-4" /> Edit</DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => handleDeletePayment(payment.id, `${payment.relatedEntityName} - ${payment.displayAmountPaid}`)} className="text-destructive focus:text-destructive focus:bg-destructive/10" disabled={!!payment.ledgerEntryId}><Trash2 className="mr-2 h-4 w-4" /> Delete</DropdownMenuItem>
+                                 {!!payment.ledgerEntryId && <DropdownMenuItem disabled><span className="text-xs text-muted-foreground">Linked to ledger</span></DropdownMenuItem>}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </CardHeader>
+                          <CardContent className="p-4 pt-0 text-sm space-y-2">
+                            <div className="flex justify-between items-center font-semibold text-lg">
+                              <span className="text-muted-foreground text-sm">Amount Paid</span>
+                              <span>{payment.displayAmountPaid}</span>
+                            </div>
+                            <div className="flex justify-between text-xs">
+                              <span className="text-muted-foreground">Method:</span>
+                              <span>{payment.method || 'N/A'}</span>
+                            </div>
+                            <div className="flex justify-between text-xs">
+                              <span className="text-muted-foreground">Status:</span>
+                              <Badge variant={getBadgeVariant(payment.status)} className="text-xs">{payment.status}</Badge>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  </>
+                ) : (
                     <div className="flex flex-col items-center justify-center py-10 text-center">
                         <FileWarning className="h-16 w-16 text-muted-foreground mb-4" />
                         <p className="text-xl font-semibold text-muted-foreground">{getEmptyStateMessage()}</p>
@@ -695,7 +730,7 @@ export default function PaymentsPage() {
             <CardHeader><CardTitle className="font-headline text-foreground">Supplier Payment History</CardTitle><CardDescription>Records of payments made to suppliers/vendors, filtered by status.</CardDescription></CardHeader>
             <CardContent>
                  <Tabs defaultValue="all" onValueChange={(val) => setActiveStatusFilter(val as StatusFilterType)} className="mb-4" key={`${activeMainTab}-filter`}>
-                    <TabsList className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:grid-cols-4">
+                    <TabsList className="inline-flex h-auto min-h-10 items-center justify-center rounded-md bg-muted p-1 text-muted-foreground flex-wrap">
                         <TabsTrigger value="all">All</TabsTrigger>
                         <TabsTrigger value="paid">Paid/Sent</TabsTrigger>
                         <TabsTrigger value="partial">Partial</TabsTrigger>
@@ -704,7 +739,91 @@ export default function PaymentsPage() {
                 </Tabs>
                  {isLoading && displayedPayments.length === 0 ? (
                      <div className="text-center py-10 text-muted-foreground"><Activity className="mx-auto h-12 w-12 mb-4 animate-spin" />Loading...</div>
-                ) : displayedPayments.length > 0 ? renderPaymentTable(displayedPayments, "supplier") : (
+                ) : displayedPayments.length > 0 ? (
+                  <>
+                    <div className="hidden lg:block overflow-x-auto">
+                      <Table>
+                        <TableHeader><TableRow>
+                            <TableHead>Date</TableHead>
+                            <TableHead>Supplier Name</TableHead>
+                            <TableHead>Ref ID</TableHead>
+                            <TableHead>Method</TableHead>
+                            <TableHead className="text-right">Amount Paid (₹)</TableHead>
+                            <TableHead className="text-right">Original Amt (₹)</TableHead>
+                            <TableHead className="text-right">Balance Due (₹)</TableHead>
+                            <TableHead className="text-center">Status</TableHead>
+                            <TableHead className="text-right">Actions</TableHead>
+                        </TableRow></TableHeader>
+                        <TableBody>
+                          {displayedPayments.map((payment) => (
+                            <TableRow key={payment.id}>
+                              <TableCell>{payment.date}</TableCell>
+                              <TableCell>{payment.relatedEntityName}</TableCell>
+                              <TableCell>{getRefDisplay(payment)}</TableCell>
+                              <TableCell>{payment.method || "N/A"}</TableCell>
+                              <TableCell className="text-right">{payment.displayAmountPaid}</TableCell>
+                              <TableCell className="text-right">{payment.originalInvoiceAmount ? formatCurrency(payment.originalInvoiceAmount) : "N/A"}</TableCell>
+                              <TableCell className="text-right">{payment.remainingBalanceOnInvoice !== null ? formatCurrency(payment.remainingBalanceOnInvoice) : "N/A"}</TableCell>
+                              <TableCell className="text-center">
+                                <Badge variant={getBadgeVariant(payment.status)}>{payment.status}</Badge>
+                              </TableCell>
+                               <TableCell className="text-right">
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /><span className="sr-only">Actions for payment</span></Button></DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    <DropdownMenuItem onClick={() => openEditDialog(payment)}><Edit className="mr-2 h-4 w-4" /> Edit Record</DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => handleDeletePayment(payment.id, `${payment.relatedEntityName} - ${payment.displayAmountPaid}`)} className="text-destructive hover:text-destructive-foreground focus:text-destructive-foreground" disabled={!!payment.ledgerEntryId}>
+                                      <Trash2 className="mr-2 h-4 w-4" /> Delete Record
+                                    </DropdownMenuItem>
+                                    {!!payment.ledgerEntryId && <DropdownMenuItem disabled><span className="text-xs text-muted-foreground">Linked to ledger</span></DropdownMenuItem>}
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 lg:hidden">
+                      {displayedPayments.map((payment) => (
+                        <Card key={payment.id + "-mobile"}>
+                          <CardHeader className="flex flex-row items-start justify-between gap-2 p-4">
+                            <div className="flex-1 space-y-1">
+                              <CardTitle className="text-base font-bold">{payment.relatedEntityName}</CardTitle>
+                              <CardDescription className="text-xs">
+                                {payment.date} | Ref: {getRefDisplay(payment)}
+                              </CardDescription>
+                            </div>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0"><MoreHorizontal className="h-4 w-4" /><span className="sr-only">Actions</span></Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => openEditDialog(payment)}><Edit className="mr-2 h-4 w-4" /> Edit</DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => handleDeletePayment(payment.id, `${payment.relatedEntityName} - ${payment.displayAmountPaid}`)} className="text-destructive focus:text-destructive focus:bg-destructive/10" disabled={!!payment.ledgerEntryId}><Trash2 className="mr-2 h-4 w-4" /> Delete</DropdownMenuItem>
+                                 {!!payment.ledgerEntryId && <DropdownMenuItem disabled><span className="text-xs text-muted-foreground">Linked to ledger</span></DropdownMenuItem>}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </CardHeader>
+                          <CardContent className="p-4 pt-0 text-sm space-y-2">
+                             <div className="flex justify-between items-center font-semibold text-lg">
+                              <span className="text-muted-foreground text-sm">Amount Paid</span>
+                              <span>{payment.displayAmountPaid}</span>
+                            </div>
+                            <div className="flex justify-between text-xs">
+                              <span className="text-muted-foreground">Method:</span>
+                              <span>{payment.method || 'N/A'}</span>
+                            </div>
+                            <div className="flex justify-between text-xs">
+                              <span className="text-muted-foreground">Status:</span>
+                              <Badge variant={getBadgeVariant(payment.status)} className="text-xs">{payment.status}</Badge>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  </>
+                ) : (
                     <div className="flex flex-col items-center justify-center py-10 text-center">
                         <FileWarning className="h-16 w-16 text-muted-foreground mb-4" />
                          <p className="text-xl font-semibold text-muted-foreground">{getEmptyStateMessage()}</p>
