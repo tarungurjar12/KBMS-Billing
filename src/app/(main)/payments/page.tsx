@@ -41,7 +41,7 @@ export interface PaymentRecord {
   id: string;
   type: "customer" | "supplier";
   relatedEntityName: string;
-  relatedEntityId: string;
+  relatedEntityId: string | null;
   relatedInvoiceId: string | null;
   date: string; // Formatted for display
   isoDate: string; // ISO string for storing and sorting ("YYYY-MM-DD")
@@ -55,7 +55,8 @@ export interface PaymentRecord {
   notes: string | null;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
-  ledgerEntryId?: string | null; 
+  ledgerEntryId?: string | null;
+  settledLedgerEntryIds?: string[];
 }
 
 interface PaymentMetric {
@@ -232,7 +233,7 @@ export default function PaymentsPage() {
         
         return {
           id: docSnapshot.id, type: data.type || 'customer',
-          relatedEntityName: data.relatedEntityName || 'N/A', relatedEntityId: data.relatedEntityId || '',
+          relatedEntityName: data.relatedEntityName || 'N/A', relatedEntityId: data.relatedEntityId || null,
           relatedInvoiceId: data.relatedInvoiceId || null, date: paymentDate,
           isoDate: isoDateValue, 
           amountPaid: data.amountPaid || 0,
@@ -244,6 +245,7 @@ export default function PaymentsPage() {
           status: data.status || 'Pending',
           notes: data.notes || null, createdAt: data.createdAt, updatedAt: data.updatedAt,
           ledgerEntryId: data.ledgerEntryId || null,
+          settledLedgerEntryIds: data.settledLedgerEntryIds || [],
         } as PaymentRecord;
       });
       setAllPayments(fetchedPayments);
@@ -710,7 +712,7 @@ export default function PaymentsPage() {
                                         <TooltipContent><p>Manage from Ledger page</p></TooltipContent>
                                       </Tooltip>
                                     </TooltipProvider>
-                                }
+                                 }
                               </DropdownMenuContent>
                             </DropdownMenu>
                           </CardHeader>
