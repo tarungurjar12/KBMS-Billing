@@ -13,7 +13,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
-import { collection, getDocs, doc, updateDoc, deleteDoc, query, orderBy, Timestamp, serverTimestamp, where, limit, getDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, updateDoc, deleteDoc, query, orderBy, Timestamp, serverTimestamp, where, limit } from 'firebase/firestore';
 import { db } from '@/lib/firebase/firebaseConfig';
 import { format, parseISO } from 'date-fns';
 import type { UserProfile } from '../my-profile/page';
@@ -596,11 +596,11 @@ export default function BillingPage() {
               {/* Mobile Card View */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 lg:hidden">
                 {invoices.map((invoice) => (
-                  <Card key={invoice.id + "-mobile"} className={cn("flex flex-col justify-between", getStatusRowClass(invoice.status))}>
-                    <CardHeader className="flex flex-row items-start justify-between gap-2 p-4 pb-2">
-                      <div className="flex-1 space-y-1">
-                        <CardTitle className="text-base font-bold">{invoice.customerName}</CardTitle>
-                        <CardDescription className="text-xs">{invoice.invoiceNumber} | {invoice.date}</CardDescription>
+                  <Card key={invoice.id + "-mobile"} className={cn("flex flex-col", getStatusRowClass(invoice.status))}>
+                    <CardHeader className="flex flex-row items-center justify-between gap-2 p-4 pb-2">
+                       <div className="flex-1 space-y-1 overflow-hidden">
+                          <CardTitle className="text-base font-bold truncate">{invoice.customerName}</CardTitle>
+                          <CardDescription className="text-xs">{invoice.invoiceNumber}</CardDescription>
                       </div>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -633,13 +633,19 @@ export default function BillingPage() {
                     </CardHeader>
                     <CardContent className="p-4 pt-0">
                       <div className="flex justify-between items-center">
-                        <span className="text-xl font-bold">{invoice.displayTotal}</span>
-                        <Badge variant={getBadgeVariant(invoice.status)} className={cn(
+                         <div className="text-sm text-muted-foreground">
+                            {invoice.date}
+                          </div>
+                         <Badge variant={getBadgeVariant(invoice.status)} className={cn(
+                          "text-xs",
                           invoice.status === "Paid" && "bg-accent text-accent-foreground",
                           invoice.status === "Partially Paid" && "border-yellow-500 text-yellow-600 dark:border-yellow-400 dark:text-yellow-300 bg-transparent",
                           invoice.status === "Cancelled" && "bg-muted text-muted-foreground border-muted-foreground/30"
                         )}>{invoice.status}</Badge>
                       </div>
+                       <div className="text-right text-xl font-bold mt-1">
+                          {invoice.displayTotal}
+                        </div>
                     </CardContent>
                   </Card>
                 ))}
