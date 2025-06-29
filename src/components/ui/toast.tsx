@@ -7,6 +7,13 @@ import { X } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 
+/**
+ * @fileoverview Toast component.
+ * This file contains the toast component and its parts.
+ * It is built on top of the Radix UI Toast primitive.
+ * @see https://www.radix-ui.com/primitives/docs/components/toast
+ */
+
 const ToastProvider = ToastPrimitives.Provider
 
 const ToastViewport = React.forwardRef<

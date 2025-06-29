@@ -5,6 +5,13 @@ import * as ScrollAreaPrimitive from "@radix-ui/react-scroll-area"
 
 import { cn } from "@/lib/utils"
 
+/**
+ * @fileoverview Scroll Area component.
+ * This file contains the scroll area component and its parts.
+ * It is built on top of the Radix UI Scroll Area primitive.
+ * @see https://www.radix-ui.com/primitives/docs/components/scroll-area
+ */
+
 const ScrollArea = React.forwardRef<
   React.ElementRef<typeof ScrollAreaPrimitive.Root>,
   React.ComponentPropsWithoutRef<typeof ScrollAreaPrimitive.Root>

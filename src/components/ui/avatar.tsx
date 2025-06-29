@@ -5,6 +5,13 @@ import * as AvatarPrimitive from "@radix-ui/react-avatar"
 
 import { cn } from "@/lib/utils"
 
+/**
+ * @fileoverview Avatar component.
+ * This file contains the avatar component and its parts.
+ * It is built on top of the Radix UI Avatar primitive.
+ * @see https://www.radix-ui.com/primitives/docs/components/avatar
+ */
+
 const Avatar = React.forwardRef<
   React.ElementRef<typeof AvatarPrimitive.Root>,
   React.ComponentPropsWithoutRef<typeof AvatarPrimitive.Root>

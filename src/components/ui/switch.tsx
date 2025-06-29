@@ -5,6 +5,13 @@ import * as SwitchPrimitives from "@radix-ui/react-switch"
 
 import { cn } from "@/lib/utils"
 
+/**
+ * @fileoverview Switch component.
+ * This file contains the switch component.
+ * It is built on top of the Radix UI Switch primitive.
+ * @see https://www.radix-ui.com/primitives/docs/components/switch
+ */
+
 const Switch = React.forwardRef<
   React.ElementRef<typeof SwitchPrimitives.Root>,
   React.ComponentPropsWithoutRef<typeof SwitchPrimitives.Root>

@@ -6,6 +6,13 @@ import { X } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 
+/**
+ * @fileoverview Dialog component.
+ * This file contains the dialog component and its parts.
+ * It is built on top of the Radix UI Dialog primitive.
+ * @see https://www.radix-ui.com/primitives/docs/components/dialog
+ */
+
 const Dialog = DialogPrimitive.Root
 
 const DialogTrigger = DialogPrimitive.Trigger

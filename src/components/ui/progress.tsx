@@ -5,6 +5,13 @@ import * as ProgressPrimitive from "@radix-ui/react-progress"
 
 import { cn } from "@/lib/utils"
 
+/**
+ * @fileoverview Progress component.
+ * This file contains the progress component.
+ * It is built on top of the Radix UI Progress primitive.
+ * @see https://www.radix-ui.com/primitives/docs/components/progress
+ */
+
 const Progress = React.forwardRef<
   React.ElementRef<typeof ProgressPrimitive.Root>,
   React.ComponentPropsWithoutRef<typeof ProgressPrimitive.Root>

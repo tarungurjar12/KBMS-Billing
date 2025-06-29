@@ -10,6 +10,12 @@ import {
   ToastViewport,
 } from "@/components/ui/toast"
 
+/**
+ * @fileoverview Toaster component.
+ * This component is responsible for rendering the toasts that are dispatched
+ * by the `useToast` hook. It should be placed at the root of the application layout.
+ */
+
 export function Toaster() {
   const { toasts } = useToast()
 

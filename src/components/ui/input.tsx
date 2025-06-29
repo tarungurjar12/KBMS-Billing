@@ -3,6 +3,12 @@ import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
+/**
+ * @fileoverview Input component.
+ * This file contains the input component.
+ * It is used to get user input in a text field.
+ */
+
 const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
   ({ className, type, ...props }, ref) => {
     return (

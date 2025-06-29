@@ -7,6 +7,13 @@ import { X } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 
+/**
+ * @fileoverview Sheet component.
+ * This file contains the sheet component and its parts.
+ * It is built on top of the Radix UI Dialog primitive.
+ * @see https://www.radix-ui.com/primitives/docs/components/dialog
+ */
+
 const Sheet = SheetPrimitive.Root
 
 const SheetTrigger = SheetPrimitive.Trigger

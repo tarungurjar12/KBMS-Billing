@@ -6,6 +6,13 @@ import * as AlertDialogPrimitive from "@radix-ui/react-alert-dialog"
 import { cn } from "@/lib/utils"
 import { buttonVariants } from "@/components/ui/button"
 
+/**
+ * @fileoverview Alert Dialog component.
+ * This file contains the alert dialog component and its parts.
+ * It is built on top of the Radix UI Alert Dialog primitive.
+ * @see https://www.radix-ui.com/primitives/docs/components/alert-dialog
+ */
+
 const AlertDialog = AlertDialogPrimitive.Root
 
 const AlertDialogTrigger = AlertDialogPrimitive.Trigger

@@ -6,6 +6,13 @@ import { Check, ChevronRight, Circle } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 
+/**
+ * @fileoverview Menubar component.
+ * This file contains the menubar component and its parts.
+ * It is built on top of the Radix UI Menubar primitive.
+ * @see https://www.radix-ui.com/primitives/docs/components/menubar
+ */
+
 function MenubarMenu({
   ...props
 }: React.ComponentProps<typeof MenubarPrimitive.Menu>) {

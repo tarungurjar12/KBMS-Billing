@@ -5,6 +5,13 @@ import * as PopoverPrimitive from "@radix-ui/react-popover"
 
 import { cn } from "@/lib/utils"
 
+/**
+ * @fileoverview Popover component.
+ * This file contains the popover component and its parts.
+ * It is built on top of the Radix UI Popover primitive.
+ * @see https://www.radix-ui.com/primitives/docs/components/popover
+ */
+
 const Popover = PopoverPrimitive.Root
 
 const PopoverTrigger = PopoverPrimitive.Trigger

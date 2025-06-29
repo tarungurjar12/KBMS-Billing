@@ -6,6 +6,13 @@ import { Circle } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 
+/**
+ * @fileoverview Radio Group component.
+ * This file contains the radio group component and its parts.
+ * It is built on top of the Radix UI Radio Group primitive.
+ * @see https://www.radix-ui.com/primitives/docs/components/radio-group
+ */
+
 const RadioGroup = React.forwardRef<
   React.ElementRef<typeof RadioGroupPrimitive.Root>,
   React.ComponentPropsWithoutRef<typeof RadioGroupPrimitive.Root>

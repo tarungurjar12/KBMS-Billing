@@ -3,6 +3,12 @@ import * as React from 'react';
 
 import {cn} from '@/lib/utils';
 
+/**
+ * @fileoverview Textarea component.
+ * This file contains the textarea component.
+ * It is used to get user input in a multi-line text field.
+ */
+
 const Textarea = React.forwardRef<HTMLTextAreaElement, React.ComponentProps<'textarea'>>(
   ({className, ...props}, ref) => {
     return (
@@ -13,6 +19,7 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, React.ComponentProps<'tex
         )}
         ref={ref}
         {...props}
+        value={props.value ?? ""}
       />
     );
   }

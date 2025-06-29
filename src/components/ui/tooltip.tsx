@@ -5,6 +5,13 @@ import * as TooltipPrimitive from "@radix-ui/react-tooltip"
 
 import { cn } from "@/lib/utils"
 
+/**
+ * @fileoverview Tooltip component.
+ * This file contains the tooltip component and its parts.
+ * It is built on top of the Radix UI Tooltip primitive.
+ * @see https://www.radix-ui.com/primitives/docs/components/tooltip
+ */
+
 const TooltipProvider = TooltipPrimitive.Provider
 
 const Tooltip = TooltipPrimitive.Root

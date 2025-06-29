@@ -6,6 +6,13 @@ import { Check, ChevronDown, ChevronUp } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 
+/**
+ * @fileoverview Select component.
+ * This file contains the select component and its parts.
+ * It is built on top of the Radix UI Select primitive.
+ * @see https://www.radix-ui.com/primitives/docs/components/select
+ */
+
 const Select = SelectPrimitive.Root
 
 const SelectGroup = SelectPrimitive.Group

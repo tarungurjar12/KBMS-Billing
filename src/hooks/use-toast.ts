@@ -8,8 +8,14 @@ import type {
   ToastProps,
 } from "@/components/ui/toast"
 
-const TOAST_LIMIT = 1
-const TOAST_REMOVE_DELAY = 1000000
+/**
+ * @fileOverview Custom hook `useToast` for managing toast notifications.
+ * This system provides a global state for toasts, allowing any component to dispatch
+ * a toast notification. It is inspired by react-hot-toast and manages a queue of toasts.
+ */
+
+const TOAST_LIMIT = 1; // Only show one toast at a time.
+const TOAST_REMOVE_DELAY = 1000000; // A large number to keep the toast in the DOM for exit animations.
 
 type ToasterToast = ToastProps & {
   id: string
@@ -24,6 +30,8 @@ const actionTypes = {
   DISMISS_TOAST: "DISMISS_TOAST",
   REMOVE_TOAST: "REMOVE_TOAST",
 } as const
+
+// --- State Management ---
 
 let count = 0
 
@@ -74,6 +82,12 @@ const addToRemoveQueue = (toastId: string) => {
   toastTimeouts.set(toastId, timeout)
 }
 
+/**
+ * The reducer function that manages the toast state.
+ * @param {State} state - The current state.
+ * @param {Action} action - The action to perform.
+ * @returns {State} The new state.
+ */
 export const reducer = (state: State, action: Action): State => {
   switch (action.type) {
     case "ADD_TOAST":
@@ -93,8 +107,6 @@ export const reducer = (state: State, action: Action): State => {
     case "DISMISS_TOAST": {
       const { toastId } = action
 
-      // ! Side effects ! - This could be extracted into a dismissToast() action,
-      // but I'll keep it here for simplicity
       if (toastId) {
         addToRemoveQueue(toastId)
       } else {
@@ -142,6 +154,11 @@ function dispatch(action: Action) {
 
 type Toast = Omit<ToasterToast, "id">
 
+/**
+ * Function to dispatch a new toast.
+ * @param {Toast} props - The properties of the toast to display.
+ * @returns {{ id: string; dismiss: () => void; update: (props: ToasterToast) => void }}
+ */
 function toast({ ...props }: Toast) {
   const id = genId()
 
@@ -171,6 +188,11 @@ function toast({ ...props }: Toast) {
   }
 }
 
+/**
+ * Custom hook to use the toast system.
+ * It provides the current toasts array and the toast function to dispatch new toasts.
+ * @returns {{ toasts: ToasterToast[]; toast: (props: Toast) => void; dismiss: (toastId?: string) => void }}
+ */
 function useToast() {
   const [state, setState] = React.useState<State>(memoryState)
 

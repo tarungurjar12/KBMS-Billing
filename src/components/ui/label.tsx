@@ -6,6 +6,13 @@ import { cva, type VariantProps } from "class-variance-authority"
 
 import { cn } from "@/lib/utils"
 
+/**
+ * @fileoverview Label component.
+ * This file contains the label component.
+ * It is built on top of the Radix UI Label primitive.
+ * @see https://www.radix-ui.com/primitives/docs/components/label
+ */
+
 const labelVariants = cva(
   "text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
 )

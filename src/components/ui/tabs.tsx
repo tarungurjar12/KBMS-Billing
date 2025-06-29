@@ -6,6 +6,13 @@ import * as TabsPrimitive from "@radix-ui/react-tabs"
 
 import { cn } from "@/lib/utils"
 
+/**
+ * @fileoverview Tabs component.
+ * This file contains the tabs component and its parts.
+ * It is built on top of the Radix UI Tabs primitive.
+ * @see https://www.radix-ui.com/primitives/docs/components/tabs
+ */
+
 const Tabs = TabsPrimitive.Root
 
 const TabsList = React.forwardRef<
@@ -15,7 +22,7 @@ const TabsList = React.forwardRef<
   <TabsPrimitive.List
     ref={ref}
     className={cn(
-      "inline-flex h-auto min-h-10 items-center justify-center rounded-md bg-muted p-1 text-muted-foreground flex-wrap", // Added flex-wrap
+      "inline-flex h-auto min-h-10 items-center justify-center rounded-md bg-muted p-1 text-muted-foreground flex-wrap", // Added flex-wrap for responsiveness
       className
     )}
     {...props}

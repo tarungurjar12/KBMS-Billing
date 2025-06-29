@@ -15,6 +15,13 @@ import {
 import { cn } from "@/lib/utils"
 import { Label } from "@/components/ui/label"
 
+/**
+ * @fileoverview Form components.
+ * This file contains the form components and their parts.
+ * It is built on top of the react-hook-form library and Radix UI primitives.
+ * @see https://react-hook-form.com/
+ */
+
 const Form = FormProvider
 
 type FormFieldContextValue<

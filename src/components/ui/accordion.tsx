@@ -6,6 +6,13 @@ import { ChevronDown } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 
+/**
+ * @fileoverview Accordion component.
+ * This file contains the accordion component and its parts.
+ * It is built on top of the Radix UI Accordion primitive.
+ * @see https://www.radix-ui.com/primitives/docs/components/accordion
+ */
+
 const Accordion = AccordionPrimitive.Root
 
 const AccordionItem = React.forwardRef<

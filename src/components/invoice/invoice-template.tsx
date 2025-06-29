@@ -6,13 +6,30 @@ import { Separator } from "@/components/ui/separator";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import Image from 'next/image';
 
+/**
+ * @fileOverview InvoiceTemplate component.
+ * This is a presentational component responsible for rendering the visual layout of an invoice.
+ * It takes invoice data and company details as props and displays them in a standard,
+ * print-friendly format. It is used for both viewing in a dialog and for generating PDFs.
+ */
+
 interface InvoiceTemplateProps {
   invoice: Invoice;
   companyDetails: CompanyDetailsForInvoice;
 }
 
+/**
+ * Formats a number into a currency string (Indian Rupee).
+ * @param {number} num - The number to format.
+ * @returns {string} The formatted currency string.
+ */
 const formatCurrency = (num: number): string => `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+/**
+ * Generates initials from a name string for use in a fallback logo.
+ * @param {string | undefined} name - The company name.
+ * @returns {string} The capitalized initials (up to 3 characters).
+ */
 const getInitials = (name?: string): string => {
   if (!name) return "NA";
   return name
@@ -23,16 +40,22 @@ const getInitials = (name?: string): string => {
     .substring(0, 3);
 };
 
+/**
+ * Renders a complete invoice layout based on the provided data.
+ * @param {InvoiceTemplateProps} props - The props containing the invoice and company details.
+ * @returns {JSX.Element} The rendered invoice template.
+ */
 export function InvoiceTemplate({ invoice, companyDetails }: InvoiceTemplateProps) {
   return (
     <div className="bg-white p-4 sm:p-8 rounded-lg shadow-sm border border-gray-200 text-gray-800 text-sm font-sans">
-      {/* Header Section */}
+      {/* Header Section: Company info and Invoice details */}
       <div className="flex flex-col sm:flex-row justify-between items-start mb-6 sm:mb-8">
-        {/* Company Information (Left Column on SM+) */}
+        {/* Company Information */}
         <div className="w-full sm:w-1/2 mb-4 sm:mb-0 sm:pr-2">
           {companyDetails.companyLogoUrl ? (
             <Image src={companyDetails.companyLogoUrl} alt={`${companyDetails.companyName || 'Company'} Logo`} width={120} height={60} className="object-contain max-h-16" />
           ) : (
+            // Fallback logo with company initials
             <div className="w-20 h-20 bg-primary text-primary-foreground flex items-center justify-center rounded-md text-2xl font-bold">
               {getInitials(companyDetails.companyName)}
             </div>
@@ -42,7 +65,7 @@ export function InvoiceTemplate({ invoice, companyDetails }: InvoiceTemplateProp
           <p className="text-xs break-words">{companyDetails.companyContact || "Phone: (XXX) XXX-XXXX | Email: contact@company.com"}</p>
           {companyDetails.companyGstin && <p className="text-xs break-words">GSTIN: {companyDetails.companyGstin}</p>}
         </div>
-        {/* Invoice Details (Right Column on SM+) */}
+        {/* Invoice Details */}
         <div className="w-full sm:w-1/2 text-left sm:text-right sm:pl-2">
           <h2 className="text-2xl sm:text-3xl font-semibold text-gray-700 uppercase mb-1">Invoice</h2>
           <p className="text-xs"><strong>Invoice #:</strong> {invoice.invoiceNumber}</p>
@@ -59,9 +82,7 @@ export function InvoiceTemplate({ invoice, companyDetails }: InvoiceTemplateProp
         <div>
           <h3 className="text-xs font-semibold uppercase text-gray-500 mb-1">Bill To:</h3>
           <p className="font-medium text-gray-700">{invoice.customerName}</p>
-          {/* Add customer address, contact etc. if available in invoice.customerId or fetched separately */}
-          {/* <p className="text-xs">Customer Address Line 1</p> */}
-          {/* <p className="text-xs">Customer Contact</p> */}
+          {/* Future enhancement: Customer address/contact could be fetched from DB using customerId */}
            <p className="text-xs">Customer ID: {invoice.customerId}</p>
         </div>
       </div>
@@ -84,6 +105,7 @@ export function InvoiceTemplate({ invoice, companyDetails }: InvoiceTemplateProp
                 <TableCell className="px-2 py-2 whitespace-nowrap align-top">{index + 1}</TableCell>
                 <TableCell className="px-2 py-2 whitespace-normal break-words align-top" style={{ whiteSpace: 'pre-line' }}>
                     {item.name}
+                    {/* Display unit of measure if it's not a generic 'details' entry */}
                     {item.unitOfMeasure !== 'details' && (
                          <span className="block text-gray-500 text-[10px]">({item.unitOfMeasure})</span>
                     )}

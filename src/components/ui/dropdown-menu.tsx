@@ -6,6 +6,13 @@ import { Check, ChevronRight, Circle } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 
+/**
+ * @fileoverview Dropdown Menu component.
+ * This file contains the dropdown menu component and its parts.
+ * It is built on top of the Radix UI Dropdown Menu primitive.
+ * @see https://www.radix-ui.com/primitives/docs/components/dropdown-menu
+ */
+
 const DropdownMenu = DropdownMenuPrimitive.Root
 
 const DropdownMenuTrigger = DropdownMenuPrimitive.Trigger

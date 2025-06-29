@@ -5,6 +5,13 @@ import * as RechartsPrimitive from "recharts"
 
 import { cn } from "@/lib/utils"
 
+/**
+ * @fileoverview Chart components.
+ * This file contains the chart components and their parts.
+ * They are built on top of the Recharts library.
+ * @see https://recharts.org/
+ */
+
 // Format: { THEME_NAME: CSS_SELECTOR }
 const THEMES = { light: "", dark: ".dark" } as const
 

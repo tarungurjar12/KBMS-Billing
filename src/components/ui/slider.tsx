@@ -5,6 +5,13 @@ import * as SliderPrimitive from "@radix-ui/react-slider"
 
 import { cn } from "@/lib/utils"
 
+/**
+ * @fileoverview Slider component.
+ * This file contains the slider component.
+ * It is built on top of the Radix UI Slider primitive.
+ * @see https://www.radix-ui.com/primitives/docs/components/slider
+ */
+
 const Slider = React.forwardRef<
   React.ElementRef<typeof SliderPrimitive.Root>,
   React.ComponentPropsWithoutRef<typeof SliderPrimitive.Root>
