@@ -253,7 +253,7 @@ export default function ManageSellersPage() {
             {isLoadingDetails ? (<div className="flex-grow flex items-center justify-center"><Activity className="h-8 w-8 animate-spin text-primary" /> <span className="ml-2">Loading details...</span></div>)
             : selectedSellerForDetails ? (
             <ScrollArea className="flex-grow pr-2 -mr-2">
-                <div className="space-y-6 py-2 min-w-[700px] md:min-w-full">
+                <div className="space-y-6 py-2 overflow-x-auto">
                 <Card><CardHeader><CardTitle className="text-lg">Financial Summary</CardTitle></CardHeader>
                     <CardContent className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
                         <div><p className="text-muted-foreground">Total Paid (to Seller):</p><p className="font-semibold text-green-600">{formatCurrency(selectedSellerForDetails.totalAmountPaidToSeller)}</p></div>
@@ -266,8 +266,8 @@ export default function ManageSellersPage() {
                 <Card><CardHeader><CardTitle className="text-lg">Payment History ({selectedSellerForDetails.payments.length})</CardTitle></CardHeader>
                     <CardContent>
                         {selectedSellerForDetails.payments.length > 0 ? (
-                        <div>
-                            <Table className="text-xs"><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Amount</TableHead><TableHead>Method</TableHead><TableHead>Status</TableHead><TableHead>Ref ID</TableHead></TableRow></TableHeader>
+                        <div className="overflow-x-auto">
+                            <Table className="text-xs min-w-[600px]"><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Amount</TableHead><TableHead>Method</TableHead><TableHead>Status</TableHead><TableHead>Ref ID</TableHead></TableRow></TableHeader>
                             <TableBody>{selectedSellerForDetails.payments.slice(0,5).map(p => (<TableRow key={p.id}><TableCell>{p.date}</TableCell><TableCell>{p.displayAmountPaid}</TableCell><TableCell>{p.method || 'N/A'}</TableCell><TableCell><Badge variant={p.status === "Completed" || p.status === "Sent" ? "default" : "secondary"}>{p.status}</Badge></TableCell><TableCell>{p.relatedInvoiceId || p.ledgerEntryId || 'N/A'}</TableCell></TableRow>))}
                             </TableBody></Table>
                         </div>
@@ -278,8 +278,8 @@ export default function ManageSellersPage() {
                 <Card><CardHeader><CardTitle className="text-lg">Ledger Entries (Purchases) ({selectedSellerForDetails.ledgerEntries.length})</CardTitle></CardHeader>
                     <CardContent>
                         {selectedSellerForDetails.ledgerEntries.length > 0 ? (<>
-                        <div>
-                        <Table className="text-xs"><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Items</TableHead><TableHead className="text-right">Total</TableHead><TableHead>Pymt Status</TableHead></TableRow></TableHeader>
+                        <div className="overflow-x-auto">
+                        <Table className="text-xs min-w-[600px]"><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Items</TableHead><TableHead className="text-right">Total</TableHead><TableHead>Pymt Status</TableHead></TableRow></TableHeader>
                         <TableBody>{paginatedLedgerEntries.map(le => (<TableRow key={le.id}><TableCell>{le.date}</TableCell><TableCell>{le.items.map(i => i.productName).join(', ').substring(0,30)}...</TableCell><TableCell className="text-right">{formatCurrency(le.grandTotal)}</TableCell><TableCell><Badge variant={le.paymentStatus === 'paid' ? 'default' : (le.paymentStatus === 'partial' ? 'outline' : 'secondary')}>{le.paymentStatus}</Badge></TableCell></TableRow>))}
                         </TableBody></Table>
                         </div>

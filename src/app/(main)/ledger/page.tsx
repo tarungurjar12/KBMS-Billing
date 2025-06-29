@@ -513,7 +513,8 @@ export default function DailyLedgerPage() {
             const q = query(collection(db, "ledgerEntries"),
                 where("entityId", "==", entityId),
                 where("type", "==", entityType),
-                where("paymentStatus", "in", ["pending", "partial"])
+                where("paymentStatus", "in", ["pending", "partial"]),
+                orderBy("date", "asc") // Oldest first
             );
             const snapshot = await getDocs(q);
             const items = snapshot.docs
@@ -654,11 +655,13 @@ export default function DailyLedgerPage() {
                 const selectedPendingIds = data.pendingLedgerIdsToSettle || [];
                 let amountToApply = data.paymentAmount || 0;
                 
-                for (const entryId of selectedPendingIds) {
+                // Fetch all pending entries at once to adhere to transaction rules
+                const pendingEntryRefs = (data.pendingLedgerIdsToSettle || []).map(id => doc(db, "ledgerEntries", id));
+                const pendingEntrySnaps = await Promise.all(pendingEntryRefs.map(ref => transaction.get(ref)));
+
+                for (const ledgerSnap of pendingEntrySnaps) {
                     if (amountToApply <= 0) break;
-                    const ledgerRef = doc(db, "ledgerEntries", entryId);
-                    const ledgerSnap = await transaction.get(ledgerRef);
-                    if (!ledgerSnap.exists()) throw new Error(`Pending entry ${entryId} not found.`);
+                    if (!ledgerSnap.exists()) throw new Error(`Pending entry ${ledgerSnap.id} not found.`);
                     
                     const entryData = ledgerSnap.data() as LedgerEntry;
                     const remainingOnEntry = entryData.remainingAmount || 0;
@@ -667,7 +670,7 @@ export default function DailyLedgerPage() {
                     const newRemaining = remainingOnEntry - paymentForThisEntry;
                     const newAmountPaid = (entryData.amountPaidNow || 0) + paymentForThisEntry;
                     
-                    transaction.update(ledgerRef, {
+                    transaction.update(ledgerSnap.ref, {
                         paymentStatus: newRemaining <= 0 ? 'paid' : 'partial',
                         amountPaidNow: newAmountPaid,
                         remainingAmount: newRemaining,
@@ -686,7 +689,8 @@ export default function DailyLedgerPage() {
                     notes: `Payment settling pending ledger entries. ${data.notes || ''}`.trim(), 
                     settledLedgerEntryIds: selectedPendingIds, 
                     createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
-                    transactionId: null, originalInvoiceAmount: null, remainingBalanceOnInvoice: null, relatedInvoiceId: null
+                    transactionId: null, originalInvoiceAmount: null, remainingBalanceOnInvoice: null, relatedInvoiceId: null,
+                    ledgerEntryId: null,
                 });
             });
             toast({ title: "Payment Recorded", description: "Payment successfully applied to pending entries." });
@@ -715,11 +719,11 @@ export default function DailyLedgerPage() {
                 ...data, items: itemsForSave, subTotal: subTotalForSave, gstApplied: data.applyGst,
                 taxAmount: taxAmountForSave, grandTotal: grandTotalForSave,
                 amountPaidNow: amountPaidForLedgerSave, remainingAmount: remainingAmountForLedgerSave,
-                originalTransactionAmount: grandTotalForSave, paymentAmount: data.entryPurpose === 'Payment Record' ? data.paymentAmount : undefined,
+                originalTransactionAmount: grandTotalForSave,
             };
 
             const sanitizedUpdatedData = { ...updatedLedgerData,
-                paymentAmount: updatedLedgerData.paymentAmount ?? null, amountPaidNow: updatedLedgerData.amountPaidNow ?? null,
+                paymentAmount: null, amountPaidNow: updatedLedgerData.amountPaidNow ?? null,
                 items: updatedLedgerData.items ?? [], notes: updatedLedgerData.notes ?? null,
                 relatedInvoiceId: updatedLedgerData.relatedInvoiceId ?? null, paymentMethod: updatedLedgerData.paymentMethod ?? null,
                 createdByUid: editingLedgerEntry.createdByUid, createdByName: editingLedgerEntry.createdByName, createdAt: editingLedgerEntry.createdAt,
@@ -768,13 +772,10 @@ export default function DailyLedgerPage() {
                 if (data.entryPurpose === "Ledger Record") { (data.items || []).forEach(item => productIdsInvolved.add(item.productId)); }
                 if (originalLedgerEntryData?.entryPurpose === "Ledger Record") { originalLedgerEntryData.items.forEach(item => productIdsInvolved.add(item.productId)); }
                 
+                const productRefs: DocumentReference[] = Array.from(productIdsInvolved).map(id => doc(db, "products", id));
+                const productSnaps = await Promise.all(productRefs.map(ref => transaction.get(ref)));
                 const productSnapshots = new Map<string, DocumentSnapshot<DocumentData>>();
-                for (const productId of productIdsInvolved) {
-                    const productRefFromDb = doc(db, "products", productId);
-                    const productSnap = await transaction.get(productRefFromDb);
-                    if (!productSnap.exists()) throw new Error(`Product ID ${productId} not found.`);
-                    productSnapshots.set(productId, productSnap);
-                }
+                productSnaps.forEach((snap, index) => productSnapshots.set(productRefs[index].id, snap));
                 
                 let subTotalForSave: number, taxAmountForSave: number, grandTotalForSave: number;
                 let itemsForSave: LedgerItem[], amountPaidForLedgerSave: number, remainingAmountForLedgerSave: number;
@@ -793,8 +794,8 @@ export default function DailyLedgerPage() {
 
                 const productStockUpdates: Array<{ ref: DocumentReference; newStock: number }> = [];
                 if (data.entryPurpose === "Ledger Record") {
-                    for (const productId of productIdsInvolved) {
-                        const productSnap = productSnapshots.get(productId)!;
+                    productSnapshots.forEach((productSnap, productId) => {
+                        if (!productSnap.exists()) throw new Error(`Product ID ${productId} not found.`);
                         const currentDbStock = productSnap.data()!.stock as number;
                         let calculatedNewStock = currentDbStock;
                         
@@ -807,9 +808,9 @@ export default function DailyLedgerPage() {
 
                         if (calculatedNewStock < 0) throw new Error(`Insufficient stock for ${productSnap.data()!.name}.`);
                         if (calculatedNewStock !== currentDbStock) productStockUpdates.push({ ref: productSnap.ref, newStock: calculatedNewStock });
-                    }
+                    });
                 }
-
+                
                 const finalLedgerDataToCommit: Partial<LedgerEntry> & { updatedAt: any } = { 
                     date: data.date, type: data.type, entryPurpose: data.entryPurpose, entityType: data.entityType, entityId: data.entityId, entityName: data.entityName, 
                     items: itemsForSave, subTotal: subTotalForSave, gstApplied: data.entryPurpose === "Ledger Record" ? data.applyGst : false, taxAmount: taxAmountForSave, grandTotal: grandTotalForSave,
@@ -827,9 +828,10 @@ export default function DailyLedgerPage() {
                 
                 const newEntryRequiresPayment = data.entryPurpose === "Ledger Record" && (data.paymentStatus === 'paid' || data.paymentStatus === 'partial');
                 const oldPaymentDocRef = originalLedgerEntryData?.associatedPaymentRecordId ? doc(db, "payments", originalLedgerEntryData.associatedPaymentRecordId) : null;
+                if(oldPaymentDocRef) await transaction.get(oldPaymentDocRef);
 
                 if (newEntryRequiresPayment) {
-                    const paymentDataForSave: Partial<PaymentRecord> & { ledgerEntryId: string, createdAt: any } = {
+                    const paymentDataForSave: Partial<PaymentRecord> & { createdAt?: any } = {
                         type: data.type === 'sale' ? 'customer' : 'supplier', 
                         relatedEntityName: data.entityName, relatedEntityId: data.entityId ?? null,
                         relatedInvoiceId: data.relatedInvoiceId ?? null, date: format(parseISO(data.date), "MMM dd, yyyy"), isoDate: data.date, 
@@ -842,7 +844,7 @@ export default function DailyLedgerPage() {
                     };
 
                     if (oldPaymentDocRef) {
-                        transaction.set(oldPaymentDocRef, {...paymentDataForSave, createdAt: originalLedgerEntryData?.createdAt ?? serverTimestamp()}, { merge: true });
+                        transaction.set(oldPaymentDocRef, paymentDataForSave, { merge: true });
                     } else {
                         const newPaymentDocRef = doc(collection(db, "payments"));
                         finalLedgerDataToCommit.associatedPaymentRecordId = newPaymentDocRef.id;
@@ -912,10 +914,12 @@ export default function DailyLedgerPage() {
             if (entryData.associatedPaymentRecordId) {
                 paymentRef = doc(db, "payments", entryData.associatedPaymentRecordId);
             }
-
+            
+            // READS FIRST
             const productSnaps = await Promise.all(productRefs.map(ref => transaction.get(ref)));
             if (paymentRef) await transaction.get(paymentRef);
             
+            // WRITES SECOND
             productSnaps.forEach((productSnap, index) => {
                 if (!productSnap.exists()) {
                     console.warn(`Product with ID ${productRefs[index].id} not found during deletion, skipping stock update.`);
