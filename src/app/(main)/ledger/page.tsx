@@ -34,9 +34,11 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { cn } from "@/lib/utils";
 import { Checkbox } from '@/components/ui/checkbox';
+import { useSearchParams, useRouter } from 'next/navigation';
 
 /**
  * @fileOverview Daily Ledger page for recording sales, purchases, and payment postings.
+ * It supports filtering entries by date or by URL parameters for specific entities.
  */
 
 export interface LedgerItem {
@@ -185,7 +187,10 @@ const getCookie = (name: string): string | undefined => {
 };
 
 export default function DailyLedgerPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { toast } = useToast();
+  
   const [isLoading, setIsLoading] = useState(true);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [sellers, setSellers] = useState<Seller[]>([]);
@@ -214,6 +219,12 @@ export default function DailyLedgerPage() {
   const [isLoadingPendingEntries, setIsLoadingPendingEntries] = useState(false);
 
   const [currentUserRole, setCurrentUserRole] = useState<'admin' | 'store_manager' | undefined>();
+
+  // State for URL-based filtering
+  const entityNameFromUrl = searchParams.get('entityName');
+  const paymentStatusFromUrl = searchParams.get('paymentStatus');
+  const typeFromUrl = searchParams.get('type');
+  const [isFilteredByUrl, setIsFilteredByUrl] = useState(!!entityNameFromUrl);
 
   const form = useForm<LedgerFormValues>({
     resolver: zodResolver(ledgerEntrySchema),
@@ -259,19 +270,37 @@ export default function DailyLedgerPage() {
         setAllInvoices(invoiceSnap.docs.map(d => ({id: d.id, ...d.data()} as Invoice)));
 
         let fetchedEntries: LedgerEntry[] = [];
-        if (role === 'store_manager' && currentUser) {
-            const salesQuery = query(collection(db, "ledgerEntries"), where("date", "==", date), where("type", "==", "sale"));
-            const salesSnapshot = await getDocs(salesQuery);
-
-            const purchasesQuery = query(collection(db, "ledgerEntries"), where("date", "==", date), where("type", "==", "purchase"), where("createdByUid", "==", currentUser.uid));
-            const purchasesSnapshot = await getDocs(purchasesQuery);
-            
-            const salesEntries = salesSnapshot.docs.map(d => ({ id: d.id, ...d.data() } as LedgerEntry));
-            const purchaseEntries = purchasesSnapshot.docs.map(d => ({ id: d.id, ...d.data() } as LedgerEntry));
-            fetchedEntries = [...salesEntries, ...purchaseEntries].sort((a, b) => b.createdAt.toMillis() - a.createdAt.toMillis());
-
+        
+        let finalQuery;
+        if (isFilteredByUrl && entityNameFromUrl && paymentStatusFromUrl && typeFromUrl) {
+            let q = query(
+                collection(db, "ledgerEntries"),
+                where("entityName", "==", entityNameFromUrl),
+                where("type", "==", typeFromUrl)
+            );
+            if (paymentStatusFromUrl === 'pending_partial') {
+                q = query(q, where("paymentStatus", "in", ["pending", "partial"]));
+            }
+            if (role === 'store_manager' && typeFromUrl === 'purchase' && currentUser) {
+                q = query(q, where("createdByUid", "==", currentUser.uid));
+            }
+            finalQuery = query(q, orderBy("createdAt", "desc"));
         } else {
-            const entrySnap = await getDocs(query(collection(db, "ledgerEntries"), where("date", "==", date), orderBy("createdAt", "desc")));
+            // Original daily view logic
+            if (role === 'store_manager' && currentUser) {
+                const salesQuery = query(collection(db, "ledgerEntries"), where("date", "==", date), where("type", "==", "sale"), orderBy("createdAt", "desc"));
+                const purchasesQuery = query(collection(db, "ledgerEntries"), where("date", "==", date), where("type", "==", "purchase"), where("createdByUid", "==", currentUser.uid), orderBy("createdAt", "desc"));
+                const [salesSnapshot, purchasesSnapshot] = await Promise.all([getDocs(salesQuery), getDocs(purchasesQuery)]);
+                const salesEntries = salesSnapshot.docs.map(d => ({ id: d.id, ...d.data() } as LedgerEntry));
+                const purchaseEntries = purchasesSnapshot.docs.map(d => ({ id: d.id, ...d.data() } as LedgerEntry));
+                fetchedEntries = [...salesEntries, ...purchaseEntries].sort((a, b) => b.createdAt.toMillis() - a.createdAt.toMillis());
+            } else {
+                finalQuery = query(collection(db, "ledgerEntries"), where("date", "==", date), orderBy("createdAt", "desc"));
+            }
+        }
+        
+        if (finalQuery) {
+            const entrySnap = await getDocs(finalQuery);
             fetchedEntries = entrySnap.docs.map(d => ({ id: d.id, ...d.data() } as LedgerEntry));
         }
 
@@ -310,7 +339,7 @@ export default function DailyLedgerPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [toast, formatCurrency]);
+  }, [toast, formatCurrency, isFilteredByUrl, entityNameFromUrl, paymentStatusFromUrl, typeFromUrl]);
   
   const currentEntityTypeOptions = useMemo(() => {
     const type = form.watch("type");
@@ -418,15 +447,18 @@ export default function DailyLedgerPage() {
         default: return 'bg-gray-100 text-gray-800 border-gray-200 dark:bg-gray-900/50 dark:text-gray-200 dark:border-gray-700';
     }
   };
+  
+  useEffect(() => {
+    setIsFilteredByUrl(!!searchParams.get('entityName'));
+  }, [searchParams]);
 
   useEffect(() => {
     const role = getCookie('userRole');
     if (role === 'admin' || role === 'store_manager') {
       setCurrentUserRole(role as 'admin' | 'store_manager');
     }
-  }, []);
-
-  useEffect(() => { fetchData(selectedDate); }, [selectedDate, fetchData]);
+    fetchData(selectedDate);
+  }, [selectedDate, fetchData]);
   
   useEffect(() => { 
     if (!isLedgerFormOpen) { 
@@ -473,7 +505,7 @@ export default function DailyLedgerPage() {
             form.setValue("items", []); 
         } else { // Ledger Record
             if (currentEntityType === "unknown_customer" || currentEntityType === "unknown_seller") {
-                form.setValue("paymentStatus", 'paid');
+                form.setValue("paymentStatus", "paid");
                 form.setValue("paymentMethod", form.getValues("paymentMethod") || 'Cash');
             } else if (transactionTypeWatcher === 'sale') {
                 form.setValue("entityType", 'customer');
@@ -1038,15 +1070,27 @@ export default function DailyLedgerPage() {
     });
   }, [ledgerEntries, activeLedgerTab, ledgerSearchTerm, selectedUserFilterName, formatCurrency]);
   
+  const clearUrlFilters = () => {
+    setIsFilteredByUrl(false);
+    router.replace('/ledger', { scroll: false });
+    fetchData(selectedDate);
+  };
+  
   if (isLoading && !customers.length && !products.length && !sellers.length && !ledgerEntries.length) {
     return <PageHeader title="Daily Ledger" description="Loading essential data..." icon={BookOpen} />;
   }
 
+  const pageDescription = isFilteredByUrl
+    ? `Showing pending & partial entries for ${entityNameFromUrl}`
+    : "Record daily sales, purchases, and manage stock movements.";
+
+  const pageTitle = isFilteredByUrl ? "Filtered Ledger View" : "Daily Ledger";
+
   return (
     <>
       <PageHeader
-        title="Daily Ledger"
-        description="Record daily sales, purchases, and manage stock movements."
+        title={pageTitle}
+        description={pageDescription}
         icon={BookOpen}
         actions={
             <Button onClick={() => { setEditingLedgerEntry(null); setIsLedgerFormOpen(true); }} className="mt-4 sm:mt-0">
@@ -1430,15 +1474,28 @@ export default function DailyLedgerPage() {
         <CardHeader>
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
-              <CardTitle className="font-headline text-foreground">Ledger Entries for {format(parseISO(selectedDate), "MMMM dd, yyyy")}</CardTitle>
-              <CardDescription>Browse recorded transactions for the selected date. {currentUserRole === 'admin' ? "Admins can edit/delete." : "Managers can request updates."}</CardDescription>
+              <CardTitle className="font-headline text-foreground">
+                {isFilteredByUrl ? "Filtered Ledger View" : `Ledger Entries for ${format(parseISO(selectedDate), "MMMM dd, yyyy")}`}
+              </CardTitle>
+              <CardDescription>
+                {isFilteredByUrl 
+                    ? `Showing pending & partial entries for ${entityNameFromUrl}` 
+                    : `Browse recorded transactions. ${currentUserRole === 'admin' ? "Admins can edit/delete." : "Managers can request updates."}`
+                }
+              </CardDescription>
             </div>
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
-                 <Input type="date" value={selectedDate} onChange={e => {setSelectedDate(e.target.value); setSelectedUserFilterName(null);}} className="w-full sm:w-auto h-10"/>
+                 <Input type="date" value={selectedDate} onChange={e => {setSelectedDate(e.target.value); if(isFilteredByUrl) clearUrlFilters();}} className="w-full sm:w-auto h-10" disabled={isFilteredByUrl}/>
                  <div className="relative w-full sm:w-64">
                      <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                      <Input placeholder="Search by entity, product, user..." className="pl-8 h-10" value={ledgerSearchTerm} onChange={e => setLedgerSearchTerm(e.target.value)} />
                  </div>
+                 {isFilteredByUrl && (
+                    <Button variant="ghost" onClick={clearUrlFilters} className="w-full sm:w-auto h-10">
+                        <XCircle className="mr-2 h-4 w-4" />
+                        Clear Filter
+                    </Button>
+                 )}
             </div>
           </div>
           {selectedUserFilterName && (
@@ -1470,7 +1527,8 @@ export default function DailyLedgerPage() {
                 <p className="text-xl font-semibold">No Ledger Entries Found</p>
                 <p className="text-sm">
                     {ledgerSearchTerm
-                        ? `No entries match your search for "${ledgerSearchTerm}" on this date.`
+                        ? `No entries match your search for "${ledgerSearchTerm}"`
+                        : isFilteredByUrl ? `No pending/partial entries found for "${entityNameFromUrl}"`
                         : selectedUserFilterName ? `No entries for user "${selectedUserFilterName}" on this date or for this tab.`
                         : `There are no ledger entries recorded for ${format(parseISO(selectedDate), "MMMM dd, yyyy")}.`
                     }

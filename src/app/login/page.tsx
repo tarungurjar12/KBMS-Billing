@@ -245,7 +245,7 @@ export default function LoginPage() {
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon" aria-label="Settings">
-              <Cog className="h-6 w-6 text-muted-foreground hover:text-primary transition-colors" />
+              <Cog className="h-8 w-8 text-muted-foreground hover:text-primary transition-colors" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
@@ -290,6 +290,9 @@ export default function LoginPage() {
           <Button className="w-full" onClick={handleLogin} disabled={loading}>
             {loading ? 'Logging in...' : 'Login'}
           </Button>
+           <CardDescription className="text-center text-xs px-4 pt-2">
+                First-time Admin? Click the <Cog className="inline h-3 w-3 align-middle" /> icon at the top-right to register your company.
+           </CardDescription>
         </CardFooter>
       </Card>
     </div>
