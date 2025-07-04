@@ -20,11 +20,12 @@ import { collection, addDoc, getDocs, doc, updateDoc, deleteDoc, serverTimestamp
 import { db, auth } from '@/lib/firebase/firebaseConfig'; 
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { PaymentRecord } from './../payments/page';
-import type { LedgerEntry, LedgerItem } from './../ledger/page';
+import type { LedgerEntry } from './../ledger/page';
 import { format, parseISO } from 'date-fns';
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
+import { Loader2 } from "lucide-react";
 
 export interface Customer {
   id: string; 
@@ -308,7 +309,7 @@ export default function CustomersPage() {
                 <DialogTitle>Customer Details: {selectedCustomerForDetails?.name}</DialogTitle>
                 <DialogDescription>Comprehensive overview of customer activity and financials.</DialogDescription>
             </DialogHeader>
-            {isLoadingDetails ? (<div className="flex-grow flex items-center justify-center"><Activity className="h-8 w-8 animate-spin text-primary" /> <span className="ml-2">Loading details...</span></div>)
+            {isLoadingDetails ? (<div className="flex-grow flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-primary" /> <span className="ml-2">Loading details...</span></div>)
             : selectedCustomerForDetails ? (
             <ScrollArea className="flex-grow pr-2 -mr-2">
                 <div className="space-y-6 py-2 overflow-x-auto">

@@ -18,15 +18,15 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { useToast } from "@/hooks/use-toast";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { collection, addDoc, getDocs, doc, updateDoc, deleteDoc, serverTimestamp, query, orderBy, Timestamp, where, limit } from 'firebase/firestore';
-import { db } from '@/lib/firebase/firebaseConfig';
+import { db, auth } from '@/lib/firebase/firebaseConfig';
 import { useRouter } from 'next/navigation'; 
 import type { PaymentRecord } from './../payments/page';
-import type { LedgerEntry, LedgerItem } from './../ledger/page';
+import type { LedgerEntry } from './../ledger/page';
 import { format, parseISO } from 'date-fns';
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
-
+import { Loader2 } from "lucide-react";
 
 export interface Seller {
   id: string; 
@@ -250,7 +250,7 @@ export default function ManageSellersPage() {
       <Dialog open={isDetailsViewOpen} onOpenChange={(isOpen) => { if(!isOpen) setSelectedSellerForDetails(null); setIsDetailsViewOpen(isOpen); }}>
         <DialogContent className="max-w-3xl w-[95vw] h-[90vh] flex flex-col">
             <DialogHeader><DialogTitle>Seller Details: {selectedSellerForDetails?.name}</DialogTitle><DialogDescription>Comprehensive overview of seller activity and financials.</DialogDescription></DialogHeader>
-            {isLoadingDetails ? (<div className="flex-grow flex items-center justify-center"><Activity className="h-8 w-8 animate-spin text-primary" /> <span className="ml-2">Loading details...</span></div>)
+            {isLoadingDetails ? (<div className="flex-grow flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-primary" /> <span className="ml-2">Loading details...</span></div>)
             : selectedSellerForDetails ? (
             <ScrollArea className="flex-grow pr-2 -mr-2">
                 <div className="space-y-6 py-2 overflow-x-auto">

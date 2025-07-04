@@ -1,13 +1,13 @@
 
-
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useSearchParams } from 'next/navigation';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PageHeader } from "@/components/page-header";
-import { Package, PlusCircle, MoreHorizontal, Edit, Trash2, PackageSearch, FileWarning } from "lucide-react"; 
+import { Package, PlusCircle, MoreHorizontal, Edit, Trash2, FileWarning } from "lucide-react"; 
 import Image from "next/image"; 
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
@@ -22,6 +22,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDes
 import { useToast } from "@/hooks/use-toast";
 import { collection, addDoc, getDocs, doc, updateDoc, deleteDoc, serverTimestamp, query, orderBy, Timestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase/firebaseConfig';
+import { cn } from "@/lib/utils";
 
 /**
  * @fileOverview Page for Admin to manage the Product Database in Firestore.
@@ -77,7 +78,9 @@ export default function ProductsPage() {
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [productToDelete, setProductToDelete] = useState<Product | null>(null);
-
+  const [highlightedProductId, setHighlightedProductId] = useState<string | null>(null);
+  
+  const searchParams = useSearchParams();
   const { toast } = useToast();
 
   const form = useForm<ProductFormValues>({
@@ -128,7 +131,12 @@ export default function ProductsPage() {
 
   useEffect(() => {
     fetchProducts();
-  }, [fetchProducts]);
+    const highlightId = searchParams.get('highlight');
+    if (highlightId) {
+        setHighlightedProductId(highlightId);
+        setTimeout(() => setHighlightedProductId(null), 3000); // Highlight for 3 seconds
+    }
+  }, [fetchProducts, searchParams]);
 
   useEffect(() => {
     if (isFormDialogOpen) {
@@ -309,7 +317,7 @@ export default function ProductsPage() {
                   </TableRow></TableHeader>
                   <TableBody>
                     {productList.map((product) => (
-                      <TableRow key={product.id}>
+                      <TableRow key={product.id} className={cn(highlightedProductId === product.id && 'bg-primary/10 transition-colors duration-1000 ease-in-out')}>
                         <TableCell>
                           <Image 
                               src={product.imageUrl} 
@@ -347,7 +355,7 @@ export default function ProductsPage() {
               {/* Mobile View */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 lg:hidden">
                 {productList.map((product) => (
-                  <Card key={product.id + '-mobile'} className="flex flex-col">
+                  <Card key={product.id + '-mobile'} className={cn("flex flex-col", highlightedProductId === product.id && 'bg-primary/10 ring-2 ring-primary')}>
                     <CardHeader className="flex flex-row items-start justify-between gap-4 pb-3">
                       <div className="flex items-start gap-3">
                         <Image 

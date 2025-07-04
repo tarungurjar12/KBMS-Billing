@@ -328,28 +328,49 @@ export default function MyProfilePage() {
       <PageHeader title="My Profile" description="View and update your personal & company information." icon={UserCircle}/>
       <form onSubmit={handleUpdateProfile}>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <Card className="md:col-span-1 shadow-lg rounded-xl">
-                <CardHeader>
-                    <CardTitle className="font-headline text-foreground text-xl">Personal Details</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    <div className="space-y-1.5">
-                        <Label htmlFor="email" className="flex items-center text-sm"><Mail className="mr-2 h-4 w-4 text-muted-foreground"/>Email (Login ID)</Label>
-                        <Input id="email" value={userProfile.email} disabled readOnly className="bg-muted/50"/>
-                        {userProfile.role && <p className="text-xs text-muted-foreground pt-1">Role: <span className="font-semibold capitalize">{userProfile.role.replace('_', ' ')}</span></p>}
-                        {userProfile.companyId && <p className="text-xs text-muted-foreground pt-1">Company ID: <span className="font-semibold">{userProfile.companyId}</span></p>}
-                    </div>
-                    <div className="space-y-1.5">
-                        <Label htmlFor="name" className="flex items-center text-sm"><UserCircle className="mr-2 h-4 w-4 text-muted-foreground"/>Display Name</Label>
-                        <Input id="name" placeholder="Your display name" value={name} onChange={(e) => setName(e.target.value)} disabled={isUpdating} autoComplete="name"/>
-                    </div>
-                    <div className="space-y-1.5">
-                        <Label htmlFor="contactNumber" className="flex items-center text-sm"><Phone className="mr-2 h-4 w-4 text-muted-foreground"/>Personal Contact Number</Label>
-                        <Input id="contactNumber" placeholder="Your contact number" value={contactNumber} onChange={(e) => setContactNumber(e.target.value)} disabled={isUpdating} autoComplete="tel"/>
-                    </div>
-                </CardContent>
-            </Card>
-
+            <div className="md:col-span-1 flex flex-col gap-6">
+                <Card className="shadow-lg rounded-xl">
+                    <CardHeader>
+                        <CardTitle className="font-headline text-foreground text-xl">Personal Details</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        <div className="space-y-1.5">
+                            <Label htmlFor="email" className="flex items-center text-sm"><Mail className="mr-2 h-4 w-4 text-muted-foreground"/>Email (Login ID)</Label>
+                            <Input id="email" value={userProfile.email} disabled readOnly className="bg-muted/50"/>
+                            {userProfile.role && <p className="text-xs text-muted-foreground pt-1">Role: <span className="font-semibold capitalize">{userProfile.role.replace('_', ' ')}</span></p>}
+                            {userProfile.companyId && <p className="text-xs text-muted-foreground pt-1">Company ID: <span className="font-semibold">{userProfile.companyId}</span></p>}
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label htmlFor="name" className="flex items-center text-sm"><UserCircle className="mr-2 h-4 w-4 text-muted-foreground"/>Display Name</Label>
+                            <Input id="name" placeholder="Your display name" value={name} onChange={(e) => setName(e.target.value)} disabled={isUpdating} autoComplete="name"/>
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label htmlFor="contactNumber" className="flex items-center text-sm"><Phone className="mr-2 h-4 w-4 text-muted-foreground"/>Personal Contact Number</Label>
+                            <Input id="contactNumber" placeholder="Your contact number" value={contactNumber} onChange={(e) => setContactNumber(e.target.value)} disabled={isUpdating} autoComplete="tel"/>
+                        </div>
+                    </CardContent>
+                </Card>
+                 <Card className="shadow-lg rounded-xl">
+                    <CardHeader>
+                        <CardTitle className="font-headline text-foreground text-xl flex items-center"><ShieldCheck className="mr-2 h-5 w-5 text-primary" />Change Password</CardTitle>
+                        <CardDescription className="text-xs">Leave fields blank if you do not want to change password.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        <div className="space-y-1.5">
+                            <Label htmlFor="currentPassword">Current Password</Label>
+                            <Input id="currentPassword" type="password" placeholder="Required to change" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} disabled={isUpdating} autoComplete="current-password"/>
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label htmlFor="newPassword">New Password</Label>
+                            <Input id="newPassword" type="password" placeholder="Min. 6 characters" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} disabled={isUpdating} autoComplete="new-password"/>
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label htmlFor="confirmNewPassword">Confirm New Password</Label>
+                            <Input id="confirmNewPassword" type="password" placeholder="Re-enter new password" value={confirmNewPassword} onChange={(e) => setConfirmNewPassword(e.target.value)} disabled={isUpdating} autoComplete="new-password"/>
+                        </div>
+                    </CardContent>
+                </Card>
+            </div>
             <Card className="md:col-span-2 shadow-lg rounded-xl">
                 <CardHeader>
                     <CardTitle className="font-headline text-foreground text-xl">Company Information</CardTitle>
@@ -419,29 +440,6 @@ export default function MyProfilePage() {
                 </CardContent>
             </Card>
         </div>
-
-        <Card className="mt-6 shadow-lg rounded-xl">
-            <CardHeader>
-                <CardTitle className="font-headline text-foreground text-xl flex items-center"><ShieldCheck className="mr-2 h-5 w-5 text-primary" />Change Password</CardTitle>
-                <CardDescription className="text-xs">Leave fields blank if you do not want to change password.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div className="space-y-1.5">
-                        <Label htmlFor="currentPassword">Current Password</Label>
-                        <Input id="currentPassword" type="password" placeholder="Required to change" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} disabled={isUpdating} autoComplete="current-password"/>
-                    </div>
-                    <div className="space-y-1.5">
-                        <Label htmlFor="newPassword">New Password</Label>
-                        <Input id="newPassword" type="password" placeholder="Min. 6 characters" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} disabled={isUpdating} autoComplete="new-password"/>
-                    </div>
-                    <div className="space-y-1.5">
-                        <Label htmlFor="confirmNewPassword">Confirm New Password</Label>
-                        <Input id="confirmNewPassword" type="password" placeholder="Re-enter new password" value={confirmNewPassword} onChange={(e) => setConfirmNewPassword(e.target.value)} disabled={isUpdating} autoComplete="new-password"/>
-                    </div>
-                </div>
-            </CardContent>
-        </Card>
 
         <CardFooter className="mt-6 py-4 px-0 flex justify-end">
             <Button type="submit" size="lg" className="w-full sm:w-auto" disabled={isUpdating || isLoading}>
